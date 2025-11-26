@@ -175,6 +175,16 @@ def _prune_last(run_dir: str, keep: int = 10):
             pass
 
 
+def _remove_dir(path: str):
+    try:
+        for root, _, files in os.walk(path, topdown=False):
+            for f in files:
+                os.remove(os.path.join(root, f))
+            os.rmdir(root)
+    except OSError:
+        pass
+
+
 def _prune_epoch_dirs(run_dir: str, keep: int = 10):
     dirs = []
     for name in os.listdir(run_dir):
@@ -750,6 +760,9 @@ def main():
                 best_path = os.path.join(run_dir, best_name)
                 torch.save(state, best_path)
                 _prune_best(run_dir, arch_tag, keep=10)
+            else:
+                # Remove eval sample dir if not a new best
+                _remove_dir(epoch_dir)
 
         # Save last checkpoint every epoch (keep latest 10)
         state_for_last = {
