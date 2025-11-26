@@ -15,11 +15,11 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name cnn_${SIZE} \
 --batch-size 64 \
---epochs 50 \
+--epochs 100 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
---num-workers 2 \
+--num-workers 12 \
 --device cuda \
 --seed 42 \
 --log-interval 10 \
@@ -49,11 +49,11 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
 --batch-size 64 \
---epochs 50 \
+--epochs 100 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
---num-workers 2 \
+--num-workers 12 \
 --device cuda \
 --seed 42 \
 --log-interval 10 \

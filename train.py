@@ -33,11 +33,11 @@ def parse_args():
     )
     parser.add_argument("--exp-name", default="default", help="Experiment name; logs will be saved under runs/<exp-name>.")
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--device", default=None, help="cuda or cpu. Defaults to cuda if available.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=10)
@@ -46,6 +46,8 @@ def parse_args():
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
+    parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
+    parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument(
         "--classes",
         default="0",
@@ -153,6 +155,23 @@ def _prune_last(run_dir: str, keep: int = 10):
             pass
 
 
+def _prune_epoch_dirs(run_dir: str, keep: int = 10):
+    dirs = []
+    for name in os.listdir(run_dir):
+        full = os.path.join(run_dir, name)
+        if os.path.isdir(full) and name.isdigit():
+            dirs.append((int(name), full))
+    dirs.sort(key=lambda x: x[0], reverse=True)
+    for _, path in dirs[keep:]:
+        try:
+            for root, _, files in os.walk(path, topdown=False):
+                for f in files:
+                    os.remove(os.path.join(root, f))
+                os.rmdir(root)
+        except OSError:
+            pass
+
+
 def make_datasets(args, class_ids, aug_cfg):
     img_h, img_w = parse_img_size(args.img_size)
     base = YoloDataset(
@@ -206,6 +225,46 @@ def make_datasets(args, class_ids, aug_cfg):
     return train_ds, val_ds
 
 
+def run_coco_eval(images, annos, dets, class_ids, per_class=False):
+    try:
+        try:
+            from faster_coco_eval.api import COCO, COCOeval  # type: ignore
+        except ImportError:
+            from pycocotools.coco import COCO  # type: ignore
+            from pycocotools.cocoeval import COCOeval  # type: ignore
+    except Exception as e:
+        print(f"COCO eval skipped: {e}")
+        return {}
+
+    coco_gt = COCO()
+    coco_gt.dataset = {
+        "images": images,
+        "annotations": annos,
+        "categories": [{"id": int(cid), "name": str(cid)} for cid in class_ids],
+    }
+    coco_gt.createIndex()
+    coco_dt = coco_gt.loadRes(dets) if dets else coco_gt.loadRes([])
+    coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+
+    stats = coco_eval.stats  # mAP, mAP50, etc.
+    out = {
+        "coco_mAP": float(stats[0]) if stats is not None else 0.0,
+        "coco_mAP50": float(stats[1]) if stats is not None else 0.0,
+    }
+    if per_class:
+        precisions = coco_eval.eval["precision"]  # [TxRxKxAxM]
+        if precisions is not None:
+            T, R, K, A, M = precisions.shape
+            for k in range(K):
+                p = precisions[:, :, k, 0, -1]
+                p = p[p > -1]
+                out[f"coco_AP_class{class_ids[k]}"] = float(p.mean()) if p.size else 0.0
+    return out
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -227,7 +286,7 @@ def train_one_epoch(
     total_l1 = 0.0
     total_iou = 0.0
     steps = 0
-    pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=100)
+    pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
         targets_dev = move_targets(targets, device)
@@ -310,11 +369,26 @@ def validate(
     sample_dir: str = None,
     class_ids = None,
     sample_limit: int = 10,
+    coco_eval: bool = False,
+    coco_per_class: bool = False,
 ) -> Dict[str, float]:
     model.eval()
     all_preds = []
     all_targets = []
     sample_count = 0
+    total_loss = 0.0
+    total_hm = 0.0
+    total_off = 0.0
+    total_wh = 0.0
+    total_cls = 0.0
+    total_l1 = 0.0
+    total_iou = 0.0
+    steps = 0
+    coco_images = []
+    coco_annos = []
+    coco_dets = []
+    anno_id = 1
+    global_img_idx = 0
     colors = [
         "red",
         "green",
@@ -328,27 +402,29 @@ def validate(
         "pink",
     ]
 
-    def render_sample(img_tensor, pred_list, save_path):
-        img_np = (img_tensor.clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255.0).astype(np.uint8)
-        im = Image.fromarray(img_np)
-        draw = ImageDraw.Draw(im)
-        w, h = im.size
-        for score, cls, box in pred_list:
-            cx, cy, bw, bh = box.tolist()
-            x1 = (cx - bw / 2.0) * w
-            y1 = (cy - bh / 2.0) * h
-            x2 = (cx + bw / 2.0) * w
-            y2 = (cy + bh / 2.0) * h
-            color = colors[cls % len(colors)]
-            draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-            label_cls = class_ids[cls] if class_ids and cls < len(class_ids) else cls
-            draw.text((x1, y1), f"{label_cls}:{score:.2f}", fill=color)
-        im.save(save_path)
+    def render_sample(img_path, pred_list, save_path):
+        with Image.open(img_path) as im:
+            im = im.convert("RGB")
+            draw = ImageDraw.Draw(im)
+            w, h = im.size
+            for score, cls, box in pred_list:
+                cx, cy, bw, bh = box.tolist()
+                x1 = (cx - bw / 2.0) * w
+                y1 = (cy - bh / 2.0) * h
+                x2 = (cx + bw / 2.0) * w
+                y2 = (cy + bh / 2.0) * h
+                color = colors[cls % len(colors)]
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+                label_cls = class_ids[cls] if class_ids and cls < len(class_ids) else cls
+                draw.text((x1, y1), f"{label_cls}:{score:.2f}", fill=color)
+            im.save(save_path)
 
     with torch.no_grad():
-        for imgs, targets in loader:
+        pbar = tqdm(loader, total=len(loader), desc="Eval", ncols=120)
+        for imgs, targets in pbar:
             imgs = imgs.to(device)
             targets_cpu = move_targets(targets, torch.device("cpu"))
+            targets_dev = move_targets(targets, device)
             with torch.autocast(
                 device_type=device.type,
                 dtype=torch.float16 if device.type == "cuda" else torch.bfloat16,
@@ -356,28 +432,94 @@ def validate(
             ):
                 if arch == "cnn":
                     outputs = model(imgs)
+                    loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                     preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
                 else:
                     logits, box_pred = model(imgs)
+                    loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
                     preds = decode_detr(logits, box_pred, conf_thresh=conf_thresh)
+            # accumulate losses
+            total_loss += float(loss_dict["loss"].item())
+            if arch == "cnn":
+                total_hm += float(loss_dict["hm"].item())
+                total_off += float(loss_dict["off"].item())
+                total_wh += float(loss_dict["wh"].item())
+            else:
+                total_cls += float(loss_dict["cls"].item())
+                total_l1 += float(loss_dict["l1"].item())
+                total_iou += float(loss_dict["iou"].item())
+            steps += 1
             # move predictions to CPU for metric computation
             preds_cpu = []
             for p_img in preds:
-                preds_cpu.append([(score, box.detach().cpu()) for score, box in p_img])
+                preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
             all_preds.extend(preds_cpu)
             all_targets.extend(targets_cpu)
             if sample_dir and sample_count < sample_limit:
                 for b_idx, pred_img in enumerate(preds):
                     if sample_count >= sample_limit:
                         break
-                    filename = os.path.basename(targets[b_idx]["image_id"])
+                    img_path = targets[b_idx]["image_id"]
+                    filename = os.path.basename(img_path)
                     stem = os.path.splitext(filename)[0]
                     save_name = f"{sample_count:02d}_" + stem + ".png"
                     save_path = os.path.join(sample_dir, save_name)
-                    render_sample(imgs[b_idx], pred_img, save_path)
+                    render_sample(img_path, pred_img, save_path)
                     sample_count += 1
+            if coco_eval:
+                bsz = imgs.shape[0]
+                h, w = imgs.shape[2], imgs.shape[3]
+                for b_idx in range(bsz):
+                    img_id = global_img_idx
+                    coco_images.append({"id": img_id, "width": w, "height": h})
+                    gt_boxes = targets_cpu[b_idx]["boxes"]
+                    gt_labels = targets_cpu[b_idx]["labels"]
+                    for j, (cx, cy, bw, bh) in enumerate(gt_boxes):
+                        x = (cx - bw / 2) * w
+                        y = (cy - bh / 2) * h
+                        bw_abs = bw * w
+                        bh_abs = bh * h
+                        coco_annos.append(
+                            {
+                                "id": anno_id,
+                                "image_id": img_id,
+                                "category_id": int(class_ids[int(gt_labels[j].item())]) if class_ids else int(gt_labels[j].item()),
+                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                "area": float(max(bw_abs, 0) * max(bh_abs, 0)),
+                                "iscrowd": 0,
+                            }
+                        )
+                        anno_id += 1
+                    for score, cls, box in preds[b_idx]:
+                        cx, cy, bw, bh = box.tolist()
+                        x = (cx - bw / 2) * w
+                        y = (cy - bh / 2) * h
+                        bw_abs = bw * w
+                        bh_abs = bh * h
+                        coco_dets.append(
+                            {
+                                "image_id": img_id,
+                                "category_id": int(class_ids[cls]) if class_ids else int(cls),
+                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                "score": float(score),
+                            }
+                    )
+                    global_img_idx += 1
 
     metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=iou_thresh)
+    if steps > 0:
+        metrics["loss"] = total_loss / steps
+        if arch == "cnn":
+            metrics["hm"] = total_hm / steps
+            metrics["off"] = total_off / steps
+            metrics["wh"] = total_wh / steps
+        else:
+            metrics["cls"] = total_cls / steps
+            metrics["l1"] = total_l1 / steps
+            metrics["iou"] = total_iou / steps
+    if coco_eval:
+        coco_metrics = run_coco_eval(coco_images, coco_annos, coco_dets, class_ids or list(range(num_classes)), per_class=coco_per_class)
+        metrics.update(coco_metrics)
     return metrics
 
 
@@ -489,6 +631,8 @@ def main():
                 sample_dir=epoch_dir,
                 class_ids=class_ids,
                 sample_limit=10,
+                coco_eval=args.coco_eval,
+                coco_per_class=args.coco_per_class,
             )
             val_msg = f"epoch {epoch+1}/{args.epochs} val: {metrics}"
             print(val_msg)
@@ -534,6 +678,7 @@ def main():
         last_path = os.path.join(run_dir, last_name)
         torch.save(state_for_last, last_path)
         _prune_last(run_dir, keep=10)
+        _prune_epoch_dirs(run_dir, keep=10)
 
         scheduler.step()
 

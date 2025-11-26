@@ -23,4 +23,5 @@ dependencies = [
     "sit4onnx==1.0.10",
     "bbalg==1.0.2",
     "pyyaml==6.0.2",
+    "pycocotools==2.0.8",
 ]

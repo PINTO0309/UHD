@@ -40,8 +40,8 @@ def _filter_boxes(boxes: np.ndarray, labels: np.ndarray, min_area: float) -> Tup
     return boxes[keep], labels[keep]
 
 
-def _apply_hsv(img: np.ndarray, hue_gain: float, sat_gain: float, val_gain: float) -> np.ndarray:
-    r = np.random.uniform(-1, 1, 3) * np.array([hue_gain, sat_gain, val_gain]) + 1
+def _apply_hsv(img: np.ndarray, hue_gain: float, saturation_gain: float, value_gain: float) -> np.ndarray:
+    r = np.random.uniform(-1, 1, 3) * np.array([hue_gain, saturation_gain, value_gain]) + 1
     img_hsv = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
     img_hsv[..., 0] = (img_hsv[..., 0] * r[0]) % 180
     img_hsv[..., 1] = np.clip(img_hsv[..., 1] * r[1], 0, 255)
