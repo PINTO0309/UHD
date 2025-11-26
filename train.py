@@ -147,11 +147,12 @@ def _prune_best(run_dir: str, arch_tag: str, keep: int = 10):
     pattern = os.path.join(run_dir, f"best_{arch_tag}_*_map_*.pt")
     entries = []
     for p in glob.glob(pattern):
-        parsed = _parse_best_filename(p)
-        if parsed:
-            _, _, map_val = parsed
-            entries.append((map_val, p))
-    entries.sort(key=lambda x: x[0], reverse=True)
+        try:
+            mtime = os.path.getmtime(p)
+        except OSError:
+            continue
+        entries.append((mtime, p))
+    entries.sort(key=lambda x: x[0], reverse=True)  # keep most recent
     for _, path in entries[keep:]:
         try:
             os.remove(path)
@@ -626,7 +627,7 @@ def main():
         scaler = torch.cuda.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, last_epoch=-1)
     start_epoch = 0
-    best_map = 0.0
+    best_map = float("-inf")
 
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
@@ -638,8 +639,9 @@ def main():
         if "scheduler" in ckpt and ckpt["scheduler"] is not None:
             scheduler.load_state_dict(ckpt["scheduler"])
         start_epoch = int(ckpt.get("epoch", 0))
-        best_map = float(ckpt.get("metrics", {}).get("mAP@0.5", 0.0))
-        print(f"Resumed from {args.resume} at epoch {start_epoch} with best mAP@0.5={best_map:.4f}")
+        best_map = float(ckpt.get("best_map", ckpt.get("metrics", {}).get("mAP@0.5", float("-inf"))))
+        best_map_print = best_map if best_map != float("-inf") else float("nan")
+        print(f"Resumed from {args.resume} at epoch {start_epoch} with best mAP@0.5={best_map_print:.4f}")
 
     train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
     train_loader = DataLoader(
@@ -719,29 +721,31 @@ def main():
                 step=epoch + 1,
             )
 
-            # Save checkpoints: best top-10 by mAP and last top-10 by recency
+            # Save checkpoints: best only when improved mAP; keep latest 10 by recency
             map_val = metrics.get("mAP@0.5", 0.0)
-            best_map = max(best_map, map_val)
             arch_tag = "cnn" if args.arch == "cnn" else "tf"
-            state_metrics = metrics
-            state = {
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "scaler": scaler.state_dict() if use_amp else None,
-                "scheduler": scheduler.state_dict(),
-                "metrics": state_metrics,
-                "epoch": epoch + 1,
-                "arch": args.arch,
-                "classes": class_ids,
-                "augment_cfg": aug_cfg,
-                "use_skip": use_skip,
-                "grad_clip_norm": grad_clip_norm,
-                "activation": activation,
-            }
-            best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
-            best_path = os.path.join(run_dir, best_name)
-            torch.save(state, best_path)
-            _prune_best(run_dir, arch_tag, keep=10)
+            if map_val > best_map:
+                best_map = map_val
+                state_metrics = metrics
+                state = {
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scaler": scaler.state_dict() if use_amp else None,
+                    "scheduler": scheduler.state_dict(),
+                    "metrics": state_metrics,
+                    "epoch": epoch + 1,
+                    "arch": args.arch,
+                    "classes": class_ids,
+                    "augment_cfg": aug_cfg,
+                    "use_skip": use_skip,
+                    "grad_clip_norm": grad_clip_norm,
+                    "activation": activation,
+                    "best_map": best_map,
+                }
+                best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
+                best_path = os.path.join(run_dir, best_name)
+                torch.save(state, best_path)
+                _prune_best(run_dir, arch_tag, keep=10)
 
         # Save last checkpoint every epoch (keep latest 10)
         state_for_last = {
@@ -757,6 +761,7 @@ def main():
             "use_skip": use_skip,
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
+            "best_map": best_map,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
