@@ -699,14 +699,26 @@ def main():
     distill_kl = float(args.distill_kl)
     distill_box_l1 = float(args.distill_box_l1)
     distill_temperature = float(args.distill_temperature)
+    distill_cosine = bool(args.distill_cosine)
+    teacher_ckpt = args.teacher_ckpt
+    teacher_arch = args.teacher_arch
+    teacher_num_queries = args.teacher_num_queries
+    teacher_d_model = args.teacher_d_model
+    teacher_heads = args.teacher_heads
+    teacher_layers = args.teacher_layers
+    teacher_dim_feedforward = args.teacher_dim_feedforward
+    teacher_use_skip = bool(args.teacher_use_skip)
+    teacher_activation = args.teacher_activation
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
 
-    def apply_meta(meta: Dict, label: str):
+    def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
         nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay
+        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation
+        nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
             if set(ckpt_classes) != set(class_ids):
@@ -730,11 +742,38 @@ def main():
         if "ema_decay" in meta and abs(float(meta["ema_decay"]) - ema_decay) > 1e-8:
             print(f"Overriding CLI ema-decay={ema_decay} with {label} ema-decay={float(meta['ema_decay'])}")
             ema_decay = float(meta["ema_decay"])
+        if allow_distill:
+            if "teacher_ckpt" in meta and meta["teacher_ckpt"]:
+                teacher_ckpt = meta["teacher_ckpt"]
+            if "teacher_arch" in meta and meta["teacher_arch"]:
+                teacher_arch = meta["teacher_arch"]
+            if "teacher_num_queries" in meta and meta["teacher_num_queries"] is not None:
+                teacher_num_queries = int(meta["teacher_num_queries"])
+            if "teacher_d_model" in meta and meta["teacher_d_model"] is not None:
+                teacher_d_model = int(meta["teacher_d_model"])
+            if "teacher_heads" in meta and meta["teacher_heads"] is not None:
+                teacher_heads = int(meta["teacher_heads"])
+            if "teacher_layers" in meta and meta["teacher_layers"] is not None:
+                teacher_layers = int(meta["teacher_layers"])
+            if "teacher_dim_feedforward" in meta and meta["teacher_dim_feedforward"] is not None:
+                teacher_dim_feedforward = int(meta["teacher_dim_feedforward"])
+            if "teacher_use_skip" in meta:
+                teacher_use_skip = bool(meta["teacher_use_skip"])
+            if "teacher_activation" in meta and meta["teacher_activation"]:
+                teacher_activation = meta["teacher_activation"]
+            if "distill_kl" in meta:
+                distill_kl = float(meta["distill_kl"])
+            if "distill_box_l1" in meta:
+                distill_box_l1 = float(meta["distill_box_l1"])
+            if "distill_temperature" in meta:
+                distill_temperature = float(meta["distill_temperature"])
+            if "distill_cosine" in meta:
+                distill_cosine = bool(meta["distill_cosine"])
 
     if pretrain_meta is not None:
-        apply_meta(pretrain_meta, f"ckpt {args.ckpt}")
+        apply_meta(pretrain_meta, f"ckpt {args.ckpt}", allow_distill=False)
     if ckpt_meta is not None:
-        apply_meta(ckpt_meta, f"resume {args.resume}")
+        apply_meta(ckpt_meta, f"resume {args.resume}", allow_distill=True)
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -839,22 +878,22 @@ def main():
         pin_memory=True,
     )
     teacher_model = None
-    if args.teacher_ckpt:
-        t_meta = torch.load(args.teacher_ckpt, map_location="cpu")
-        t_arch = (args.teacher_arch or t_meta.get("arch", args.arch)).lower()
+    if teacher_ckpt:
+        t_meta = torch.load(teacher_ckpt, map_location="cpu")
+        t_arch = (teacher_arch or t_meta.get("arch", args.arch)).lower()
         if t_arch != "transformer":
             print(f"Teacher arch {t_arch} not supported for distillation (only transformer). Skipping teacher.")
         else:
-            t_use_skip = args.teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
-            t_activation = args.teacher_activation or t_meta.get("activation", activation)
+            t_use_skip = teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
+            t_activation = teacher_activation or t_meta.get("activation", activation)
             teacher_model = build_model(
                 t_arch,
                 width=args.cnn_width,
-                num_queries=args.teacher_num_queries or args.num_queries,
-                d_model=args.teacher_d_model or args.d_model,
-                heads=args.teacher_heads or args.heads,
-                layers=args.teacher_layers or args.layers,
-                dim_feedforward=args.teacher_dim_feedforward or args.dim_feedforward,
+                num_queries=teacher_num_queries or args.num_queries,
+                d_model=teacher_d_model or args.d_model,
+                heads=teacher_heads or args.heads,
+                layers=teacher_layers or args.layers,
+                dim_feedforward=teacher_dim_feedforward or args.dim_feedforward,
                 num_classes=num_classes,
                 use_skip=t_use_skip,
                 activation=t_activation,
@@ -863,7 +902,7 @@ def main():
             teacher_model.eval()
             for p in teacher_model.parameters():
                 p.requires_grad = False
-            print(f"Loaded teacher from {args.teacher_ckpt} (arch={t_arch})")
+            print(f"Loaded teacher from {teacher_ckpt} (arch={t_arch})")
 
     for epoch in range(start_epoch, args.epochs):
         train_logs = train_one_epoch(
@@ -882,7 +921,7 @@ def main():
             teacher_model=teacher_model,
             distill_kl=distill_kl if args.arch == "transformer" else 0.0,
             distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
-            distill_cosine=args.distill_cosine,
+            distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
@@ -956,6 +995,19 @@ def main():
                 "ema_decay": ema_decay,
                 "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
                 "ema_updates": ema_helper.updates if ema_helper is not None else 0,
+                "teacher_ckpt": teacher_ckpt,
+                "teacher_arch": teacher_arch,
+                "teacher_num_queries": teacher_num_queries,
+                "teacher_d_model": teacher_d_model,
+                "teacher_heads": teacher_heads,
+                "teacher_layers": teacher_layers,
+                "teacher_dim_feedforward": teacher_dim_feedforward,
+                "teacher_use_skip": teacher_use_skip,
+                "teacher_activation": teacher_activation,
+                "distill_kl": distill_kl,
+                "distill_box_l1": distill_box_l1,
+                "distill_temperature": distill_temperature,
+                "distill_cosine": distill_cosine,
             }
                 best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
                 best_path = os.path.join(run_dir, best_name)
@@ -984,6 +1036,19 @@ def main():
             "ema_decay": ema_decay,
             "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
             "ema_updates": ema_helper.updates if ema_helper is not None else 0,
+            "teacher_ckpt": teacher_ckpt,
+            "teacher_arch": teacher_arch,
+            "teacher_num_queries": teacher_num_queries,
+            "teacher_d_model": teacher_d_model,
+            "teacher_heads": teacher_heads,
+            "teacher_layers": teacher_layers,
+            "teacher_dim_feedforward": teacher_dim_feedforward,
+            "teacher_use_skip": teacher_use_skip,
+            "teacher_activation": teacher_activation,
+            "distill_kl": distill_kl,
+            "distill_box_l1": distill_box_l1,
+            "distill_temperature": distill_temperature,
+            "distill_cosine": distill_cosine,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
