@@ -1,7 +1,9 @@
 import argparse
 import os
 
+import onnx
 import torch
+from onnxsim import simplify
 
 from uhd.models import build_model
 
@@ -54,6 +56,7 @@ def main():
     parser.add_argument("--layers", type=int, default=3)
     parser.add_argument("--dim-feedforward", type=int, default=128)
     parser.add_argument("--opset", type=int, default=17)
+    parser.add_argument("--dynamic", action="store_true", help="Export with dynamic height/width axes.")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -85,6 +88,17 @@ def main():
         raise ValueError(f"Unsupported arch: {arch}")
 
     dummy = torch.zeros(1, 3, h, w, dtype=torch.float32)
+    dynamic_axes = {"images": {0: "batch"}}
+    if args.dynamic:
+        dynamic_axes["images"].update({2: "height", 3: "width"})
+        dynamic_axes[output_names[0]] = {0: "batch", 2: "height_out", 3: "width_out"} if arch == "cnn" else {0: "batch"}
+        if arch == "cnn":
+            dynamic_axes[output_names[1]] = {0: "batch", 2: "height_out", 3: "width_out"}
+            dynamic_axes[output_names[2]] = {0: "batch", 2: "height_out", 3: "width_out"}
+        else:
+            dynamic_axes[output_names[1]] = {0: "batch"}
+    else:
+        dynamic_axes = {"images": {0: "batch"}, output_names[0]: {0: "batch"}, output_names[1]: {0: "batch"}}
 
     onnx_path = args.output or os.path.splitext(args.checkpoint)[0] + ".onnx"
     torch.onnx.export(
@@ -94,9 +108,14 @@ def main():
         input_names=["images"],
         output_names=output_names,
         opset_version=args.opset,
-        dynamic_axes={"images": {0: "batch"}, output_names[0]: {0: "batch"}, output_names[1]: {0: "batch"}},
+        dynamic_axes=dynamic_axes,
     )
-    print(f"Exported {arch} model to {onnx_path} (opset {args.opset})")
+    onnx_model = onnx.load(onnx_path)
+    model_simp, check = simplify(onnx_model, dynamic_input_shape=bool(args.dynamic))
+    if not check:
+        raise RuntimeError("onnx-simplifier check failed")
+    onnx.save(model_simp, onnx_path)
+    print(f"Exported and simplified {arch} model to {onnx_path} (opset {args.opset}, dynamic={args.dynamic})")
 
 
 if __name__ == "__main__":

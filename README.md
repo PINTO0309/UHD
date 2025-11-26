@@ -113,3 +113,15 @@ uv run python train.py \
 - `hm`: focal loss on center heatmap
 - `off`: L1 loss on center offsets (within-cell quantization correction)
 - `wh`: L1 loss on width/height (feature-map scale)
+
+## ONNX export
+- Export a checkpoint to ONNX (auto-detects arch from checkpoint unless overridden):
+```bash
+uv run python export_onnx.py \
+--checkpoint runs/default/best_cnn_0001_map_0.12345.pt \
+--output model.onnx \
+--img-size 64x64 \
+--opset 17
+```
+- `--arch` can force `cnn`/`transformer`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
+- `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.
