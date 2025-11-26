@@ -32,6 +32,7 @@ def move_targets(targets, device):
                 "boxes": t["boxes"].to(device),
                 "labels": t.get("labels", torch.zeros(len(t["boxes"]), dtype=torch.long)).to(device),
                 "image_id": t["image_id"],
+                "orig_size": t.get("orig_size"),
             }
         )
     return moved

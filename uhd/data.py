@@ -163,40 +163,58 @@ class YoloDataset(Dataset):
         return self._load_raw_resized(ridx)
 
     def __getitem__(self, idx: int):
-        img_path, label_path = self.items[idx]
-        with Image.open(img_path) as im:
-            im = im.convert("RGB")
-            if self.augment:
-                if random.random() < 0.5:
+        max_retry = 10
+        last_sample = None
+        for attempt in range(max_retry):
+            cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
+            img_path, label_path = self.items[cur_idx]
+            with Image.open(img_path) as im:
+                im = im.convert("RGB")
+                w0, h0 = im.size
+                if self.augment and random.random() < 0.5:
                     im = im.transpose(Image.FLIP_LEFT_RIGHT)
                     flipped = True
                 else:
                     flipped = False
+                im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
+                arr = np.array(im, dtype=np.float32) / 255.0
+
+            raw_boxes = _read_label(label_path, self.class_to_idx)
+            boxes: List[Sequence[float]] = []
+            labels: List[int] = []
+            for cid, cx, cy, w, h in raw_boxes:
+                if flipped:
+                    cx = 1.0 - cx
+                boxes.append([cx, cy, w, h])
+                labels.append(cid)
+
+            boxes_np = np.array(boxes, dtype=np.float32)
+            labels_np = np.array(labels, dtype=np.int64)
+            if self.pipeline:
+                img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
             else:
-                flipped = False
-            im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
-            arr = np.array(im, dtype=np.float32) / 255.0
+                img_np = arr
 
-        raw_boxes = _read_label(label_path, self.class_to_idx)
-        boxes: List[Sequence[float]] = []
-        labels: List[int] = []
-        for cid, cx, cy, w, h in raw_boxes:
-            if flipped:
-                cx = 1.0 - cx
-            boxes.append([cx, cy, w, h])
-            labels.append(cid)
+            last_sample = (img_np, boxes_np, labels_np, img_path, (h0, w0))
+            if boxes_np.size > 0:
+                target = {
+                    "boxes": torch.tensor(boxes_np, dtype=torch.float32),
+                    "labels": torch.tensor(labels_np, dtype=torch.long),
+                    "image_id": img_path,
+                    "orig_size": (h0, w0),
+                }
+                img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+                return img_tensor, target
 
-        boxes_np = np.array(boxes, dtype=np.float32)
-        labels_np = np.array(labels, dtype=np.int64)
-        if self.pipeline:
-            img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
-        else:
-            img_np = arr
-
+        # fallback: return last attempt even if empty to avoid infinite loop
+        if last_sample is None:
+            raise ValueError("Dataset is empty.")
+        img_np, boxes_np, labels_np, img_path, orig_size = last_sample
         target = {
             "boxes": torch.tensor(boxes_np, dtype=torch.float32),
             "labels": torch.tensor(labels_np, dtype=torch.long),
             "image_id": img_path,
+            "orig_size": orig_size,
         }
         img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
         return img_tensor, target

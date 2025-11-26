@@ -15,7 +15,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name cnn_${SIZE} \
 --batch-size 64 \
---epochs 100 \
+--epochs 200 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -29,12 +29,7 @@ uv run python train.py \
 --use-amp \
 --aug-config uhd/aug.yaml \
 --classes 0 \
---cnn-width 32 \
---num-queries 10 \
---d-model 64 \
---heads 4 \
---layers 3 \
---dim-feedforward 128
+--cnn-width 32
 ```
 
 Transformer example (all parameters explicitly set):
@@ -49,7 +44,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
 --batch-size 64 \
---epochs 100 \
+--epochs 200 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -63,7 +58,6 @@ uv run python train.py \
 --use-amp \
 --aug-config uhd/aug.yaml \
 --classes 0 \
---cnn-width 32 \
 --num-queries 10 \
 --d-model 64 \
 --heads 4 \
@@ -117,11 +111,21 @@ uv run python train.py \
 ## ONNX export
 - Export a checkpoint to ONNX (auto-detects arch from checkpoint unless overridden):
   ```bash
+  SIZE=64x64
   uv run python export_onnx.py \
   --checkpoint runs/default/best_cnn_0001_map_0.12345.pt \
-  --output model.onnx \
-  --img-size 64x64 \
-  --opset 17
+  --output model_cnn_${SIZE}.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
+
+  SIZE=64x64
+  uv run python export_onnx.py \
+  --checkpoint runs/transformer_64x64/best_tf_0002_map_0.01072.pt \
+  --output model_tf_${SIZE}.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
   ```
 - `--arch` can force `cnn`/`transformer`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
 - `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.

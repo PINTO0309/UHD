@@ -109,7 +109,7 @@ class AugmentationPipeline:
                 s_min, s_max = aug_cfg.get("scale_range", [1.0, 1.0])
                 s = random.uniform(float(s_min), float(s_max))
                 keep_aspect = bool(aug_cfg.get("keep_aspect_ratio", True))
-                if keep_aspect and boxes.size:
+                if boxes.size:
                     boxes[:, 0] = boxes[:, 0] * s + 0.5 * (1 - s)
                     boxes[:, 1] = boxes[:, 1] * s + 0.5 * (1 - s)
                     boxes[:, 2] *= s
@@ -249,6 +249,7 @@ class AugmentationPipeline:
                     boxes[:, 1] /= self.img_h
                     boxes[:, 2] /= self.img_w
                     boxes[:, 3] /= self.img_h
+                    boxes = _clip_boxes(boxes)
                     boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
                 img = canvas
 
@@ -286,6 +287,9 @@ class AugmentationPipeline:
                         nbh = new_h / self.img_h
                         boxes = np.concatenate([boxes, np.array([[ncx, ncy, nbw, nbh]], dtype=np.float32)], axis=0)
                         labels = np.concatenate([labels, np.array([labels2[idx]], dtype=labels.dtype)], axis=0)
+                if boxes.size:
+                    boxes = _clip_boxes(boxes)
+                    boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
 
         elif name == "RandomCrop":
             if should_apply(0.0):
