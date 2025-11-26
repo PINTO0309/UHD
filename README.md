@@ -39,6 +39,7 @@ Transformer example (all parameters explicitly set):
 
 ```bash
 SIZE=64x64
+LAYERS=3
 uv run python train.py \
 --arch transformer \
 --image-dir data/wholebody34/obj_train_data \
@@ -64,13 +65,15 @@ uv run python train.py \
 --num-queries 10 \
 --d-model 64 \
 --heads 4 \
---layers 3 \
+--layers ${LAYERS} \
+--use-fpn \
 --dim-feedforward 128 \
 --use-ema \
 --ema-decay 0.9999
 ```
 ```bash
-SIZE=640x640
+SIZE=64x64
+LAYERS=4
 uv run python train.py \
 --arch transformer \
 --image-dir data/wholebody34/obj_train_data \
@@ -79,7 +82,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
 --batch-size 64 \
---epochs 200 \
+--epochs 500 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -96,7 +99,8 @@ uv run python train.py \
 --num-queries 10 \
 --d-model 64 \
 --heads 4 \
---layers 3 \
+--layers ${LAYERS} \
+--use-fpn \
 --dim-feedforward 128 \
 --use-ema \
 --ema-decay 0.9999
