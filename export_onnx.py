@@ -43,6 +43,38 @@ class TransformerWrapper(torch.nn.Module):
         return logits, boxes
 
 
+def _infer_transformer_config(state_dict, fallback_layers: int, fallback_num_queries: int, fallback_d_model: int):
+    num_queries = fallback_num_queries
+    d_model = fallback_d_model
+    layers = fallback_layers
+    # query_embed.weight: (num_queries, d_model)
+    qe = state_dict.get("query_embed.weight")
+    if qe is not None:
+        num_queries = qe.shape[0]
+        d_model = qe.shape[1]
+    # encoder.layers.N.  pick max index + 1
+    max_enc = -1
+    max_dec = -1
+    for k in state_dict.keys():
+        if k.startswith("encoder.layers."):
+            try:
+                idx = int(k.split(".")[2])
+                max_enc = max(max_enc, idx)
+            except (IndexError, ValueError):
+                pass
+        if k.startswith("decoder.layers."):
+            try:
+                idx = int(k.split(".")[2])
+                max_dec = max(max_dec, idx)
+            except (IndexError, ValueError):
+                pass
+    if max_enc >= 0:
+        layers = max_enc + 1
+    if max_dec >= 0:
+        layers = max(layers, max_dec + 1)
+    return num_queries, d_model, layers
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export checkpoint to ONNX (auto-detect arch).")
     parser.add_argument("--checkpoint", required=True, help="Path to .pt checkpoint.")
@@ -69,6 +101,7 @@ def main():
     arch = (args.arch or ckpt.get("arch", "cnn")).lower()
     ckpt_use_skip = bool(ckpt.get("use_skip", False))
     use_skip = ckpt_use_skip or bool(args.use_skip)
+    use_fpn = bool(ckpt.get("use_fpn", False))
     activation = args.activation
     ckpt_activation = ckpt.get("activation")
     if ckpt_activation and ckpt_activation != activation:
@@ -76,19 +109,35 @@ def main():
         activation = ckpt_activation
     classes = ckpt.get("classes", [0])
     num_classes = len(classes) if isinstance(classes, (list, tuple)) else int(classes)
+    # Prefer checkpoint hyper-params when available; infer layers/queries/d_model from state_dict if missing
+    num_queries = ckpt.get("num_queries")
+    d_model = ckpt.get("d_model")
+    layers = ckpt.get("layers")
+    heads = ckpt.get("heads", args.heads)
+    dim_feedforward = ckpt.get("dim_feedforward", args.dim_feedforward)
+    if arch == "transformer":
+        num_queries, d_model, layers = _infer_transformer_config(
+            ckpt.get("model", {}), fallback_layers=layers or args.layers, fallback_num_queries=num_queries or args.num_queries, fallback_d_model=d_model or args.d_model
+        )
+    num_queries = int(num_queries if num_queries is not None else args.num_queries)
+    d_model = int(d_model if d_model is not None else args.d_model)
+    layers = int(layers if layers is not None else args.layers)
+    heads = int(heads if heads is not None else args.heads)
+    dim_feedforward = int(dim_feedforward if dim_feedforward is not None else args.dim_feedforward)
     h, w = parse_img_size(args.img_size)
 
     model = build_model(
         arch,
         width=args.cnn_width,
-        num_queries=args.num_queries,
-        d_model=args.d_model,
-        heads=args.heads,
-        layers=args.layers,
-        dim_feedforward=args.dim_feedforward,
+        num_queries=num_queries,
+        d_model=d_model,
+        heads=heads,
+        layers=layers,
+        dim_feedforward=dim_feedforward,
         num_classes=num_classes,
         activation=activation,
         use_skip=use_skip,
+        use_fpn=use_fpn,
     )
     if args.use_ema and "ema" in ckpt and ckpt["ema"] is not None:
         model.load_state_dict(ckpt["ema"])
