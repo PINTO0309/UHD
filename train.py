@@ -437,6 +437,15 @@ def validate(
                 y1 = (cy - bh / 2.0) * h
                 x2 = (cx + bw / 2.0) * w
                 y2 = (cy + bh / 2.0) * h
+                x1, x2 = sorted([x1, x2])
+                y1, y2 = sorted([y1, y2])
+                # Clamp to image bounds to avoid invalid rectangles
+                x1 = max(0.0, min(x1, w))
+                x2 = max(0.0, min(x2, w))
+                y1 = max(0.0, min(y1, h))
+                y2 = max(0.0, min(y2, h))
+                if x2 <= x1 or y2 <= y1:
+                    continue
                 color = colors[cls % len(colors)]
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
                 label_cls = class_ids[cls] if class_ids and cls < len(class_ids) else cls
