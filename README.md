@@ -69,6 +69,79 @@ uv run python train.py \
 --use-ema \
 --ema-decay 0.9999
 ```
+```bash
+SIZE=640x640
+uv run python train.py \
+--arch transformer \
+--image-dir data/wholebody34/obj_train_data \
+--train-split 0.8 \
+--val-split 0.2 \
+--img-size ${SIZE} \
+--exp-name transformer_${SIZE} \
+--batch-size 64 \
+--epochs 500 \
+--resume "" \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--seed 42 \
+--log-interval 10 \
+--eval-interval 1 \
+--conf-thresh 0.3 \
+--topk 50 \
+--use-amp \
+--aug-config uhd/aug.yaml \
+--classes 0 \
+--num-queries 10 \
+--d-model 64 \
+--heads 4 \
+--layers 3 \
+--dim-feedforward 128 \
+--use-ema \
+--ema-decay 0.9999
+```
+
+Distillation example (transformer student 64x64 distilled from a higher-res transformer teacher):
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch transformer \
+--image-dir data/wholebody34/obj_train_data \
+--train-split 0.8 \
+--val-split 0.2 \
+--img-size ${SIZE} \
+--exp-name  transformer_distill_${SIZE} \
+--batch-size 64 \
+--epochs 200 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--seed 42 \
+--log-interval 10 \
+--eval-interval 1 \
+--conf-thresh 0.3 \
+--topk 50 \
+--use-amp \
+--aug-config uhd/aug.yaml \
+--classes 0 \
+--num-queries 10 \
+--d-model 64 \
+--heads 4 \
+--layers 4 \
+--dim-feedforward 128 \
+--use-ema \
+--ema-decay 0.9999 \
+--teacher-ckpt runs/teacher_640x640/best_tf_0500_map_0.12345.pt \
+--teacher-arch transformer \
+--teacher-layers 3 \
+--distill-kl 1.0 \
+--distill-box-l1 1.0 \
+--distill-temperature 2.0 \
+--distill-cosine
+```
 
 Transformer example (From layers=3 To layers=4):
 

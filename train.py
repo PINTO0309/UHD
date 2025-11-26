@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import random
+import math
 from copy import deepcopy
 from typing import Dict, Sequence
 
@@ -84,6 +85,19 @@ def parse_args():
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("--ckpt", default=None, help="Path to checkpoint to initialize weights (no optimizer state).")
     parser.add_argument("--ckpt-non-strict", action="store_true", help="Load --ckpt weights with strict=False (ignore missing/unexpected keys).")
+    parser.add_argument("--teacher-ckpt", default=None, help="Path to teacher checkpoint for distillation.")
+    parser.add_argument("--teacher-arch", default=None, help="Teacher architecture override (default: checkpoint arch or student arch).")
+    parser.add_argument("--teacher-num-queries", type=int, default=None, help="Teacher num-queries (defaults to student).")
+    parser.add_argument("--teacher-d-model", type=int, default=None, help="Teacher d-model (defaults to student).")
+    parser.add_argument("--teacher-heads", type=int, default=None, help="Teacher heads (defaults to student).")
+    parser.add_argument("--teacher-layers", type=int, default=None, help="Teacher layers (defaults to student).")
+    parser.add_argument("--teacher-dim-feedforward", type=int, default=None, help="Teacher FFN dim (defaults to student).")
+    parser.add_argument("--teacher-use-skip", action="store_true", help="Force teacher use-skip on (otherwise checkpoint/student default).")
+    parser.add_argument("--teacher-activation", choices=["relu", "swish"], default=None, help="Teacher activation (defaults to checkpoint or student).")
+    parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
+    parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
+    parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
+    parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for teacher logits in distillation.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
@@ -362,6 +376,11 @@ def train_one_epoch(
     num_classes: int,
     grad_clip_norm: float = 0.0,
     ema: ModelEma = None,
+    teacher_model: torch.nn.Module = None,
+    distill_kl: float = 0.0,
+    distill_box_l1: float = 0.0,
+    distill_cosine: bool = False,
+    distill_temperature: float = 1.0,
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
@@ -371,19 +390,48 @@ def train_one_epoch(
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
+    total_distill_kl = 0.0
+    total_distill_l1 = 0.0
     steps = 0
+    distill_scale = 1.0
+    if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0):
+        distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
         targets_dev = move_targets(targets, device)
         optimizer.zero_grad()
         with torch.autocast(device_type=device.type, dtype=torch.float16 if device.type == "cuda" else torch.bfloat16, enabled=scaler.is_enabled()):
+            teacher_logits = None
+            teacher_boxes = None
+            if teacher_model is not None:
+                with torch.no_grad():
+                    t_out = teacher_model(imgs)
+                    if isinstance(t_out, dict):
+                        # CNN teacher not supported for distillation
+                        teacher_logits = None
+                        teacher_boxes = None
+                    else:
+                        teacher_logits, teacher_boxes = t_out
             if arch == "cnn":
                 outputs = model(imgs)
                 loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
             else:
                 logits, box_pred = model(imgs)
                 loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
+                if teacher_logits is not None and teacher_boxes is not None:
+                    # KL distillation on logits (Q,B,C+1)
+                    if distill_kl > 0:
+                        temp = max(distill_temperature, 1e-6)
+                        t_prob = (teacher_logits.detach() / temp).softmax(-1)
+                        s_logprob = (logits / temp).log_softmax(-1)
+                        kl = torch.nn.functional.kl_div(s_logprob, t_prob, reduction="batchmean") * (temp * temp)
+                        loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                        loss_dict["distill_kl"] = kl
+                    if distill_box_l1 > 0:
+                        l1d = torch.nn.functional.l1_loss(box_pred.detach(), teacher_boxes.detach(), reduction="mean")
+                        loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
+                        loss_dict["distill_box_l1"] = l1d
             loss = loss_dict["loss"]
         if scaler.is_enabled():
             scaler.scale(loss).backward()
@@ -409,6 +457,10 @@ def train_one_epoch(
             total_cls += float(loss_dict["cls"].item())
             total_l1 += float(loss_dict["l1"].item())
             total_iou += float(loss_dict["iou"].item())
+            if "distill_kl" in loss_dict:
+                total_distill_kl += float(loss_dict["distill_kl"].item())
+            if "distill_box_l1" in loss_dict:
+                total_distill_l1 += float(loss_dict["distill_box_l1"].item())
         steps += 1
 
         if (step + 1) % log_interval == 0:
@@ -446,6 +498,10 @@ def train_one_epoch(
                 "iou": total_iou / steps if steps else 0.0,
             }
         )
+        if distill_kl > 0:
+            logs["distill_kl"] = total_distill_kl / steps if steps else 0.0
+        if distill_box_l1 > 0:
+            logs["distill_box_l1"] = total_distill_l1 / steps if steps else 0.0
     return logs
 
 
@@ -640,6 +696,9 @@ def main():
     activation = args.activation
     use_ema = bool(args.use_ema)
     ema_decay = float(args.ema_decay)
+    distill_kl = float(args.distill_kl)
+    distill_box_l1 = float(args.distill_box_l1)
+    distill_temperature = float(args.distill_temperature)
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -779,6 +838,32 @@ def main():
         collate_fn=detection_collate,
         pin_memory=True,
     )
+    teacher_model = None
+    if args.teacher_ckpt:
+        t_meta = torch.load(args.teacher_ckpt, map_location="cpu")
+        t_arch = (args.teacher_arch or t_meta.get("arch", args.arch)).lower()
+        if t_arch != "transformer":
+            print(f"Teacher arch {t_arch} not supported for distillation (only transformer). Skipping teacher.")
+        else:
+            t_use_skip = args.teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
+            t_activation = args.teacher_activation or t_meta.get("activation", activation)
+            teacher_model = build_model(
+                t_arch,
+                width=args.cnn_width,
+                num_queries=args.teacher_num_queries or args.num_queries,
+                d_model=args.teacher_d_model or args.d_model,
+                heads=args.teacher_heads or args.heads,
+                layers=args.teacher_layers or args.layers,
+                dim_feedforward=args.teacher_dim_feedforward or args.dim_feedforward,
+                num_classes=num_classes,
+                use_skip=t_use_skip,
+                activation=t_activation,
+            ).to(device)
+            teacher_model.load_state_dict(t_meta["model"])
+            teacher_model.eval()
+            for p in teacher_model.parameters():
+                p.requires_grad = False
+            print(f"Loaded teacher from {args.teacher_ckpt} (arch={t_arch})")
 
     for epoch in range(start_epoch, args.epochs):
         train_logs = train_one_epoch(
@@ -794,6 +879,11 @@ def main():
             num_classes=num_classes,
             grad_clip_norm=grad_clip_norm,
             ema=ema_helper,
+            teacher_model=teacher_model,
+            distill_kl=distill_kl if args.arch == "transformer" else 0.0,
+            distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
+            distill_cosine=args.distill_cosine,
+            distill_temperature=distill_temperature,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
