@@ -31,7 +31,8 @@ uv run python train.py \
 --aug-config uhd/aug.yaml \
 --classes 0 \
 --cnn-width 32 \
---use-skip
+--use-skip \
+--use-ema
 ```
 
 Transformer example (all parameters explicitly set):
@@ -64,7 +65,8 @@ uv run python train.py \
 --d-model 64 \
 --heads 4 \
 --layers 3 \
---dim-feedforward 128
+--dim-feedforward 128 \
+--use-ema
 ```
 
 ## CLI parameters
@@ -92,6 +94,8 @@ uv run python train.py \
 | `--conf-thresh` | Confidence threshold for decoding. | `0.3` |
 | `--topk` | Top-K for CNN decoding. | `50` |
 | `--use-amp` | Enable automatic mixed precision. | `False` |
+| `--use-ema` | Enable EMA for evaluation/checkpointing. | `False` |
+| `--ema-decay` | EMA decay (ignored if EMA disabled). | `0.9998` |
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
 | `--classes` | Comma-separated target class IDs. | `0` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |

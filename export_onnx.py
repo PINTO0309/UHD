@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--dim-feedforward", type=int, default=128)
     parser.add_argument("--activation", choices=["relu", "swish"], default="swish", help="Activation function to use.")
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections for CNN export (defaults to checkpoint flag).")
+    parser.add_argument("--use-ema", action="store_true", help="Use EMA weights from checkpoint if available.")
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--dynamic", action="store_true", help="Export with dynamic height/width axes.")
     parser.add_argument("--topk", type=int, default=100, help="Top-K for postprocess (CNN).")
@@ -89,7 +90,10 @@ def main():
         activation=activation,
         use_skip=use_skip,
     )
-    model.load_state_dict(ckpt["model"])
+    if args.use_ema and "ema" in ckpt and ckpt["ema"] is not None:
+        model.load_state_dict(ckpt["ema"])
+    else:
+        model.load_state_dict(ckpt["model"])
     model.eval()
 
     if arch == "cnn":

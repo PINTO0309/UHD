@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import random
+from copy import deepcopy
 from typing import Dict, Sequence
 
 import numpy as np
@@ -19,6 +20,32 @@ from uhd.losses import centernet_loss, detr_loss
 from uhd.metrics import decode_centernet, decode_detr, evaluate_map
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
+
+
+class ModelEma:
+    """Exponential Moving Average of model parameters/buffers."""
+
+    def __init__(self, model: torch.nn.Module, decay: float = 0.9998, device: torch.device = None) -> None:
+        self.decay = decay
+        self.device = device
+        self.ema = deepcopy(model)
+        self.ema.eval()
+        if self.device is not None:
+            self.ema.to(self.device)
+
+    @torch.no_grad()
+    def update(self, model: torch.nn.Module) -> None:
+        ema_state = self.ema.state_dict()
+        model_state = model.state_dict()
+        for k, v in ema_state.items():
+            model_v = model_state[k].detach()
+            if self.device is not None:
+                model_v = model_v.to(self.device)
+            ema_state[k].copy_(ema_state[k] * self.decay + model_v * (1.0 - self.decay))
+
+    @torch.no_grad()
+    def apply_to(self, model: torch.nn.Module) -> None:
+        model.load_state_dict(self.ema.state_dict())
 
 
 def parse_args():
@@ -48,6 +75,8 @@ def parse_args():
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
+    parser.add_argument("--use-ema", action="store_true", help="Enable EMA of model weights for evaluation/checkpointing.")
+    parser.add_argument("--ema-decay", type=float, default=0.9998, help="EMA decay factor (ignored if EMA disabled).")
     parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument(
@@ -311,6 +340,7 @@ def train_one_epoch(
     total_epochs: int,
     num_classes: int,
     grad_clip_norm: float = 0.0,
+    ema: ModelEma = None,
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
@@ -346,6 +376,8 @@ def train_one_epoch(
             if grad_clip_norm and grad_clip_norm > 0:
                 clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
+        if ema is not None:
+            ema.update(model)
 
         total_loss += float(loss.item())
         if arch == "cnn":
@@ -585,10 +617,14 @@ def main():
     use_skip = bool(args.use_skip)
     grad_clip_norm = float(args.grad_clip_norm)
     activation = args.activation
+    use_ema = bool(args.use_ema)
+    ema_decay = float(args.ema_decay)
     ckpt_meta = None
     ckpt_use_skip = None
     ckpt_grad_clip = None
     ckpt_activation = None
+    ckpt_use_ema = None
+    ckpt_ema_decay = None
     if args.resume:
         ckpt_meta = torch.load(args.resume, map_location="cpu")
         if "classes" in ckpt_meta:
@@ -605,6 +641,10 @@ def main():
             ckpt_grad_clip = float(ckpt_meta["grad_clip_norm"])
         if "activation" in ckpt_meta:
             ckpt_activation = ckpt_meta["activation"]
+        if "use_ema" in ckpt_meta:
+            ckpt_use_ema = bool(ckpt_meta["use_ema"])
+        if "ema_decay" in ckpt_meta:
+            ckpt_ema_decay = float(ckpt_meta["ema_decay"])
     if ckpt_use_skip is not None and ckpt_use_skip != use_skip:
         print(f"Overriding CLI use-skip={use_skip} with checkpoint use-skip={ckpt_use_skip}")
         use_skip = ckpt_use_skip
@@ -614,6 +654,12 @@ def main():
     if ckpt_activation is not None and ckpt_activation != activation:
         print(f"Overriding CLI activation={activation} with checkpoint activation={ckpt_activation}")
         activation = ckpt_activation
+    if ckpt_use_ema is not None and ckpt_use_ema != use_ema:
+        print(f"Overriding CLI use-ema={use_ema} with checkpoint use-ema={ckpt_use_ema}")
+        use_ema = ckpt_use_ema
+    if ckpt_ema_decay is not None and abs(ckpt_ema_decay - ema_decay) > 1e-8:
+        print(f"Overriding CLI ema-decay={ema_decay} with checkpoint ema-decay={ckpt_ema_decay}")
+        ema_decay = ckpt_ema_decay
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -634,6 +680,7 @@ def main():
         use_skip=use_skip,
         activation=activation,
     ).to(device)
+    ema_helper = ModelEma(model, decay=ema_decay, device=device) if use_ema else None
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     try:
         scaler = torch.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
@@ -652,6 +699,13 @@ def main():
             scaler.load_state_dict(ckpt["scaler"])
         if "scheduler" in ckpt and ckpt["scheduler"] is not None:
             scheduler.load_state_dict(ckpt["scheduler"])
+        if use_ema:
+            if ema_helper is None:
+                ema_helper = ModelEma(model, decay=ema_decay, device=device)
+            if "ema" in ckpt and ckpt["ema"] is not None:
+                ema_helper.ema.load_state_dict(ckpt["ema"])
+            else:
+                ema_helper.apply_to(model)
         start_epoch = int(ckpt.get("epoch", 0))
         best_map = float(ckpt.get("best_map", ckpt.get("metrics", {}).get("mAP@0.5", float("-inf"))))
         best_map_print = best_map if best_map != float("-inf") else float("nan")
@@ -688,6 +742,7 @@ def main():
             total_epochs=args.epochs,
             num_classes=num_classes,
             grad_clip_norm=grad_clip_norm,
+            ema=ema_helper,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
@@ -706,8 +761,9 @@ def main():
         if (epoch + 1) % args.eval_interval == 0:
             epoch_dir = os.path.join(run_dir, f"{epoch+1:04d}")
             ensure_dir(epoch_dir)
+            eval_model = ema_helper.ema if ema_helper is not None else model
             metrics = validate(
-                model,
+                eval_model,
                 val_loader,
                 device=device,
                 arch=args.arch,
@@ -750,12 +806,15 @@ def main():
                     "epoch": epoch + 1,
                     "arch": args.arch,
                     "classes": class_ids,
-                    "augment_cfg": aug_cfg,
-                    "use_skip": use_skip,
-                    "grad_clip_norm": grad_clip_norm,
-                    "activation": activation,
-                    "best_map": best_map,
-                }
+                "augment_cfg": aug_cfg,
+                "use_skip": use_skip,
+                "grad_clip_norm": grad_clip_norm,
+                "activation": activation,
+                "best_map": best_map,
+                "use_ema": use_ema,
+                "ema_decay": ema_decay,
+                "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
+            }
                 best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
                 best_path = os.path.join(run_dir, best_name)
                 torch.save(state, best_path)
@@ -779,6 +838,9 @@ def main():
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
             "best_map": best_map,
+            "use_ema": use_ema,
+            "ema_decay": ema_decay,
+            "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
