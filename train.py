@@ -35,13 +35,24 @@ class ModelEma:
 
     @torch.no_grad()
     def update(self, model: torch.nn.Module) -> None:
-        ema_state = self.ema.state_dict()
-        model_state = model.state_dict()
-        for k, v in ema_state.items():
-            model_v = model_state[k].detach()
+        ema_params = dict(self.ema.named_parameters())
+        model_params = dict(model.named_parameters())
+        for k, ema_v in ema_params.items():
+            model_v = model_params[k].detach()
             if self.device is not None:
                 model_v = model_v.to(self.device)
-            ema_state[k].copy_(ema_state[k] * self.decay + model_v * (1.0 - self.decay))
+            ema_v.mul_(self.decay).add_(model_v, alpha=1.0 - self.decay)
+
+        ema_buffers = dict(self.ema.named_buffers())
+        model_buffers = dict(model.named_buffers())
+        for k, ema_b in ema_buffers.items():
+            model_b = model_buffers[k]
+            if model_b.dtype.is_floating_point:
+                if self.device is not None:
+                    model_b = model_b.to(self.device)
+                ema_b.mul_(self.decay).add_(model_b, alpha=1.0 - self.decay)
+            else:
+                ema_b.copy_(model_b)
 
     @torch.no_grad()
     def apply_to(self, model: torch.nn.Module) -> None:
