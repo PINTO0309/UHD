@@ -84,6 +84,7 @@ uv run python train.py \
 --batch-size 64 \
 --epochs 500 \
 --ckpt runs/transformer_64x64/best_tf_0001_map_0.02340.pt \
+--ckpt-non-strict \
 --lr 0.001 \
 --weight-decay 0.0001 \
 --num-workers 12 \
