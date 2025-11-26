@@ -25,6 +25,7 @@ uv run python train.py \
 --log-interval 10 \
 --eval-interval 1 \
 --conf-thresh 0.3 \
+--activation swish \
 --topk 50 \
 --use-amp \
 --aug-config uhd/aug.yaml \
@@ -82,6 +83,7 @@ uv run python train.py \
 | `--lr` | Learning rate. | `0.001` |
 | `--weight-decay` | Weight decay. | `0.0001` |
 | `--grad-clip-norm` | Global gradient norm clip; set `0` to disable. | `5.0` |
+| `--activation` | Activation function (`relu` or `swish`). | `swish` |
 | `--num-workers` | DataLoader workers. | `2` |
 | `--device` | Device: `cuda` or `cpu`. | `cuda` if available |
 | `--seed` | Random seed. | `42` |

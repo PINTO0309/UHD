@@ -5,13 +5,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _make_activation(name: str) -> nn.Module:
+    act = name.lower()
+    if act == "relu":
+        return nn.ReLU(inplace=True)
+    if act == "swish":
+        return nn.SiLU(inplace=True)
+    raise ValueError(f"Unsupported activation: {name}")
+
+
 class DWConvBlock(nn.Module):
-    def __init__(self, c_in: int, c_out: int, stride: int = 1) -> None:
+    def __init__(self, c_in: int, c_out: int, stride: int = 1, activation: str = "swish") -> None:
         super().__init__()
         self.dw = nn.Conv2d(c_in, c_in, kernel_size=3, stride=stride, padding=1, groups=c_in, bias=False)
         self.pw = nn.Conv2d(c_in, c_out, kernel_size=1, bias=False)
         self.bn = nn.BatchNorm2d(c_out)
-        self.act = nn.ReLU(inplace=True)
+        self.act = _make_activation(activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.pw(self.dw(x))))
@@ -20,17 +29,17 @@ class DWConvBlock(nn.Module):
 class MiniCenterNet(nn.Module):
     """Minimal anchor-free detector with heatmap + offsets + size."""
 
-    def __init__(self, width: int = 32, num_classes: int = 1, use_skip: bool = False) -> None:
+    def __init__(self, width: int = 32, num_classes: int = 1, use_skip: bool = False, activation: str = "swish") -> None:
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(width),
-            nn.ReLU(inplace=True),
+            _make_activation(activation),
         )
         self.use_skip = use_skip
-        self.stage1 = DWConvBlock(width, width, stride=2)  # 64 -> 32
-        self.stage2 = DWConvBlock(width, width, stride=2)  # 32 -> 16
-        self.stage3 = DWConvBlock(width, width, stride=2)  # 16 -> 8
+        self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
+        self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
+        self.stage3 = DWConvBlock(width, width, stride=2, activation=activation)  # 16 -> 8
         self.head_hm = nn.Conv2d(width, num_classes, kernel_size=1)
         self.head_off = nn.Conv2d(width, 2, kernel_size=1)
         self.head_wh = nn.Conv2d(width, 2, kernel_size=1)
@@ -74,16 +83,25 @@ class TinyDETR(nn.Module):
         num_decoder_layers: int = 3,
         dim_feedforward: int = 128,
         num_classes: int = 1,
+        activation: str = "swish",
     ) -> None:
         super().__init__()
         self.patch = nn.Conv2d(3, d_model, kernel_size=4, stride=4)
         self.d_model = d_model
         self.num_classes = num_classes
+        act = activation.lower()
+        if act == "swish":
+            transformer_activation = F.silu
+        elif act == "relu":
+            transformer_activation = F.relu
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             batch_first=False,
+            activation=transformer_activation,
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
         decoder_layer = nn.TransformerDecoderLayer(
@@ -91,6 +109,7 @@ class TinyDETR(nn.Module):
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             batch_first=False,
+            activation=transformer_activation,
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
         self.query_embed = nn.Embedding(num_queries, d_model)
@@ -124,6 +143,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             width=kwargs.get("width", 32),
             num_classes=kwargs.get("num_classes", 1),
             use_skip=kwargs.get("use_skip", False),
+            activation=kwargs.get("activation", "swish"),
         )
     if arch == "transformer":
         return TinyDETR(
@@ -134,5 +154,6 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             num_decoder_layers=kwargs.get("decoder_layers", kwargs.get("layers", 3)),
             dim_feedforward=kwargs.get("dim_feedforward", 128),
             num_classes=kwargs.get("num_classes", 1),
+            activation=kwargs.get("activation", "swish"),
         )
     raise ValueError(f"Unknown architecture: {arch}")

@@ -55,6 +55,7 @@ def parse_args():
         default="0",
         help="Comma-separated list of target class ids to train on (e.g., '0,1,3').",
     )
+    parser.add_argument("--activation", choices=["relu", "swish"], default="swish", help="Activation function to use.")
     # CNN params
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
@@ -568,9 +569,11 @@ def main():
     aug_cfg = load_aug_config(args.aug_config)
     use_skip = bool(args.use_skip)
     grad_clip_norm = float(args.grad_clip_norm)
+    activation = args.activation
     ckpt_meta = None
     ckpt_use_skip = None
     ckpt_grad_clip = None
+    ckpt_activation = None
     if args.resume:
         ckpt_meta = torch.load(args.resume, map_location="cpu")
         if "classes" in ckpt_meta:
@@ -585,12 +588,17 @@ def main():
             ckpt_use_skip = bool(ckpt_meta["use_skip"])
         if "grad_clip_norm" in ckpt_meta:
             ckpt_grad_clip = float(ckpt_meta["grad_clip_norm"])
+        if "activation" in ckpt_meta:
+            ckpt_activation = ckpt_meta["activation"]
     if ckpt_use_skip is not None and ckpt_use_skip != use_skip:
         print(f"Overriding CLI use-skip={use_skip} with checkpoint use-skip={ckpt_use_skip}")
         use_skip = ckpt_use_skip
     if ckpt_grad_clip is not None and abs(ckpt_grad_clip - grad_clip_norm) > 1e-8:
         print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with checkpoint grad-clip-norm={ckpt_grad_clip}")
         grad_clip_norm = ckpt_grad_clip
+    if ckpt_activation is not None and ckpt_activation != activation:
+        print(f"Overriding CLI activation={activation} with checkpoint activation={ckpt_activation}")
+        activation = ckpt_activation
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -609,6 +617,7 @@ def main():
         dim_feedforward=args.dim_feedforward,
         num_classes=num_classes,
         use_skip=use_skip,
+        activation=activation,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     try:
@@ -727,6 +736,7 @@ def main():
                 "augment_cfg": aug_cfg,
                 "use_skip": use_skip,
                 "grad_clip_norm": grad_clip_norm,
+                "activation": activation,
             }
             best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
             best_path = os.path.join(run_dir, best_name)
@@ -746,6 +756,7 @@ def main():
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
             "grad_clip_norm": grad_clip_norm,
+            "activation": activation,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
