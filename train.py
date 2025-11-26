@@ -96,14 +96,18 @@ def load_aug_config(path: str):
 
 
 def log_scalars(writer: SummaryWriter, prefix: str, values: Dict[str, float], ordered_keys, step: int):
+    """Log scalars with forced ordering by prefixing numeric indices."""
     logged = set()
+    idx = 0
     for k in ordered_keys:
         if k in values:
-            writer.add_scalar(f"{prefix}/{k}", values[k], step)
+            writer.add_scalar(f"{prefix}/{idx:02d}_{k}", values[k], step)
             logged.add(k)
+            idx += 1
     for k in sorted(values.keys()):
         if k not in logged:
-            writer.add_scalar(f"{prefix}/{k}", values[k], step)
+            writer.add_scalar(f"{prefix}/{idx:02d}_{k}", values[k], step)
+            idx += 1
 
 
 def _parse_best_filename(path: str):
@@ -569,10 +573,10 @@ def main():
         num_classes=num_classes,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scaler = torch.amp.GradScaler(
-        device_type=device.type if device.type in ("cuda", "cpu", "mps", "xla") else "cuda",
-        enabled=bool(use_amp and device.type == "cuda"),
-    )
+    try:
+        scaler = torch.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
+    except TypeError:
+        scaler = torch.cuda.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, last_epoch=-1)
     start_epoch = 0
     best_map = 0.0
@@ -663,7 +667,7 @@ def main():
                 writer,
                 "val",
                 metrics,
-                ordered_keys=["AP@0.5", "ap@0.5", "mAP@0.5", "map@0.5", "loss", "hm", "off", "wh", "cls", "l1", "iou"],
+                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "hm", "off", "wh", "cls", "l1", "iou"],
                 step=epoch + 1,
             )
 
