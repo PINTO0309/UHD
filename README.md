@@ -70,6 +70,41 @@ uv run python train.py \
 --ema-decay 0.9999
 ```
 
+Transformer example (From layers=3 To layers=4):
+
+```
+SIZE=64x64
+uv run python train.py \
+--arch transformer \
+--image-dir data/wholebody34/obj_train_data \
+--train-split 0.8 \
+--val-split 0.2 \
+--img-size ${SIZE} \
+--exp-name transformer_${SIZE} \
+--batch-size 64 \
+--epochs 500 \
+--ckpt runs/transformer_64x64/best_tf_0001_map_0.02340.pt \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--seed 42 \
+--log-interval 10 \
+--eval-interval 1 \
+--conf-thresh 0.3 \
+--topk 50 \
+--use-amp \
+--aug-config uhd/aug.yaml \
+--classes 0 \
+--num-queries 10 \
+--d-model 64 \
+--heads 4 \
+--layers 4 \
+--dim-feedforward 128 \
+--use-ema \
+--ema-decay 0.9999
+```
+
 ## CLI parameters
 
 | Parameter | Description | Default |
