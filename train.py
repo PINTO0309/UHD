@@ -3,13 +3,14 @@ import glob
 import os
 from typing import Dict, Sequence
 
-import torch
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 import numpy as np
+import torch
+import yaml
 from PIL import Image, ImageDraw
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from uhd.data import YoloDataset, detection_collate
 from uhd.losses import centernet_loss, detr_loss
@@ -45,6 +46,7 @@ def parse_args():
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
     parser.add_argument("--save-dir", default="outputs", help="Directory to save checkpoints.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
+    parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
     parser.add_argument(
         "--classes",
         default="0",
@@ -83,6 +85,13 @@ def parse_classes(arg: str):
         return [int(x) for x in arg]
     parts = str(arg).replace(" ", "").split(",")
     return [int(p) for p in parts if p != ""]
+
+
+def load_aug_config(path: str):
+    if not path:
+        return None
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
 
 def _parse_best_filename(path: str):
@@ -145,7 +154,7 @@ def _prune_last(run_dir: str, keep: int = 10):
             pass
 
 
-def make_datasets(args, class_ids):
+def make_datasets(args, class_ids, aug_cfg):
     img_h, img_w = parse_img_size(args.img_size)
     train_ds = YoloDataset(
         image_dir=args.image_dir,
@@ -156,6 +165,7 @@ def make_datasets(args, class_ids):
         img_size=(img_h, img_w),
         augment=True,
         class_ids=class_ids,
+        augment_cfg=aug_cfg,
     )
     if args.val_list:
         val_ds = YoloDataset(
@@ -237,16 +247,21 @@ def train_one_epoch(
 
         if (step + 1) % log_interval == 0:
             if arch == "cnn":
-                print(
-                    f"step {step+1}/{len(loader)} loss {loss.item():.4f} hm {loss_dict['hm'].item():.4f} "
-                    f"off {loss_dict['off'].item():.4f} wh {loss_dict['wh'].item():.4f}"
+                pbar.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    hm=f"{loss_dict['hm'].item():.4f}",
+                    off=f"{loss_dict['off'].item():.4f}",
+                    wh=f"{loss_dict['wh'].item():.4f}",
+                    step=f"{step+1}/{len(loader)}",
                 )
             else:
-                print(
-                    f"step {step+1}/{len(loader)} loss {loss.item():.4f} cls {loss_dict['cls'].item():.4f} "
-                    f"l1 {loss_dict['l1'].item():.4f} iou {loss_dict['iou'].item():.4f}"
+                pbar.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    cls=f"{loss_dict['cls'].item():.4f}",
+                    l1=f"{loss_dict['l1'].item():.4f}",
+                    iou=f"{loss_dict['iou'].item():.4f}",
+                    step=f"{step+1}/{len(loader)}",
                 )
-        pbar.set_postfix(loss=f"{loss.item():.4f}")
 
     logs = {"loss": total_loss / steps if steps else 0.0}
     if arch == "cnn":
@@ -356,6 +371,7 @@ def main():
     args = parse_args()
     class_ids = parse_classes(args.classes)
     num_classes = len(class_ids)
+    aug_cfg = load_aug_config(args.aug_config)
     ckpt_meta = None
     if args.resume:
         ckpt_meta = torch.load(args.resume, map_location="cpu")
@@ -365,6 +381,8 @@ def main():
                 print(f"Overriding CLI classes {class_ids} with checkpoint classes {ckpt_classes}")
             class_ids = ckpt_classes
             num_classes = len(class_ids)
+        if "augment_cfg" in ckpt_meta:
+            aug_cfg = ckpt_meta["augment_cfg"]
     set_seed(args.seed)
     device = default_device(args.device)
     ensure_dir(args.save_dir)
@@ -403,7 +421,7 @@ def main():
         best_map = float(ckpt.get("metrics", {}).get("mAP@0.5", 0.0))
         print(f"Resumed from {args.resume} at epoch {start_epoch} with best mAP@0.5={best_map:.4f}")
 
-    train_ds, val_ds = make_datasets(args, class_ids)
+    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -480,6 +498,7 @@ def main():
                 "epoch": epoch + 1,
                 "arch": args.arch,
                 "classes": class_ids,
+                "augment_cfg": aug_cfg,
             }
             best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
             best_path = os.path.join(run_dir, best_name)
@@ -496,6 +515,7 @@ def main():
             "epoch": epoch + 1,
             "arch": args.arch,
             "classes": class_ids,
+            "augment_cfg": aug_cfg,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)

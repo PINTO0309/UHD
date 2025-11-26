@@ -8,6 +8,8 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
+from .augment import build_augmentation_pipeline
+
 
 def _resolve_path(entry: str, image_dir: str, list_path: Optional[str]) -> Optional[str]:
     """Try multiple locations to find an image path."""
@@ -58,6 +60,7 @@ class YoloDataset(Dataset):
         img_size: Tuple[int, int] = (64, 64),
         augment: bool = False,
         class_ids: Sequence[int] = (0,),
+        augment_cfg: Optional[Dict] = None,
     ) -> None:
         self.image_dir = image_dir
         self.list_path = list_path
@@ -73,6 +76,21 @@ class YoloDataset(Dataset):
         if not self.class_ids:
             raise ValueError("class_ids must contain at least one class id.")
         self.class_to_idx: Dict[int, int] = {cid: i for i, cid in enumerate(self.class_ids)}
+        self.augment_cfg = augment_cfg
+        self.pipeline = None
+        if self.augment and augment_cfg:
+            # convert class_swap_map to internal indices if present
+            class_swap_map = None
+            hf_cfg = augment_cfg.get("HorizontalFlip") if isinstance(augment_cfg, dict) else None
+            if hf_cfg and isinstance(hf_cfg, dict) and "class_swap_map" in hf_cfg:
+                class_swap_map = {}
+                for k, v in hf_cfg["class_swap_map"].items():
+                    if int(k) in self.class_to_idx and int(v) in self.class_to_idx:
+                        class_swap_map[self.class_to_idx[int(k)]] = self.class_to_idx[int(v)]
+            cfg_body = augment_cfg.get("data_augment", augment_cfg) if isinstance(augment_cfg, dict) else None
+            self.pipeline = build_augmentation_pipeline(
+                cfg_body, img_w=self.img_w, img_h=self.img_h, class_swap_map=class_swap_map, dataset=self
+            )
 
         items = self._gather_items()
         if not items:
@@ -120,6 +138,26 @@ class YoloDataset(Dataset):
     def __len__(self) -> int:
         return len(self.items)
 
+    def _load_raw_resized(self, idx: int):
+        img_path, label_path = self.items[idx]
+        with Image.open(img_path) as im:
+            im = im.convert("RGB")
+            im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
+            arr = np.array(im, dtype=np.float32) / 255.0
+        raw_boxes = _read_label(label_path, self.class_to_idx)
+        boxes: List[Sequence[float]] = []
+        labels: List[int] = []
+        for cid, cx, cy, w, h in raw_boxes:
+            boxes.append([cx, cy, w, h])
+            labels.append(cid)
+        boxes_np = np.array(boxes, dtype=np.float32)
+        labels_np = np.array(labels, dtype=np.int64)
+        return arr, boxes_np, labels_np, img_path
+
+    def sample_random(self):
+        ridx = random.randrange(len(self.items))
+        return self._load_raw_resized(ridx)
+
     def __getitem__(self, idx: int):
         img_path, label_path = self.items[idx]
         with Image.open(img_path) as im:
@@ -134,7 +172,6 @@ class YoloDataset(Dataset):
                 flipped = False
             im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
             arr = np.array(im, dtype=np.float32) / 255.0
-            img = torch.from_numpy(arr).permute(2, 0, 1)
 
         raw_boxes = _read_label(label_path, self.class_to_idx)
         boxes: List[Sequence[float]] = []
@@ -145,12 +182,20 @@ class YoloDataset(Dataset):
             boxes.append([cx, cy, w, h])
             labels.append(cid)
 
+        boxes_np = np.array(boxes, dtype=np.float32)
+        labels_np = np.array(labels, dtype=np.int64)
+        if self.pipeline:
+            img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
+        else:
+            img_np = arr
+
         target = {
-            "boxes": torch.tensor(boxes, dtype=torch.float32),
-            "labels": torch.tensor(labels, dtype=torch.long),
+            "boxes": torch.tensor(boxes_np, dtype=torch.float32),
+            "labels": torch.tensor(labels_np, dtype=torch.long),
             "image_id": img_path,
         }
-        return img, target
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+        return img_tensor, target
 
 
 def detection_collate(batch):

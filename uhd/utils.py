@@ -27,5 +27,11 @@ def ensure_dir(path: str) -> None:
 def move_targets(targets, device):
     moved = []
     for t in targets:
-        moved.append({"boxes": t["boxes"].to(device), "image_id": t["image_id"]})
+        moved.append(
+            {
+                "boxes": t["boxes"].to(device),
+                "labels": t.get("labels", torch.zeros(len(t["boxes"]), dtype=torch.long)).to(device),
+                "image_id": t["image_id"],
+            }
+        )
     return moved
