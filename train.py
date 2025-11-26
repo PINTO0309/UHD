@@ -95,6 +95,17 @@ def load_aug_config(path: str):
         return yaml.safe_load(f)
 
 
+def log_scalars(writer: SummaryWriter, prefix: str, values: Dict[str, float], ordered_keys, step: int):
+    logged = set()
+    for k in ordered_keys:
+        if k in values:
+            writer.add_scalar(f"{prefix}/{k}", values[k], step)
+            logged.add(k)
+    for k in sorted(values.keys()):
+        if k not in logged:
+            writer.add_scalar(f"{prefix}/{k}", values[k], step)
+
+
 def _parse_best_filename(path: str):
     """Parse best checkpoint filename to extract (arch, epoch, map)."""
     base = os.path.splitext(os.path.basename(path))[0]  # without .pt
@@ -558,7 +569,10 @@ def main():
         num_classes=num_classes,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler(
+        device_type=device.type if device.type in ("cuda", "cpu", "mps", "xla") else "cuda",
+        enabled=bool(use_amp and device.type == "cuda"),
+    )
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, last_epoch=-1)
     start_epoch = 0
     best_map = 0.0
@@ -607,12 +621,18 @@ def main():
             total_epochs=args.epochs,
             num_classes=num_classes,
         )
-        train_msg = f"epoch {epoch+1}/{args.epochs} train: {train_logs}"
+        fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
+        train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
         print(train_msg)
         with open(log_path, "a") as f:
             f.write(train_msg + "\n")
-        for k, v in train_logs.items():
-            writer.add_scalar(f"train/{k}", v, epoch + 1)
+        log_scalars(
+            writer,
+            "train",
+            train_logs,
+            ordered_keys=["loss", "hm", "off", "wh", "cls", "l1", "iou"],
+            step=epoch + 1,
+        )
 
         metrics = None
         if (epoch + 1) % args.eval_interval == 0:
@@ -634,12 +654,18 @@ def main():
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
             )
-            val_msg = f"epoch {epoch+1}/{args.epochs} val: {metrics}"
+            fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
+            val_msg = f"epoch {epoch+1}/{args.epochs} val: {fmt_val}"
             print(val_msg)
             with open(log_path, "a") as f:
                 f.write(val_msg + "\n")
-            for k, v in metrics.items():
-                writer.add_scalar(f"val/{k}", v, epoch + 1)
+            log_scalars(
+                writer,
+                "val",
+                metrics,
+                ordered_keys=["AP@0.5", "ap@0.5", "mAP@0.5", "map@0.5", "loss", "hm", "off", "wh", "cls", "l1", "iou"],
+                step=epoch + 1,
+            )
 
             # Save checkpoints: best top-10 by mAP and last top-10 by recency
             map_val = metrics.get("mAP@0.5", 0.0)
