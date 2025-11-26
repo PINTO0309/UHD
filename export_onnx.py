@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--layers", type=int, default=3)
     parser.add_argument("--dim-feedforward", type=int, default=128)
+    parser.add_argument("--use-skip", action="store_true", help="Enable skip connections for CNN export (defaults to checkpoint flag).")
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--dynamic", action="store_true", help="Export with dynamic height/width axes.")
     parser.add_argument("--topk", type=int, default=100, help="Top-K for postprocess (CNN).")
@@ -64,6 +65,8 @@ def main():
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     arch = (args.arch or ckpt.get("arch", "cnn")).lower()
+    ckpt_use_skip = bool(ckpt.get("use_skip", False))
+    use_skip = ckpt_use_skip or bool(args.use_skip)
     classes = ckpt.get("classes", [0])
     num_classes = len(classes) if isinstance(classes, (list, tuple)) else int(classes)
     h, w = parse_img_size(args.img_size)
@@ -77,6 +80,7 @@ def main():
         layers=args.layers,
         dim_feedforward=args.dim_feedforward,
         num_classes=num_classes,
+        use_skip=use_skip,
     )
     model.load_state_dict(ckpt["model"])
     model.eval()

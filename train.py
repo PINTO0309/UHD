@@ -55,6 +55,7 @@ def parse_args():
     )
     # CNN params
     parser.add_argument("--cnn-width", type=int, default=32)
+    parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
     # Transformer params
     parser.add_argument("--num-queries", type=int, default=10)
     parser.add_argument("--d-model", type=int, default=64)
@@ -548,7 +549,9 @@ def main():
     class_ids = parse_classes(args.classes)
     num_classes = len(class_ids)
     aug_cfg = load_aug_config(args.aug_config)
+    use_skip = bool(args.use_skip)
     ckpt_meta = None
+    ckpt_use_skip = None
     if args.resume:
         ckpt_meta = torch.load(args.resume, map_location="cpu")
         if "classes" in ckpt_meta:
@@ -559,6 +562,11 @@ def main():
             num_classes = len(class_ids)
         if "augment_cfg" in ckpt_meta:
             aug_cfg = ckpt_meta["augment_cfg"]
+        if "use_skip" in ckpt_meta:
+            ckpt_use_skip = bool(ckpt_meta["use_skip"])
+    if ckpt_use_skip is not None and ckpt_use_skip != use_skip:
+        print(f"Overriding CLI use-skip={use_skip} with checkpoint use-skip={ckpt_use_skip}")
+        use_skip = ckpt_use_skip
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -576,6 +584,7 @@ def main():
         layers=args.layers,
         dim_feedforward=args.dim_feedforward,
         num_classes=num_classes,
+        use_skip=use_skip,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     try:
@@ -691,6 +700,7 @@ def main():
                 "arch": args.arch,
                 "classes": class_ids,
                 "augment_cfg": aug_cfg,
+                "use_skip": use_skip,
             }
             best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
             best_path = os.path.join(run_dir, best_name)
@@ -708,6 +718,7 @@ def main():
             "arch": args.arch,
             "classes": class_ids,
             "augment_cfg": aug_cfg,
+            "use_skip": use_skip,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)

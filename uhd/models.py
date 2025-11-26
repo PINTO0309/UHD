@@ -20,13 +20,14 @@ class DWConvBlock(nn.Module):
 class MiniCenterNet(nn.Module):
     """Minimal anchor-free detector with heatmap + offsets + size."""
 
-    def __init__(self, width: int = 32, num_classes: int = 1) -> None:
+    def __init__(self, width: int = 32, num_classes: int = 1, use_skip: bool = False) -> None:
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(width),
             nn.ReLU(inplace=True),
         )
+        self.use_skip = use_skip
         self.stage1 = DWConvBlock(width, width, stride=2)  # 64 -> 32
         self.stage2 = DWConvBlock(width, width, stride=2)  # 32 -> 16
         self.stage3 = DWConvBlock(width, width, stride=2)  # 16 -> 8
@@ -36,11 +37,15 @@ class MiniCenterNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         x = self.stem(x)
-        x = self.stage3(self.stage2(self.stage1(x)))
+        s1 = self.stage1(x)
+        s2 = self.stage2(s1)
+        s3 = self.stage3(s2)
+        if self.use_skip:
+            s3 = s3 + F.adaptive_avg_pool2d(s2, s3.shape[2:]) + F.adaptive_avg_pool2d(s1, s3.shape[2:])
         return {
-            "hm": torch.sigmoid(self.head_hm(x)),
-            "off": self.head_off(x),
-            "wh": self.head_wh(x),
+            "hm": torch.sigmoid(self.head_hm(s3)),
+            "off": self.head_off(s3),
+            "wh": self.head_wh(s3),
         }
 
 
@@ -115,7 +120,11 @@ class TinyDETR(nn.Module):
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
     if arch == "cnn":
-        return MiniCenterNet(width=kwargs.get("width", 32), num_classes=kwargs.get("num_classes", 1))
+        return MiniCenterNet(
+            width=kwargs.get("width", 32),
+            num_classes=kwargs.get("num_classes", 1),
+            use_skip=kwargs.get("use_skip", False),
+        )
     if arch == "transformer":
         return TinyDETR(
             num_queries=kwargs.get("num_queries", 10),

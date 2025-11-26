@@ -29,7 +29,8 @@ uv run python train.py \
 --use-amp \
 --aug-config uhd/aug.yaml \
 --classes 0 \
---cnn-width 32
+--cnn-width 32 \
+--use-skip
 ```
 
 Transformer example (all parameters explicitly set):
@@ -91,6 +92,7 @@ uv run python train.py \
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
 | `--classes` | Comma-separated target class IDs. | `0` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
+| `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--num-queries` | Transformer query count. | `10` |
 | `--d-model` | Transformer model dimension. | `64` |
 | `--heads` | Transformer attention heads. | `4` |
