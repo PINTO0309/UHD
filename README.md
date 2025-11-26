@@ -108,6 +108,12 @@ uv run python train.py \
 - `off`: L1 loss on center offsets (within-cell quantization correction)
 - `wh`: L1 loss on width/height (feature-map scale)
 
+Transformer loss terms
+- `loss`: total loss (`cls + l1 + iou`)
+- `cls`: cross-entropy for class vs. background
+- `l1`: L1 loss on box coordinates
+- `iou`: 1 - IoU for matched predictions
+
 ## ONNX export
 - Export a checkpoint to ONNX (auto-detects arch from checkpoint unless overridden):
   ```bash
