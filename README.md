@@ -15,7 +15,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name cnn_${SIZE} \
 --batch-size 64 \
---epochs 200 \
+--epochs 500 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -46,7 +46,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
 --batch-size 64 \
---epochs 200 \
+--epochs 500 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
