@@ -66,7 +66,8 @@ uv run python train.py \
 --heads 4 \
 --layers 3 \
 --dim-feedforward 128 \
---use-ema
+--use-ema \
+--ema-decay 0.9999
 ```
 
 ## CLI parameters
