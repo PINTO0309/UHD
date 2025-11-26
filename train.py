@@ -82,6 +82,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume training.")
+    parser.add_argument("--ckpt", default=None, help="Path to checkpoint to initialize weights (no optimizer state).")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
@@ -638,47 +639,42 @@ def main():
     activation = args.activation
     use_ema = bool(args.use_ema)
     ema_decay = float(args.ema_decay)
-    ckpt_meta = None
-    ckpt_use_skip = None
-    ckpt_grad_clip = None
-    ckpt_activation = None
-    ckpt_use_ema = None
-    ckpt_ema_decay = None
-    if args.resume:
-        ckpt_meta = torch.load(args.resume, map_location="cpu")
-        if "classes" in ckpt_meta:
-            ckpt_classes = [int(c) for c in ckpt_meta["classes"]]
+    if args.resume and args.ckpt:
+        raise ValueError("--resume and --ckpt cannot be used together.")
+
+    pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
+    ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
+
+    def apply_meta(meta: Dict, label: str):
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay
+        if "classes" in meta:
+            ckpt_classes = [int(c) for c in meta["classes"]]
             if set(ckpt_classes) != set(class_ids):
-                print(f"Overriding CLI classes {class_ids} with checkpoint classes {ckpt_classes}")
+                print(f"Overriding CLI classes {class_ids} with {label} classes {ckpt_classes}")
             class_ids = ckpt_classes
             num_classes = len(class_ids)
-        if "augment_cfg" in ckpt_meta:
-            aug_cfg = ckpt_meta["augment_cfg"]
-        if "use_skip" in ckpt_meta:
-            ckpt_use_skip = bool(ckpt_meta["use_skip"])
-        if "grad_clip_norm" in ckpt_meta:
-            ckpt_grad_clip = float(ckpt_meta["grad_clip_norm"])
-        if "activation" in ckpt_meta:
-            ckpt_activation = ckpt_meta["activation"]
-        if "use_ema" in ckpt_meta:
-            ckpt_use_ema = bool(ckpt_meta["use_ema"])
-        if "ema_decay" in ckpt_meta:
-            ckpt_ema_decay = float(ckpt_meta["ema_decay"])
-    if ckpt_use_skip is not None and ckpt_use_skip != use_skip:
-        print(f"Overriding CLI use-skip={use_skip} with checkpoint use-skip={ckpt_use_skip}")
-        use_skip = ckpt_use_skip
-    if ckpt_grad_clip is not None and abs(ckpt_grad_clip - grad_clip_norm) > 1e-8:
-        print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with checkpoint grad-clip-norm={ckpt_grad_clip}")
-        grad_clip_norm = ckpt_grad_clip
-    if ckpt_activation is not None and ckpt_activation != activation:
-        print(f"Overriding CLI activation={activation} with checkpoint activation={ckpt_activation}")
-        activation = ckpt_activation
-    if ckpt_use_ema is not None and ckpt_use_ema != use_ema:
-        print(f"Overriding CLI use-ema={use_ema} with checkpoint use-ema={ckpt_use_ema}")
-        use_ema = ckpt_use_ema
-    if ckpt_ema_decay is not None and abs(ckpt_ema_decay - ema_decay) > 1e-8:
-        print(f"Overriding CLI ema-decay={ema_decay} with checkpoint ema-decay={ckpt_ema_decay}")
-        ema_decay = ckpt_ema_decay
+        if "augment_cfg" in meta:
+            aug_cfg = meta["augment_cfg"]
+        if "use_skip" in meta and bool(meta["use_skip"]) != use_skip:
+            print(f"Overriding CLI use-skip={use_skip} with {label} use-skip={bool(meta['use_skip'])}")
+            use_skip = bool(meta["use_skip"])
+        if "grad_clip_norm" in meta and abs(float(meta["grad_clip_norm"]) - grad_clip_norm) > 1e-8:
+            print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with {label} grad-clip-norm={float(meta['grad_clip_norm'])}")
+            grad_clip_norm = float(meta["grad_clip_norm"])
+        if "activation" in meta and meta["activation"] != activation:
+            print(f"Overriding CLI activation={activation} with {label} activation={meta['activation']}")
+            activation = meta["activation"]
+        if "use_ema" in meta and bool(meta["use_ema"]) != use_ema:
+            print(f"Overriding CLI use-ema={use_ema} with {label} use-ema={bool(meta['use_ema'])}")
+            use_ema = bool(meta["use_ema"])
+        if "ema_decay" in meta and abs(float(meta["ema_decay"]) - ema_decay) > 1e-8:
+            print(f"Overriding CLI ema-decay={ema_decay} with {label} ema-decay={float(meta['ema_decay'])}")
+            ema_decay = float(meta["ema_decay"])
+
+    if pretrain_meta is not None:
+        apply_meta(pretrain_meta, f"ckpt {args.ckpt}")
+    if ckpt_meta is not None:
+        apply_meta(ckpt_meta, f"resume {args.resume}")
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -699,7 +695,19 @@ def main():
         use_skip=use_skip,
         activation=activation,
     ).to(device)
-    ema_helper = ModelEma(model, decay=ema_decay, device=device) if use_ema else None
+    ema_helper = None
+
+    if pretrain_meta is not None:
+        model.load_state_dict(pretrain_meta["model"])
+        if use_ema:
+            ema_helper = ModelEma(model, decay=ema_decay, device=device)
+            if "ema" in pretrain_meta and pretrain_meta["ema"] is not None:
+                ema_helper.ema.load_state_dict(pretrain_meta["ema"])
+                if "ema_updates" in pretrain_meta:
+                    ema_helper.updates = int(pretrain_meta["ema_updates"])
+            else:
+                ema_helper.ema.load_state_dict(model.state_dict())
+        print(f"Initialized model weights from {args.ckpt}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     try:
         scaler = torch.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
@@ -731,6 +739,9 @@ def main():
         best_map = float(ckpt.get("best_map", ckpt.get("metrics", {}).get("mAP@0.5", float("-inf"))))
         best_map_print = best_map if best_map != float("-inf") else float("nan")
         print(f"Resumed from {args.resume} at epoch {start_epoch} with best mAP@0.5={best_map_print:.4f}")
+
+    if use_ema and ema_helper is None:
+        ema_helper = ModelEma(model, decay=ema_decay, device=device)
 
     train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
     train_loader = DataLoader(
