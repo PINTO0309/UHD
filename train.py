@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import yaml
 from PIL import Image, ImageDraw
+from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -37,6 +38,7 @@ def parse_args():
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--device", default=None, help="cuda or cpu. Defaults to cuda if available.")
     parser.add_argument("--seed", type=int, default=42)
@@ -292,6 +294,7 @@ def train_one_epoch(
     epoch: int,
     total_epochs: int,
     num_classes: int,
+    grad_clip_norm: float = 0.0,
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
@@ -317,10 +320,15 @@ def train_one_epoch(
             loss = loss_dict["loss"]
         if scaler.is_enabled():
             scaler.scale(loss).backward()
+            if grad_clip_norm and grad_clip_norm > 0:
+                scaler.unscale_(optimizer)
+                clip_grad_norm_(model.parameters(), grad_clip_norm)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss.backward()
+            if grad_clip_norm and grad_clip_norm > 0:
+                clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
 
         total_loss += float(loss.item())
@@ -550,8 +558,10 @@ def main():
     num_classes = len(class_ids)
     aug_cfg = load_aug_config(args.aug_config)
     use_skip = bool(args.use_skip)
+    grad_clip_norm = float(args.grad_clip_norm)
     ckpt_meta = None
     ckpt_use_skip = None
+    ckpt_grad_clip = None
     if args.resume:
         ckpt_meta = torch.load(args.resume, map_location="cpu")
         if "classes" in ckpt_meta:
@@ -564,9 +574,14 @@ def main():
             aug_cfg = ckpt_meta["augment_cfg"]
         if "use_skip" in ckpt_meta:
             ckpt_use_skip = bool(ckpt_meta["use_skip"])
+        if "grad_clip_norm" in ckpt_meta:
+            ckpt_grad_clip = float(ckpt_meta["grad_clip_norm"])
     if ckpt_use_skip is not None and ckpt_use_skip != use_skip:
         print(f"Overriding CLI use-skip={use_skip} with checkpoint use-skip={ckpt_use_skip}")
         use_skip = ckpt_use_skip
+    if ckpt_grad_clip is not None and abs(ckpt_grad_clip - grad_clip_norm) > 1e-8:
+        print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with checkpoint grad-clip-norm={ckpt_grad_clip}")
+        grad_clip_norm = ckpt_grad_clip
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -638,6 +653,7 @@ def main():
             epoch=epoch,
             total_epochs=args.epochs,
             num_classes=num_classes,
+            grad_clip_norm=grad_clip_norm,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
@@ -701,6 +717,7 @@ def main():
                 "classes": class_ids,
                 "augment_cfg": aug_cfg,
                 "use_skip": use_skip,
+                "grad_clip_norm": grad_clip_norm,
             }
             best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
             best_path = os.path.join(run_dir, best_name)
@@ -719,6 +736,7 @@ def main():
             "classes": class_ids,
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
+            "grad_clip_norm": grad_clip_norm,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)

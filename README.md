@@ -81,6 +81,7 @@ uv run python train.py \
 | `--resume` | Path to checkpoint to resume training. | `""` |
 | `--lr` | Learning rate. | `0.001` |
 | `--weight-decay` | Weight decay. | `0.0001` |
+| `--grad-clip-norm` | Global gradient norm clip; set `0` to disable. | `5.0` |
 | `--num-workers` | DataLoader workers. | `2` |
 | `--device` | Device: `cuda` or `cpu`. | `cuda` if available |
 | `--seed` | Random seed. | `42` |
