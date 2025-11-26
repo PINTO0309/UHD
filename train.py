@@ -30,18 +30,26 @@ class ModelEma:
         self.device = device
         self.ema = deepcopy(model)
         self.ema.eval()
+        self.updates = 0
         if self.device is not None:
             self.ema.to(self.device)
 
+    def _get_decay(self) -> float:
+        # Warmup EMA decay to let early steps catch up; similar to timm/yolo practice.
+        self.updates += 1
+        warmup = (1 + self.updates) / (10 + self.updates)
+        return min(self.decay, warmup)
+
     @torch.no_grad()
     def update(self, model: torch.nn.Module) -> None:
+        d = self._get_decay()
         ema_params = dict(self.ema.named_parameters())
         model_params = dict(model.named_parameters())
         for k, ema_v in ema_params.items():
             model_v = model_params[k].detach()
             if self.device is not None:
                 model_v = model_v.to(self.device)
-            ema_v.mul_(self.decay).add_(model_v, alpha=1.0 - self.decay)
+            ema_v.mul_(d).add_(model_v, alpha=1.0 - d)
 
         ema_buffers = dict(self.ema.named_buffers())
         model_buffers = dict(model.named_buffers())
@@ -50,7 +58,7 @@ class ModelEma:
             if model_b.dtype.is_floating_point:
                 if self.device is not None:
                     model_b = model_b.to(self.device)
-                ema_b.mul_(self.decay).add_(model_b, alpha=1.0 - self.decay)
+                ema_b.mul_(d).add_(model_b, alpha=1.0 - d)
             else:
                 ema_b.copy_(model_b)
 
@@ -715,8 +723,10 @@ def main():
                 ema_helper = ModelEma(model, decay=ema_decay, device=device)
             if "ema" in ckpt and ckpt["ema"] is not None:
                 ema_helper.ema.load_state_dict(ckpt["ema"])
+                if "ema_updates" in ckpt:
+                    ema_helper.updates = int(ckpt["ema_updates"])
             else:
-                ema_helper.apply_to(model)
+                ema_helper.ema.load_state_dict(model.state_dict())
         start_epoch = int(ckpt.get("epoch", 0))
         best_map = float(ckpt.get("best_map", ckpt.get("metrics", {}).get("mAP@0.5", float("-inf"))))
         best_map_print = best_map if best_map != float("-inf") else float("nan")
@@ -825,6 +835,7 @@ def main():
                 "use_ema": use_ema,
                 "ema_decay": ema_decay,
                 "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
+                "ema_updates": ema_helper.updates if ema_helper is not None else 0,
             }
                 best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
                 best_path = os.path.join(run_dir, best_name)
@@ -852,6 +863,7 @@ def main():
             "use_ema": use_ema,
             "ema_decay": ema_decay,
             "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
+            "ema_updates": ema_helper.updates if ema_helper is not None else 0,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
