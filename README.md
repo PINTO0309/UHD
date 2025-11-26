@@ -79,7 +79,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
 --batch-size 64 \
---epochs 500 \
+--epochs 200 \
 --resume "" \
 --lr 0.001 \
 --weight-decay 0.0001 \
