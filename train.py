@@ -83,6 +83,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume training.")
     parser.add_argument("--ckpt", default=None, help="Path to checkpoint to initialize weights (no optimizer state).")
+    parser.add_argument("--ckpt-non-strict", action="store_true", help="Load --ckpt weights with strict=False (ignore missing/unexpected keys).")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
@@ -683,6 +684,14 @@ def main():
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
 
+    def _load_with_log(target, state, strict: bool, label: str):
+        missing, unexpected = target.load_state_dict(state, strict=strict)
+        if not strict:
+            if missing:
+                print(f"[{label}] missing keys ({len(missing)}): {missing[:10]}{' ...' if len(missing) > 10 else ''}")
+            if unexpected:
+                print(f"[{label}] unexpected keys ({len(unexpected)}): {unexpected[:10]}{' ...' if len(unexpected) > 10 else ''}")
+
     model = build_model(
         args.arch,
         width=args.cnn_width,
@@ -698,11 +707,21 @@ def main():
     ema_helper = None
 
     if pretrain_meta is not None:
-        model.load_state_dict(pretrain_meta["model"])
+        _load_with_log(
+            model,
+            pretrain_meta["model"],
+            strict=not args.ckpt_non_strict,
+            label=f"ckpt model ({'strict' if not args.ckpt_non_strict else 'non-strict'})",
+        )
         if use_ema:
             ema_helper = ModelEma(model, decay=ema_decay, device=device)
             if "ema" in pretrain_meta and pretrain_meta["ema"] is not None:
-                ema_helper.ema.load_state_dict(pretrain_meta["ema"])
+                _load_with_log(
+                    ema_helper.ema,
+                    pretrain_meta["ema"],
+                    strict=not args.ckpt_non_strict,
+                    label=f"ckpt ema ({'strict' if not args.ckpt_non_strict else 'non-strict'})",
+                )
                 if "ema_updates" in pretrain_meta:
                     ema_helper.updates = int(pretrain_meta["ema_updates"])
             else:
