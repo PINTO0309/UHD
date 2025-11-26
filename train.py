@@ -180,8 +180,12 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
     for name in os.listdir(run_dir):
         full = os.path.join(run_dir, name)
         if os.path.isdir(full) and name.isdigit():
-            dirs.append((int(name), full))
-    dirs.sort(key=lambda x: x[0], reverse=True)
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            dirs.append((mtime, full))
+    dirs.sort(key=lambda x: x[0], reverse=True)  # newest first
     for _, path in dirs[keep:]:
         try:
             for root, _, files in os.walk(path, topdown=False):
