@@ -94,6 +94,7 @@ def parse_args():
     parser.add_argument("--teacher-dim-feedforward", type=int, default=None, help="Teacher FFN dim (defaults to student).")
     parser.add_argument("--teacher-use-skip", action="store_true", help="Force teacher use-skip on (otherwise checkpoint/student default).")
     parser.add_argument("--teacher-activation", choices=["relu", "swish"], default=None, help="Teacher activation (defaults to checkpoint or student).")
+    parser.add_argument("--teacher-use-fpn", action="store_true", help="Force teacher use-fpn on (otherwise checkpoint/student default).")
     parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
     parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
     parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
@@ -129,6 +130,7 @@ def parse_args():
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--layers", type=int, default=3)
     parser.add_argument("--dim-feedforward", type=int, default=128)
+    parser.add_argument("--use-fpn", action="store_true", help="Enable simple FPN for transformer backbone.")
     return parser.parse_args()
 
 
@@ -696,6 +698,7 @@ def main():
     activation = args.activation
     use_ema = bool(args.use_ema)
     ema_decay = float(args.ema_decay)
+    use_fpn = bool(args.use_fpn)
     distill_kl = float(args.distill_kl)
     distill_box_l1 = float(args.distill_box_l1)
     distill_temperature = float(args.distill_temperature)
@@ -709,6 +712,7 @@ def main():
     teacher_dim_feedforward = args.teacher_dim_feedforward
     teacher_use_skip = bool(args.teacher_use_skip)
     teacher_activation = args.teacher_activation
+    teacher_use_fpn = bool(args.teacher_use_fpn)
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -716,8 +720,8 @@ def main():
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay
-        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn
+        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
@@ -730,6 +734,9 @@ def main():
         if "use_skip" in meta and bool(meta["use_skip"]) != use_skip:
             print(f"Overriding CLI use-skip={use_skip} with {label} use-skip={bool(meta['use_skip'])}")
             use_skip = bool(meta["use_skip"])
+        if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
+            print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
+            use_fpn = bool(meta["use_fpn"])
         if "grad_clip_norm" in meta and abs(float(meta["grad_clip_norm"]) - grad_clip_norm) > 1e-8:
             print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with {label} grad-clip-norm={float(meta['grad_clip_norm'])}")
             grad_clip_norm = float(meta["grad_clip_norm"])
@@ -761,6 +768,8 @@ def main():
                 teacher_use_skip = bool(meta["teacher_use_skip"])
             if "teacher_activation" in meta and meta["teacher_activation"]:
                 teacher_activation = meta["teacher_activation"]
+            if "teacher_use_fpn" in meta:
+                teacher_use_fpn = bool(meta["teacher_use_fpn"])
             if "distill_kl" in meta:
                 distill_kl = float(meta["distill_kl"])
             if "distill_box_l1" in meta:
@@ -801,6 +810,7 @@ def main():
         num_classes=num_classes,
         use_skip=use_skip,
         activation=activation,
+        use_fpn=use_fpn,
     ).to(device)
     ema_helper = None
 
@@ -886,6 +896,7 @@ def main():
         else:
             t_use_skip = teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
             t_activation = teacher_activation or t_meta.get("activation", activation)
+            t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
             teacher_model = build_model(
                 t_arch,
                 width=args.cnn_width,
@@ -897,6 +908,7 @@ def main():
                 num_classes=num_classes,
                 use_skip=t_use_skip,
                 activation=t_activation,
+                use_fpn=t_use_fpn,
             ).to(device)
             teacher_model.load_state_dict(t_meta["model"])
             teacher_model.eval()
@@ -985,9 +997,10 @@ def main():
                     "metrics": state_metrics,
                     "epoch": epoch + 1,
                     "arch": args.arch,
-                    "classes": class_ids,
+                "classes": class_ids,
                 "augment_cfg": aug_cfg,
                 "use_skip": use_skip,
+                "use_fpn": use_fpn,
                 "grad_clip_norm": grad_clip_norm,
                 "activation": activation,
                 "best_map": best_map,
@@ -1004,6 +1017,7 @@ def main():
                 "teacher_dim_feedforward": teacher_dim_feedforward,
                 "teacher_use_skip": teacher_use_skip,
                 "teacher_activation": teacher_activation,
+                "teacher_use_fpn": teacher_use_fpn,
                 "distill_kl": distill_kl,
                 "distill_box_l1": distill_box_l1,
                 "distill_temperature": distill_temperature,
@@ -1029,6 +1043,7 @@ def main():
             "classes": class_ids,
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
+            "use_fpn": use_fpn,
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
             "best_map": best_map,
@@ -1045,6 +1060,7 @@ def main():
             "teacher_dim_feedforward": teacher_dim_feedforward,
             "teacher_use_skip": teacher_use_skip,
             "teacher_activation": teacher_activation,
+            "teacher_use_fpn": teacher_use_fpn,
             "distill_kl": distill_kl,
             "distill_box_l1": distill_box_l1,
             "distill_temperature": distill_temperature,

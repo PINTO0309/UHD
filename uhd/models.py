@@ -84,9 +84,18 @@ class TinyDETR(nn.Module):
         dim_feedforward: int = 128,
         num_classes: int = 1,
         activation: str = "swish",
+        use_fpn: bool = False,
     ) -> None:
         super().__init__()
-        self.patch = nn.Conv2d(3, d_model, kernel_size=4, stride=4)
+        self.use_fpn = use_fpn
+        if self.use_fpn:
+            self.stem = nn.Conv2d(3, d_model, kernel_size=3, stride=2, padding=1)
+            self.fpn_high = DWConvBlock(d_model, d_model, stride=1, activation=activation)  # extra high-res stage
+            self.fpn1 = DWConvBlock(d_model, d_model, stride=2, activation=activation)
+            self.fpn2 = DWConvBlock(d_model, d_model, stride=2, activation=activation)
+        else:
+            # Higher-res single-scale patch embedding (stride 2 instead of 4)
+            self.patch = nn.Conv2d(3, d_model, kernel_size=3, stride=2, padding=1)
         self.d_model = d_model
         self.num_classes = num_classes
         act = activation.lower()
@@ -116,24 +125,41 @@ class TinyDETR(nn.Module):
         self.class_head = nn.Linear(d_model, num_classes + 1)  # classes + no-object
         self.box_head = nn.Linear(d_model, 4)  # cx, cy, w, h normalized
 
-        self.register_buffer("pos_embed", None, persistent=False)
+        self.pos_cache = {}
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         b = x.size(0)
-        feat = self.patch(x)  # B, C, 16, 16 for 64x64 input
-        h, w = feat.shape[2], feat.shape[3]
-        src = feat.flatten(2).permute(2, 0, 1)  # HW, B, C
-        if self.pos_embed is None or self.pos_embed.shape[0] != h * w:
-            pos_tmp = _get_2d_sincos_pos_embed(h=h, w=w, dim=self.d_model).to(x.device)
+        if self.use_fpn:
+            feats = []
+            f0 = self.stem(x)  # stride 2
+            f1 = self.fpn_high(f0)  # stride 2 refined
+            f2 = self.fpn1(f1)  # stride 4
+            f3 = self.fpn2(f2)  # stride 8
+            feats.extend([f0, f1, f2, f3])
+            src_list = []
+            for feat in feats:
+                h, w = feat.shape[2], feat.shape[3]
+                pos = self._pos_encoding(h, w, feat.device).unsqueeze(1).repeat(1, b, 1)
+                src_list.append(feat.flatten(2).permute(2, 0, 1) + pos)
+            src = torch.cat(src_list, dim=0)
         else:
-            pos_tmp = self.pos_embed[: h * w, :].to(x.device)
-        pos = pos_tmp.unsqueeze(1).repeat(1, b, 1)
-        memory = self.encoder(src + pos)
+            feat = self.patch(x)  # B, C, 16, 16 for 64x64 input
+            h, w = feat.shape[2], feat.shape[3]
+            pos = self._pos_encoding(h, w, x.device).unsqueeze(1).repeat(1, b, 1)
+            src = feat.flatten(2).permute(2, 0, 1) + pos
+
+        memory = self.encoder(src)
         tgt = self.query_embed.weight.unsqueeze(1).repeat(1, b, 1)
         hs = self.decoder(tgt, memory)
         logits = self.class_head(hs)  # Q, B, 2
         boxes = self.box_head(hs).sigmoid()  # normalized
         return logits, boxes
+
+    def _pos_encoding(self, h: int, w: int, device: torch.device) -> torch.Tensor:
+        key = (h, w, device.type)
+        if key not in self.pos_cache or self.pos_cache[key].device != device:
+            self.pos_cache[key] = _get_2d_sincos_pos_embed(h=h, w=w, dim=self.d_model).to(device)
+        return self.pos_cache[key]
 
 
 def build_model(arch: str, **kwargs) -> nn.Module:
@@ -155,5 +181,6 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             dim_feedforward=kwargs.get("dim_feedforward", 128),
             num_classes=kwargs.get("num_classes", 1),
             activation=kwargs.get("activation", "swish"),
+            use_fpn=kwargs.get("use_fpn", False),
         )
     raise ValueError(f"Unknown architecture: {arch}")
