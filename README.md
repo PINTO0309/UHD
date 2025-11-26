@@ -10,8 +10,7 @@ SIZE=64x64
 uv run python train.py \
 --arch cnn \
 --image-dir data/wholebody34/obj_train_data \
---train-list data/wholebody34/train.txt \
---val-list data/wholebody34/train.txt \
+--train-split 0.8 \
 --val-split 0.2 \
 --img-size ${SIZE} \
 --exp-name cnn_${SIZE} \
@@ -27,7 +26,6 @@ uv run python train.py \
 --eval-interval 1 \
 --conf-thresh 0.3 \
 --topk 50 \
---save-dir outputs \
 --use-amp \
 --aug-config uhd/aug.yaml \
 --classes 0 \
@@ -46,8 +44,7 @@ SIZE=64x64
 uv run python train.py \
 --arch transformer \
 --image-dir data/wholebody34/obj_train_data \
---train-list data/wholebody34/train.txt \
---val-list data/wholebody34/train.txt \
+--train-split 0.8 \
 --val-split 0.2 \
 --img-size ${SIZE} \
 --exp-name transformer_${SIZE} \
@@ -63,7 +60,6 @@ uv run python train.py \
 --eval-interval 1 \
 --conf-thresh 0.3 \
 --topk 50 \
---save-dir outputs \
 --use-amp \
 --aug-config uhd/aug.yaml \
 --classes 0 \
@@ -75,13 +71,45 @@ uv run python train.py \
 --dim-feedforward 128
 ```
 
-## Loss terms (CNN / CenterNet)
-- `loss`: total loss (`hm + off + wh`)
-- `hm`: focal loss on center heatmap
-- `off`: L1 loss on center offsets (within-cell quantization correction)
-- `wh`: L1 loss on width/height (feature-map scale)
+## CLI parameters
+
+| Parameter | Description | Default |
+| --- | --- | --- |
+| `--arch` | Model architecture: `cnn` or `transformer`. | `cnn` |
+| `--image-dir` | Directory containing images and YOLO txt labels. | `data/wholebody34/obj_train_data` |
+| `--train-split` | Fraction of data used for training. | `0.8` |
+| `--val-split` | Fraction of data used for validation. | `0.2` |
+| `--img-size` | Input size `HxW` (e.g., `64x64`). | `64x64` |
+| `--exp-name` | Experiment name (logs/checkpoints under `runs/<exp-name>`). | `default` |
+| `--batch-size` | Batch size. | `64` |
+| `--epochs` | Number of epochs. | `50` |
+| `--resume` | Path to checkpoint to resume training. | `""` |
+| `--lr` | Learning rate. | `0.001` |
+| `--weight-decay` | Weight decay. | `0.0001` |
+| `--num-workers` | DataLoader workers. | `2` |
+| `--device` | Device: `cuda` or `cpu`. | `cuda` if available |
+| `--seed` | Random seed. | `42` |
+| `--log-interval` | Steps between logging to progress bar. | `10` |
+| `--eval-interval` | Epoch interval for evaluation. | `1` |
+| `--conf-thresh` | Confidence threshold for decoding. | `0.3` |
+| `--topk` | Top-K for CNN decoding. | `50` |
+| `--use-amp` | Enable automatic mixed precision. | `False` |
+| `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
+| `--classes` | Comma-separated target class IDs. | `0` |
+| `--cnn-width` | Width multiplier for CNN backbone. | `32` |
+| `--num-queries` | Transformer query count. | `10` |
+| `--d-model` | Transformer model dimension. | `64` |
+| `--heads` | Transformer attention heads. | `4` |
+| `--layers` | Transformer encoder/decoder layers. | `3` |
+| `--dim-feedforward` | Transformer feedforward dimension. | `128` |
 
 ## Augmentation via YAML
 - Specify a YAML file with `--aug-config` to run the `data_augment:` entries in the listed order (e.g., `--aug-config uhd/aug.yaml`).
 - Supported ops (examples): Mosaic / MixUp / CopyPaste / HorizontalFlip (class_swap_map supported) / VerticalFlip / RandomScale / Translation / RandomCrop / RandomResizedCrop / RandomBrightness / RandomContrast / RandomSaturation / RandomHSV / RandomPhotometricDistort / Blur / MedianBlur / MotionBlur / GaussianBlur / GaussNoise / ImageCompression / ISONoise / RandomRain / RandomFog / RandomSunFlare / CLAHE / ToGray / RemoveOutliers.
 - If `prob` is provided, it is used as the apply probability; otherwise defaults are used (most are 0, RandomPhotometricDistort defaults to 0.5). Unknown keys are ignored.
+
+## Loss terms (CNN / CenterNet)
+- `loss`: total loss (`hm + off + wh`)
+- `hm`: focal loss on center heatmap
+- `off`: L1 loss on center offsets (within-cell quantization correction)
+- `wh`: L1 loss on width/height (feature-map scale)

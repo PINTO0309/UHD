@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import random
 from typing import Dict, Sequence
 
 import numpy as np
@@ -23,9 +24,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Ultra-lightweight detection trainer (CNN/Transformer).")
     parser.add_argument("--arch", choices=["cnn", "transformer"], default="cnn")
     parser.add_argument("--image-dir", default="data/wholebody34/obj_train_data", help="Directory with images and YOLO txt labels.")
-    parser.add_argument("--train-list", default=None, help="Optional list file of images (YOLO style).")
-    parser.add_argument("--val-list", default=None, help="Optional list file for validation.")
-    parser.add_argument("--val-split", type=float, default=0.1, help="Fraction for validation when val-list is not provided.")
+    parser.add_argument("--train-split", type=float, default=0.8, help="Fraction of data for training.")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of data for validation.")
     parser.add_argument(
         "--img-size",
         default="64x64",
@@ -44,7 +44,6 @@ def parse_args():
     parser.add_argument("--eval-interval", type=int, default=1)
     parser.add_argument("--conf-thresh", type=float, default=0.3)
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
-    parser.add_argument("--save-dir", default="outputs", help="Directory to save checkpoints.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
     parser.add_argument(
@@ -156,39 +155,54 @@ def _prune_last(run_dir: str, keep: int = 10):
 
 def make_datasets(args, class_ids, aug_cfg):
     img_h, img_w = parse_img_size(args.img_size)
+    base = YoloDataset(
+        image_dir=args.image_dir,
+        list_path=None,
+        split="all",
+        val_split=0.0,
+        seed=args.seed,
+        img_size=(img_h, img_w),
+        augment=False,
+        class_ids=class_ids,
+        augment_cfg=aug_cfg,
+    )
+    items = list(base.items)
+    if args.train_split + args.val_split > 1.0 + 1e-6:
+        raise ValueError("train-split + val-split must be <= 1.0")
+    rng = random.Random(args.seed)
+    rng.shuffle(items)
+    n = len(items)
+    n_train = int(n * args.train_split)
+    n_val = int(n * args.val_split)
+    train_items = items[:n_train]
+    val_items = items[n_train : n_train + n_val]
+    if not val_items:
+        raise ValueError("Validation split produced no samples; adjust train-split/val-split.")
+
     train_ds = YoloDataset(
         image_dir=args.image_dir,
-        list_path=args.train_list,
-        split="train",
-        val_split=args.val_split,
+        list_path=None,
+        split="all",
+        val_split=0.0,
         seed=args.seed,
         img_size=(img_h, img_w),
         augment=True,
         class_ids=class_ids,
         augment_cfg=aug_cfg,
+        items=train_items,
     )
-    if args.val_list:
-        val_ds = YoloDataset(
-            image_dir=args.image_dir,
-            list_path=args.val_list,
-            split="all",
-            val_split=0.0,
-            seed=args.seed,
-            img_size=(img_h, img_w),
-            augment=False,
-            class_ids=class_ids,
-        )
-    else:
-        val_ds = YoloDataset(
-            image_dir=args.image_dir,
-            list_path=args.train_list,
-            split="val",
-            val_split=args.val_split,
-            seed=args.seed,
-            img_size=(img_h, img_w),
-            augment=False,
-            class_ids=class_ids,
-        )
+    val_ds = YoloDataset(
+        image_dir=args.image_dir,
+        list_path=None,
+        split="all",
+        val_split=0.0,
+        seed=args.seed,
+        img_size=(img_h, img_w),
+        augment=False,
+        class_ids=class_ids,
+        augment_cfg=aug_cfg,
+        items=val_items,
+    )
     return train_ds, val_ds
 
 
@@ -385,7 +399,6 @@ def main():
             aug_cfg = ckpt_meta["augment_cfg"]
     set_seed(args.seed)
     device = default_device(args.device)
-    ensure_dir(args.save_dir)
     run_dir = os.path.join("runs", args.exp_name)
     ensure_dir(run_dir)
     log_path = os.path.join(run_dir, "train.log")

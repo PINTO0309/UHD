@@ -61,6 +61,7 @@ class YoloDataset(Dataset):
         augment: bool = False,
         class_ids: Sequence[int] = (0,),
         augment_cfg: Optional[Dict] = None,
+        items: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         self.image_dir = image_dir
         self.list_path = list_path
@@ -92,23 +93,26 @@ class YoloDataset(Dataset):
                 cfg_body, img_w=self.img_w, img_h=self.img_h, class_swap_map=class_swap_map, dataset=self
             )
 
-        items = self._gather_items()
-        if not items:
+        if items is not None:
+            items_list = items
+        else:
+            items_list = self._gather_items()
+        if not items_list:
             raise ValueError("No samples found. Check image_dir/list_path and labels.")
 
         # Deterministic split
         rng = random.Random(seed)
-        rng.shuffle(items)
+        rng.shuffle(items_list)
         if val_split <= 0 or split == "all":
-            self.items = items
+            self.items = items_list
         else:
-            split_idx = int(len(items) * (1.0 - val_split))
+            split_idx = int(len(items_list) * (1.0 - val_split))
             if split == "train":
-                self.items = items[:split_idx]
+                self.items = items_list[:split_idx]
             elif split == "val":
-                self.items = items[split_idx:]
+                self.items = items_list[split_idx:]
             else:
-                self.items = items
+                self.items = items_list
 
     def _gather_items(self) -> List[Tuple[str, str]]:
         pairs: List[Tuple[str, str]] = []
