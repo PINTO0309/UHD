@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from functools import partial
 
 
 def _make_activation(name: str) -> nn.Module:
@@ -26,11 +27,48 @@ class DWConvBlock(nn.Module):
         return self.act(self.bn(self.pw(self.dw(x))))
 
 
+class SEModule(nn.Module):
+    """Standard SE block with reduction."""
+
+    def __init__(self, channels: int, reduction: int = 4) -> None:
+        super().__init__()
+        mid = max(1, channels // reduction)
+        self.fc1 = nn.Conv2d(channels, mid, kernel_size=1)
+        self.fc2 = nn.Conv2d(mid, channels, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = x.mean(dim=(2, 3), keepdim=True)
+        w = self.fc2(F.silu(self.fc1(w)))
+        return x * torch.sigmoid(w)
+
+
+class EfficientSEModule(nn.Module):
+    """One-layer SE (eSE) without reduction."""
+
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        self.fc = nn.Conv2d(channels, channels, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = x.mean(dim=(2, 3), keepdim=True)
+        return x * torch.sigmoid(self.fc(w))
+
+
 class MiniCenterNet(nn.Module):
     """Minimal anchor-free detector with heatmap + offsets + size."""
 
-    def __init__(self, width: int = 32, num_classes: int = 1, use_skip: bool = False, activation: str = "swish") -> None:
+    def __init__(
+        self,
+        width: int = 32,
+        num_classes: int = 1,
+        use_skip: bool = False,
+        activation: str = "swish",
+        last_se: str = "none",
+        last_width_scale: float = 1.0,
+    ) -> None:
         super().__init__()
+        last_scale = max(1.0, float(last_width_scale))
+        out_c = int(round(width * last_scale))
         self.stem = nn.Sequential(
             nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(width),
@@ -39,10 +77,16 @@ class MiniCenterNet(nn.Module):
         self.use_skip = use_skip
         self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
         self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
-        self.stage3 = DWConvBlock(width, width, stride=2, activation=activation)  # 16 -> 8
-        self.head_hm = nn.Conv2d(width, num_classes, kernel_size=1)
-        self.head_off = nn.Conv2d(width, 2, kernel_size=1)
-        self.head_wh = nn.Conv2d(width, 2, kernel_size=1)
+        self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
+        if last_se == "se":
+            self.se = SEModule(out_c)
+        elif last_se == "ese":
+            self.se = EfficientSEModule(out_c)
+        else:
+            self.se = None
+        self.head_hm = nn.Conv2d(out_c, num_classes, kernel_size=1)
+        self.head_off = nn.Conv2d(out_c, 2, kernel_size=1)
+        self.head_wh = nn.Conv2d(out_c, 2, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         x = self.stem(x)
@@ -51,11 +95,70 @@ class MiniCenterNet(nn.Module):
         s3 = self.stage3(s2)
         if self.use_skip:
             s3 = s3 + F.adaptive_avg_pool2d(s2, s3.shape[2:]) + F.adaptive_avg_pool2d(s1, s3.shape[2:])
+        if self.se is not None:
+            s3 = self.se(s3)
         return {
             "hm": torch.sigmoid(self.head_hm(s3)),
             "off": self.head_off(s3),
             "wh": self.head_wh(s3),
         }
+
+
+class AnchorCNN(nn.Module):
+    """Lightweight anchor-based detector (YOLO-style head)."""
+
+    def __init__(
+        self,
+        width: int = 32,
+        num_classes: int = 1,
+        num_anchors: int = 3,
+        anchors: Tuple[Tuple[float, float], ...] = (),
+        use_skip: bool = False,
+        activation: str = "swish",
+        last_se: str = "none",
+        last_width_scale: float = 1.0,
+    ) -> None:
+        super().__init__()
+        last_scale = max(1.0, float(last_width_scale))
+        out_c = int(round(width * last_scale))
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(width),
+            _make_activation(activation),
+        )
+        self.use_skip = use_skip
+        self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
+        self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
+        self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
+        if last_se == "se":
+            self.se = SEModule(out_c)
+        elif last_se == "ese":
+            self.se = EfficientSEModule(out_c)
+        else:
+            self.se = None
+        out_ch = num_anchors * (5 + num_classes)
+        self.head = nn.Conv2d(out_c, out_ch, kernel_size=1)
+        # anchors are normalized w,h pairs
+        if anchors:
+            anchor_tensor = torch.tensor(anchors, dtype=torch.float32)
+        else:
+            anchor_tensor = torch.tensor([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=torch.float32)
+        self.register_buffer("anchors", anchor_tensor)
+
+    def set_anchors(self, anchors: torch.Tensor) -> None:
+        if anchors is not None:
+            self.anchors = anchors.to(self.anchors.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        s1 = self.stage1(x)
+        s2 = self.stage2(s1)
+        s3 = self.stage3(s2)
+        if self.use_skip:
+            s3 = s3 + F.adaptive_avg_pool2d(s2, s3.shape[2:]) + F.adaptive_avg_pool2d(s1, s3.shape[2:])
+        if self.se is not None:
+            s3 = self.se(s3)
+        return self.head(s3)
 
 
 def _get_2d_sincos_pos_embed(h: int, w: int, dim: int) -> torch.Tensor:
@@ -165,12 +268,22 @@ class TinyDETR(nn.Module):
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
     if arch == "cnn":
-        return MiniCenterNet(
-            width=kwargs.get("width", 32),
-            num_classes=kwargs.get("num_classes", 1),
-            use_skip=kwargs.get("use_skip", False),
-            activation=kwargs.get("activation", "swish"),
-        )
+        if kwargs.get("use_anchor", False):
+            return AnchorCNN(
+                width=kwargs.get("width", 32),
+                num_classes=kwargs.get("num_classes", 1),
+                num_anchors=kwargs.get("num_anchors", 3),
+                anchors=kwargs.get("anchors", ()),
+                use_skip=kwargs.get("use_skip", False),
+                activation=kwargs.get("activation", "swish"),
+            )
+        else:
+            return MiniCenterNet(
+                width=kwargs.get("width", 32),
+                num_classes=kwargs.get("num_classes", 1),
+                use_skip=kwargs.get("use_skip", False),
+                activation=kwargs.get("activation", "swish"),
+            )
     if arch == "transformer":
         return TinyDETR(
             num_queries=kwargs.get("num_queries", 10),

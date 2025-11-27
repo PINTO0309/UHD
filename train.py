@@ -17,8 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from uhd.data import YoloDataset, detection_collate
-from uhd.losses import centernet_loss, detr_loss
-from uhd.metrics import decode_centernet, decode_detr, evaluate_map
+from uhd.losses import anchor_loss, centernet_loss, detr_loss
+from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_map
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
 
@@ -124,6 +124,17 @@ def parse_args():
     # CNN params
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
+    parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
+    parser.add_argument(
+        "--anchors",
+        default="",
+        help='Anchor sizes as normalized "w,h w,h ..." (e.g., "0.08,0.10 0.15,0.20 0.30,0.35").',
+    )
+    parser.add_argument("--auto-anchors", action="store_true", help="Compute anchors from training labels when using anchor head.")
+    parser.add_argument("--num-anchors", type=int, default=3, help="Number of anchors to use when auto-computing.")
+    parser.add_argument("--iou-loss", choices=["iou", "giou", "ciou"], default="giou", help="IoU loss type for anchor head.")
+    parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
+    parser.add_argument("--last-width-scale", type=float, default=1.0, help="Channel scale for last CNN block (e.g., 1.25).")
     # Transformer params
     parser.add_argument("--num-queries", type=int, default=10)
     parser.add_argument("--d-model", type=int, default=64)
@@ -156,6 +167,60 @@ def parse_classes(arg: str):
         return [int(x) for x in arg]
     parts = str(arg).replace(" ", "").split(",")
     return [int(p) for p in parts if p != ""]
+
+
+def parse_anchors_str(arg: str):
+    anchors = []
+    if not arg:
+        return anchors
+    for part in str(arg).split():
+        nums = part.split(",")
+        if len(nums) != 2:
+            continue
+        try:
+            w = float(nums[0])
+            h = float(nums[1])
+        except ValueError:
+            continue
+        anchors.append((w, h))
+    return anchors
+
+
+def _wh_iou(boxes: np.ndarray, anchors: np.ndarray) -> np.ndarray:
+    """IoU using only w/h (no center), boxes: N x 2, anchors: K x 2."""
+    inter = np.minimum(boxes[:, None, :], anchors[None, :, :]).prod(axis=2)
+    union = (boxes[:, 0] * boxes[:, 1])[:, None] + (anchors[:, 0] * anchors[:, 1])[None, :] - inter + 1e-9
+    return inter / union
+
+
+def auto_compute_anchors(boxes: np.ndarray, k: int = 3, iters: int = 20) -> np.ndarray:
+    """Simple k-means on box widths/heights (normalized) using IoU distance."""
+    if boxes.size == 0:
+        return np.zeros((k, 2), dtype=np.float32)
+    n = boxes.shape[0]
+    if n < k:
+        # pad with duplicates if very few boxes
+        boxes = np.concatenate([boxes, boxes[np.random.choice(n, k - n)]], axis=0)
+        n = boxes.shape[0]
+    # init centers by random choice
+    rng = np.random.default_rng(0)
+    centers = boxes[rng.choice(n, k, replace=False)]
+    for _ in range(iters):
+        ious = _wh_iou(boxes, centers)
+        assignments = ious.argmax(axis=1)
+        new_centers = []
+        for ki in range(k):
+            mask = assignments == ki
+            if mask.sum() == 0:
+                new_centers.append(centers[ki])
+            else:
+                new_centers.append(boxes[mask].mean(axis=0))
+        new_centers = np.stack(new_centers, axis=0)
+        if np.allclose(new_centers, centers):
+            break
+        centers = new_centers
+    centers = centers[np.argsort(centers.prod(axis=1))]  # sort by area
+    return centers
 
 
 def load_aug_config(path: str):
@@ -325,6 +390,32 @@ def make_datasets(args, class_ids, aug_cfg):
     return train_ds, val_ds
 
 
+def collect_box_wh(dataset) -> np.ndarray:
+    """Collect normalized (w,h) from YOLO labels for anchor calculation."""
+    wh_list = []
+    for _, label_path in dataset.items:
+        if not os.path.exists(label_path):
+            continue
+        with open(label_path, "r") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                try:
+                    cid_raw = int(float(parts[0]))
+                except ValueError:
+                    continue
+                if cid_raw not in dataset.class_to_idx:
+                    continue
+                try:
+                    w = float(parts[3])
+                    h = float(parts[4])
+                except ValueError:
+                    continue
+                wh_list.append((w, h))
+    return np.array(wh_list, dtype=np.float32)
+
+
 def run_coco_eval(images, annos, dets, class_ids, per_class=False):
     try:
         try:
@@ -383,12 +474,18 @@ def train_one_epoch(
     distill_box_l1: float = 0.0,
     distill_cosine: bool = False,
     distill_temperature: float = 1.0,
+    use_anchor: bool = False,
+    anchors: torch.Tensor = None,
+    iou_loss_type: str = "giou",
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
     total_hm = 0.0
     total_off = 0.0
     total_wh = 0.0
+    total_anchor_obj = 0.0
+    total_anchor_cls = 0.0
+    total_anchor_box = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
@@ -417,7 +514,10 @@ def train_one_epoch(
                         teacher_logits, teacher_boxes = t_out
             if arch == "cnn":
                 outputs = model(imgs)
-                loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
+                if use_anchor:
+                    loss_dict = anchor_loss(outputs, targets_dev, anchors=anchors, num_classes=num_classes, iou_loss=iou_loss_type)
+                else:
+                    loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
             else:
                 logits, box_pred = model(imgs)
                 loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
@@ -452,9 +552,14 @@ def train_one_epoch(
 
         total_loss += float(loss.item())
         if arch == "cnn":
-            total_hm += float(loss_dict["hm"].item())
-            total_off += float(loss_dict["off"].item())
-            total_wh += float(loss_dict["wh"].item())
+            if use_anchor:
+                total_anchor_obj += float(loss_dict["obj"].item())
+                total_anchor_cls += float(loss_dict["cls"].item())
+                total_anchor_box += float(loss_dict["box"].item())
+            else:
+                total_hm += float(loss_dict["hm"].item())
+                total_off += float(loss_dict["off"].item())
+                total_wh += float(loss_dict["wh"].item())
         else:
             total_cls += float(loss_dict["cls"].item())
             total_l1 += float(loss_dict["l1"].item())
@@ -467,13 +572,22 @@ def train_one_epoch(
 
         if (step + 1) % log_interval == 0:
             if arch == "cnn":
-                pbar.set_postfix(
-                    loss=f"{loss.item():.4f}",
-                    hm=f"{loss_dict['hm'].item():.4f}",
-                    off=f"{loss_dict['off'].item():.4f}",
-                    wh=f"{loss_dict['wh'].item():.4f}",
-                    step=f"{step+1}/{len(loader)}",
-                )
+                if use_anchor:
+                    pbar.set_postfix(
+                        loss=f"{loss.item():.4f}",
+                        obj=f"{loss_dict['obj'].item():.4f}",
+                        cls=f"{loss_dict['cls'].item():.4f}",
+                        box=f"{loss_dict['box'].item():.4f}",
+                        step=f"{step+1}/{len(loader)}",
+                    )
+                else:
+                    pbar.set_postfix(
+                        loss=f"{loss.item():.4f}",
+                        hm=f"{loss_dict['hm'].item():.4f}",
+                        off=f"{loss_dict['off'].item():.4f}",
+                        wh=f"{loss_dict['wh'].item():.4f}",
+                        step=f"{step+1}/{len(loader)}",
+                    )
             else:
                 pbar.set_postfix(
                     loss=f"{loss.item():.4f}",
@@ -485,13 +599,22 @@ def train_one_epoch(
 
     logs = {"loss": total_loss / steps if steps else 0.0}
     if arch == "cnn":
-        logs.update(
-            {
-                "hm": total_hm / steps if steps else 0.0,
-                "off": total_off / steps if steps else 0.0,
-                "wh": total_wh / steps if steps else 0.0,
-            }
-        )
+        if use_anchor:
+            logs.update(
+                {
+                    "obj": total_anchor_obj / steps if steps else 0.0,
+                    "cls": total_anchor_cls / steps if steps else 0.0,
+                    "box": total_anchor_box / steps if steps else 0.0,
+                }
+            )
+        else:
+            logs.update(
+                {
+                    "hm": total_hm / steps if steps else 0.0,
+                    "off": total_off / steps if steps else 0.0,
+                    "wh": total_wh / steps if steps else 0.0,
+                }
+            )
     else:
         logs.update(
             {
@@ -522,6 +645,9 @@ def validate(
     sample_limit: int = 10,
     coco_eval: bool = False,
     coco_per_class: bool = False,
+    use_anchor: bool = False,
+    anchors: torch.Tensor = None,
+    iou_loss_type: str = "giou",
 ) -> Dict[str, float]:
     model.eval()
     all_preds = []
@@ -531,6 +657,9 @@ def validate(
     total_hm = 0.0
     total_off = 0.0
     total_wh = 0.0
+    total_anchor_obj = 0.0
+    total_anchor_cls = 0.0
+    total_anchor_box = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
@@ -592,8 +721,12 @@ def validate(
             ):
                 if arch == "cnn":
                     outputs = model(imgs)
-                    loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
-                    preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
+                    if use_anchor:
+                        loss_dict = anchor_loss(outputs, targets_dev, anchors=anchors, num_classes=num_classes, iou_loss=iou_loss_type)
+                        preds = decode_anchor(outputs, anchors=anchors, num_classes=num_classes, conf_thresh=conf_thresh)
+                    else:
+                        loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
+                        preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
                 else:
                     logits, box_pred = model(imgs)
                     loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
@@ -601,9 +734,14 @@ def validate(
             # accumulate losses
             total_loss += float(loss_dict["loss"].item())
             if arch == "cnn":
-                total_hm += float(loss_dict["hm"].item())
-                total_off += float(loss_dict["off"].item())
-                total_wh += float(loss_dict["wh"].item())
+                if use_anchor:
+                    total_anchor_obj += float(loss_dict["obj"].item())
+                    total_anchor_cls += float(loss_dict["cls"].item())
+                    total_anchor_box += float(loss_dict["box"].item())
+                else:
+                    total_hm += float(loss_dict["hm"].item())
+                    total_off += float(loss_dict["off"].item())
+                    total_wh += float(loss_dict["wh"].item())
             else:
                 total_cls += float(loss_dict["cls"].item())
                 total_l1 += float(loss_dict["l1"].item())
@@ -675,9 +813,14 @@ def validate(
     if steps > 0:
         metrics["loss"] = total_loss / steps
         if arch == "cnn":
-            metrics["hm"] = total_hm / steps
-            metrics["off"] = total_off / steps
-            metrics["wh"] = total_wh / steps
+            if use_anchor:
+                metrics["obj"] = total_anchor_obj / steps
+                metrics["cls"] = total_anchor_cls / steps
+                metrics["box"] = total_anchor_box / steps
+            else:
+                metrics["hm"] = total_hm / steps
+                metrics["off"] = total_off / steps
+                metrics["wh"] = total_wh / steps
         else:
             metrics["cls"] = total_cls / steps
             metrics["l1"] = total_l1 / steps
@@ -713,6 +856,15 @@ def main():
     teacher_use_skip = bool(args.teacher_use_skip)
     teacher_activation = args.teacher_activation
     teacher_use_fpn = bool(args.teacher_use_fpn)
+    use_anchor = bool(args.use_anchor)
+    anchor_list = parse_anchors_str(args.anchors)
+    auto_anchors = bool(args.auto_anchors)
+    num_anchors = int(args.num_anchors if args.num_anchors else 0) or 3
+    if anchor_list:
+        num_anchors = len(anchor_list)
+    iou_loss_type = args.iou_loss
+    last_se = args.last_se
+    last_width_scale = float(args.last_width_scale)
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -723,6 +875,8 @@ def main():
         nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine
+        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
+        nonlocal last_se, last_width_scale
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
             if set(ckpt_classes) != set(class_ids):
@@ -737,6 +891,21 @@ def main():
         if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
             print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
             use_fpn = bool(meta["use_fpn"])
+        if "use_anchor" in meta:
+            use_anchor = bool(meta["use_anchor"])
+        if "anchors" in meta and meta["anchors"]:
+            anchor_list = [tuple(a) for a in meta["anchors"]]
+            num_anchors = len(anchor_list)
+        if "auto_anchors" in meta:
+            auto_anchors = bool(meta["auto_anchors"])
+        if "num_anchors" in meta:
+            num_anchors = int(meta["num_anchors"])
+        if "iou_loss" in meta and meta["iou_loss"]:
+            iou_loss_type = meta["iou_loss"]
+        if "last_se" in meta and meta["last_se"]:
+            last_se = meta["last_se"]
+        if "last_width_scale" in meta and meta["last_width_scale"]:
+            last_width_scale = float(meta["last_width_scale"])
         if "grad_clip_norm" in meta and abs(float(meta["grad_clip_norm"]) - grad_clip_norm) > 1e-8:
             print(f"Overriding CLI grad-clip-norm={grad_clip_norm} with {label} grad-clip-norm={float(meta['grad_clip_norm'])}")
             grad_clip_norm = float(meta["grad_clip_norm"])
@@ -791,6 +960,25 @@ def main():
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
 
+    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
+    anchors_tensor = None
+    if args.arch == "cnn" and use_anchor:
+        if anchor_list:
+            anchors_np = np.array(anchor_list, dtype=np.float32)
+        elif auto_anchors:
+            wh = collect_box_wh(train_ds)
+            anchors_np = auto_compute_anchors(wh, k=num_anchors)
+        else:
+            anchors_np = np.array([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=np.float32)
+        if anchors_np.size == 0:
+            anchors_np = np.array([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=np.float32)
+        if anchors_np.shape[0] > num_anchors:
+            anchors_np = anchors_np[:num_anchors]
+        num_anchors = anchors_np.shape[0]
+        anchors_tensor = torch.tensor(anchors_np, dtype=torch.float32)
+        anchors_tensor = anchors_tensor.to(device)
+        anchor_list = [tuple(map(float, a)) for a in anchors_np.tolist()]
+
     def _load_with_log(target, state, strict: bool, label: str):
         missing, unexpected = target.load_state_dict(state, strict=strict)
         if not strict:
@@ -811,7 +999,14 @@ def main():
         use_skip=use_skip,
         activation=activation,
         use_fpn=use_fpn,
+        use_anchor=use_anchor,
+        num_anchors=num_anchors,
+        anchors=anchor_list,
+        last_se=last_se,
+        last_width_scale=last_width_scale,
     ).to(device)
+    if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
+        model.set_anchors(anchors_tensor)
     ema_helper = None
 
     if pretrain_meta is not None:
@@ -870,7 +1065,11 @@ def main():
     if use_ema and ema_helper is None:
         ema_helper = ModelEma(model, decay=ema_decay, device=device)
 
-    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
+    if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
+        model.set_anchors(anchors_tensor)
+        if ema_helper is not None and hasattr(ema_helper.ema, "set_anchors"):
+            ema_helper.ema.set_anchors(anchors_tensor)
+
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -935,6 +1134,9 @@ def main():
             distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
             distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
+            use_anchor=use_anchor,
+            anchors=anchors_tensor,
+            iou_loss_type=iou_loss_type,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
@@ -945,7 +1147,7 @@ def main():
             writer,
             "train",
             train_logs,
-            ordered_keys=["loss", "hm", "off", "wh", "cls", "l1", "iou"],
+            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
             step=epoch + 1,
         )
 
@@ -969,6 +1171,9 @@ def main():
                 sample_limit=10,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
+                use_anchor=use_anchor,
+                anchors=anchors_tensor,
+                iou_loss_type=iou_loss_type,
             )
             fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
             val_msg = f"epoch {epoch+1}/{args.epochs} val: {fmt_val}"
@@ -979,7 +1184,7 @@ def main():
                 writer,
                 "val",
                 metrics,
-                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "hm", "off", "wh", "cls", "l1", "iou"],
+                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
                 step=epoch + 1,
             )
 
@@ -1001,6 +1206,13 @@ def main():
                 "augment_cfg": aug_cfg,
                 "use_skip": use_skip,
                 "use_fpn": use_fpn,
+                "use_anchor": use_anchor,
+                "anchors": anchor_list,
+                "auto_anchors": auto_anchors,
+                "num_anchors": num_anchors,
+                "iou_loss": iou_loss_type,
+                "last_se": last_se,
+                "last_width_scale": last_width_scale,
                 "grad_clip_norm": grad_clip_norm,
                 "activation": activation,
                 "best_map": best_map,
@@ -1044,6 +1256,13 @@ def main():
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
             "use_fpn": use_fpn,
+            "use_anchor": use_anchor,
+            "anchors": anchor_list,
+            "auto_anchors": auto_anchors,
+            "num_anchors": num_anchors,
+            "iou_loss": iou_loss_type,
+            "last_se": last_se,
+            "last_width_scale": last_width_scale,
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
             "best_map": best_map,

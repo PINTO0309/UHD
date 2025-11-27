@@ -59,6 +59,65 @@ def decode_detr(
     return preds
 
 
+def decode_anchor(
+    pred: torch.Tensor, anchors: torch.Tensor, num_classes: int, conf_thresh: float = 0.3
+) -> List[List[Tuple[float, int, torch.Tensor]]]:
+    """
+    YOLO-style decoding: pred shape B x (A*(5+C)) x H x W, anchors A x 2 (normalized w,h).
+    """
+    device = pred.device
+    b, _, h, w = pred.shape
+    na = anchors.shape[0]
+    pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    anchors_dev = anchors.to(device)
+
+    tx = pred[..., 0]
+    ty = pred[..., 1]
+    tw = pred[..., 2]
+    th = pred[..., 3]
+    obj = pred[..., 4].sigmoid()
+    cls = pred[..., 5:].sigmoid()
+
+    gy, gx = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
+    gx = gx.view(1, 1, h, w)
+    gy = gy.view(1, 1, h, w)
+
+    pred_cx = (tx.sigmoid() + gx) / w
+    pred_cy = (ty.sigmoid() + gy) / h
+    pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * tw.exp()
+    pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * th.exp()
+
+    preds: List[List[Tuple[float, int, torch.Tensor]]] = []
+    scores = obj.unsqueeze(-1) * cls  # B x A x H x W x C
+    for bi in range(b):
+        boxes_i: List[Tuple[float, int, torch.Tensor]] = []
+        score_map = scores[bi]
+        pred_cx_i = pred_cx[bi]
+        pred_cy_i = pred_cy[bi]
+        pred_w_i = pred_w[bi]
+        pred_h_i = pred_h[bi]
+
+        flat_scores = score_map.view(-1, num_classes)
+        max_scores, max_cls = flat_scores.max(dim=1)
+        mask = max_scores >= conf_thresh
+        if mask.any():
+            sel_scores = max_scores[mask]
+            sel_cls = max_cls[mask]
+            idxs = mask.nonzero(as_tuple=False).squeeze(1)
+            a_idx = idxs // (h * w)
+            rem = idxs % (h * w)
+            gy_idx = rem // w
+            gx_idx = rem % w
+            cx_sel = pred_cx_i[a_idx, gy_idx, gx_idx]
+            cy_sel = pred_cy_i[a_idx, gy_idx, gx_idx]
+            bw_sel = pred_w_i[a_idx, gy_idx, gx_idx]
+            bh_sel = pred_h_i[a_idx, gy_idx, gx_idx]
+            for sc, cls_id, cx, cy, bw, bh in zip(sel_scores, sel_cls, cx_sel, cy_sel, bw_sel, bh_sel):
+                boxes_i.append((float(sc), int(cls_id.item()), torch.stack([cx, cy, bw, bh]).detach().cpu()))
+        preds.append(boxes_i)
+    return preds
+
+
 def _average_precision(preds, iou_thresh: float, npos: int) -> float:
     if len(preds) == 0 or npos == 0:
         return 0.0

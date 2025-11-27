@@ -3,6 +3,7 @@ from typing import Dict, List, Sequence, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 def cxcywh_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
@@ -27,6 +28,49 @@ def box_iou(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     area_b = (b_xyxy[:, 2] - b_xyxy[:, 0]) * (b_xyxy[:, 3] - b_xyxy[:, 1])
     union = area_a[:, None] + area_b[None, :] - inter
     return inter / (union + 1e-6)
+
+
+def _bbox_iou_single(
+    boxes1: torch.Tensor, boxes2: torch.Tensor, iou_type: str = "iou", eps: float = 1e-7
+) -> torch.Tensor:
+    """Compute IoU/GIoU/CIoU for aligned pairs of boxes (cxcywh)."""
+    x1, y1, x2, y2 = cxcywh_to_xyxy(boxes1).unbind(-1)
+    x1g, y1g, x2g, y2g = cxcywh_to_xyxy(boxes2).unbind(-1)
+
+    inter_x1 = torch.max(x1, x1g)
+    inter_y1 = torch.max(y1, y1g)
+    inter_x2 = torch.min(x2, x2g)
+    inter_y2 = torch.min(y2, y2g)
+
+    inter_w = (inter_x2 - inter_x1).clamp(min=0)
+    inter_h = (inter_y2 - inter_y1).clamp(min=0)
+    inter_area = inter_w * inter_h
+
+    area1 = (x2 - x1).clamp(min=0) * (y2 - y1).clamp(min=0)
+    area2 = (x2g - x1g).clamp(min=0) * (y2g - y1g).clamp(min=0)
+    union = area1 + area2 - inter_area + eps
+    iou = inter_area / union
+
+    if iou_type == "iou":
+        return iou
+
+    # enclosing box
+    cw = (torch.max(x2, x2g) - torch.min(x1, x1g)).clamp(min=0)
+    ch = (torch.max(y2, y2g) - torch.min(y1, y1g)).clamp(min=0)
+    c_area = cw * ch + eps
+
+    giou = iou - (c_area - union) / c_area
+    if iou_type == "giou":
+        return giou
+
+    # CIoU penalty terms
+    rho2 = ((boxes1[..., 0] - boxes2[..., 0]) ** 2 + (boxes1[..., 1] - boxes2[..., 1]) ** 2)
+    c2 = (cw ** 2 + ch ** 2).clamp(min=eps)
+    v = (4 / (math.pi**2)) * torch.pow(torch.atan((boxes1[..., 2] / (boxes1[..., 3] + eps))) - torch.atan((boxes2[..., 2] / (boxes2[..., 3] + eps))), 2)
+    with torch.no_grad():
+        alpha = v / (1 - iou + v + eps)
+    ciou = iou - rho2 / c2 - alpha * v
+    return ciou
 
 
 def focal_loss(pred: torch.Tensor, target: torch.Tensor, alpha: float = 2.0, beta: float = 4.0) -> torch.Tensor:
@@ -171,3 +215,89 @@ def detr_loss(
     iou_loss = torch.stack(iou_losses).mean() if iou_losses else torch.tensor(0.0, device=device)
     total = lambda_cls * cls_loss + lambda_l1 * l1_loss + lambda_iou * iou_loss
     return {"loss": total, "cls": cls_loss, "l1": l1_loss, "iou": iou_loss}
+
+
+def anchor_loss(
+    pred: torch.Tensor,
+    targets: Sequence[Dict[str, torch.Tensor]],
+    anchors: torch.Tensor,
+    num_classes: int,
+    iou_loss: str = "giou",
+) -> Dict[str, torch.Tensor]:
+    """
+    YOLO-style anchor loss with optional IoU/GIoU/CIoU regression.
+    pred: B x (A*(5+C)) x H x W
+    anchors: A x 2 (normalized w,h relative to input image size)
+    """
+    if anchors is None:
+        raise ValueError("anchors must be provided for anchor_loss")
+    device = pred.device
+    b, _, h, w = pred.shape
+    na = anchors.shape[0]
+    pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    tx = pred[..., 0]
+    ty = pred[..., 1]
+    tw = pred[..., 2]
+    th = pred[..., 3]
+    obj_logit = pred[..., 4]
+    cls_logit = pred[..., 5:]
+
+    anchors_dev = anchors.to(device)
+    target_obj = torch.zeros_like(obj_logit)
+    target_cls = torch.zeros((b, na, h, w, num_classes), device=device)
+    target_box = torch.zeros((b, na, h, w, 4), device=device)
+
+    # grid for decoding centers
+    gy, gx = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
+    gx = gx.view(1, 1, h, w)
+    gy = gy.view(1, 1, h, w)
+
+    for bi, tgt in enumerate(targets):
+        boxes = tgt["boxes"].to(device)
+        labels = tgt["labels"].to(device)
+        if boxes.numel() == 0:
+            continue
+        gxs = (boxes[:, 0] * w).clamp(0, w - 1e-3)
+        gys = (boxes[:, 1] * h).clamp(0, h - 1e-3)
+        gis = gxs.long()
+        gjs = gys.long()
+        wh = boxes[:, 2:4]
+        # anchor matching by IoU on w,h only
+        awh = anchors_dev[:, None, :]  # A x 1 x 2
+        inter = torch.min(awh, wh[None, :, :]).prod(dim=2)
+        union = (awh[:, :, 0] * awh[:, :, 1]) + (wh[None, :, 0] * wh[None, :, 1]) - inter + 1e-7
+        anchor_iou = inter / union  # A x G
+        best_anchor = anchor_iou.argmax(dim=0)  # G
+        for gi, gj, a, box, cls in zip(gis, gjs, best_anchor, boxes, labels):
+            if gi < 0 or gj < 0 or gi >= w or gj >= h:
+                continue
+            target_obj[bi, a, gj, gi] = 1.0
+            target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
+            target_box[bi, a, gj, gi] = box
+
+    # decode predictions
+    pred_cx = (tx.sigmoid() + gx) / w
+    pred_cy = (ty.sigmoid() + gy) / h
+    pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * tw.exp()
+    pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * th.exp()
+    pred_box = torch.stack([pred_cx, pred_cy, pred_w, pred_h], dim=-1)
+
+    bce_obj = nn.BCEWithLogitsLoss(reduction="mean")
+    bce_cls = nn.BCEWithLogitsLoss(reduction="sum")
+
+    obj_loss = bce_obj(obj_logit, target_obj)
+
+    pos_mask = target_obj > 0.5
+    num_pos = int(pos_mask.sum().item())
+    if num_pos > 0:
+        t_box = target_box[pos_mask]
+        p_box = pred_box[pos_mask]
+        iou_val = _bbox_iou_single(p_box, t_box, iou_type=iou_loss)
+        box_loss = (1.0 - iou_val).mean()
+        cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+    else:
+        box_loss = torch.tensor(0.0, device=device)
+        cls_loss = torch.tensor(0.0, device=device)
+
+    total = box_loss + obj_loss + cls_loss
+    return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss}

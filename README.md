@@ -106,6 +106,34 @@ uv run python train.py \
 --ema-decay 0.9999
 ```
 
+CNN anchor head + G/CIoU
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch cnn \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 64 \
+--use-anchor \
+--auto-anchors \
+--iou-loss ciou
+```
+
+Options:
+- `--last-se {none,se,ese}`: apply SE/eSE only on the last CNN block.
+- `--last-width-scale 1.25`: scale only the last block channels (e.g., 1.25 = +25%).
+
+
 Distillation example (transformer student 64x64 distilled from a higher-res transformer teacher):
 
 ```bash
