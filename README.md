@@ -130,7 +130,9 @@ uv run python train.py \
 --iou-loss ciou \
 --last-se se \
 --last-width-scale 1.25 \
---use-skip
+--use-skip \
+--use-ema \
+--ema-decay 0.9999
 ```
 
 Options:
