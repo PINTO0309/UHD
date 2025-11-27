@@ -102,6 +102,18 @@ def _infer_cnn_width(state_dict, fallback_width: int) -> int:
         return int(w.shape[1])
     return int(fallback_width)
 
+def _infer_num_anchors(state_dict, num_classes: int, fallback: int) -> int:
+    """Infer num_anchors from head shape when using anchor head."""
+    if not isinstance(state_dict, dict):
+        return int(fallback)
+    w = state_dict.get("head.weight")
+    if isinstance(w, torch.Tensor) and w.dim() == 4 and w.shape[2:] == (1, 1):
+        out_ch = w.shape[0]
+        denom = 5 + num_classes
+        if out_ch % denom == 0:
+            return int(out_ch // denom)
+    return int(fallback)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Export checkpoint to ONNX (auto-detect arch).")
@@ -126,6 +138,7 @@ def main():
     parser.add_argument("--use-anchor", action="store_true", help="Force anchor-based CNN head (overrides checkpoint flag).")
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default=None, help="Override last SE mode for CNN (defaults to checkpoint).")
     parser.add_argument("--last-width-scale", type=float, default=None, help="Override last width scale for CNN (defaults to checkpoint).")
+    parser.add_argument("--output-stride", type=int, default=None, help="Override CNN output stride (defaults to checkpoint).")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -142,8 +155,10 @@ def main():
     num_classes = len(classes) if isinstance(classes, (list, tuple)) else int(classes)
     use_anchor = bool(ckpt.get("use_anchor", False) or args.use_anchor)
     anchors = ckpt.get("anchors", [])
+    num_anchors = ckpt.get("num_anchors", None)
     last_se = args.last_se or ckpt.get("last_se", "none")
     last_width_scale = args.last_width_scale if args.last_width_scale is not None else ckpt.get("last_width_scale", 1.0)
+    output_stride = args.output_stride if args.output_stride is not None else ckpt.get("output_stride", 4)
     # Prefer checkpoint hyper-params when available; infer layers/queries/d_model from state_dict if missing
     num_queries = ckpt.get("num_queries")
     d_model = ckpt.get("d_model")
@@ -169,7 +184,18 @@ def main():
     width = ckpt.get("width")
     if arch == "cnn":
         width = _infer_cnn_width(state_dict, fallback_width=width or args.cnn_width)
+        if num_anchors is None:
+            if anchors:
+                num_anchors = len(anchors)
+            else:
+                num_anchors = _infer_num_anchors(state_dict, num_classes=num_classes, fallback=3)
     width = int(width if width is not None else args.cnn_width)
+    num_anchors = int(num_anchors if num_anchors is not None else 3)
+    if anchors and len(anchors) != num_anchors:
+        if len(anchors) > num_anchors:
+            anchors = anchors[:num_anchors]
+        else:
+            anchors = list(anchors) + [anchors[-1]] * (num_anchors - len(anchors))
 
     model = build_model(
         arch,
@@ -184,9 +210,11 @@ def main():
         use_skip=use_skip,
         use_fpn=use_fpn,
         use_anchor=use_anchor,
+        num_anchors=num_anchors,
         anchors=anchors,
         last_se=last_se,
         last_width_scale=last_width_scale,
+        output_stride=output_stride,
     )
     model.load_state_dict(state_dict)
     model.eval()
