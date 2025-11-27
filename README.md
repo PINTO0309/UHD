@@ -136,6 +136,138 @@ uv run python train.py \
 --ema-decay 0.9999
 ```
 
+CNN + DINOv3 backbone feature distillation (teacher used only during training; ONNX export stays student-only):
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch cnn \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor_dino_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 64 \
+--use-anchor \
+--auto-anchors \
+--num-anchors 5 \
+--iou-loss ciou \
+--last-se se \
+--last-width-scale 1.25 \
+--use-skip \
+--output-stride 8 \
+--use-ema \
+--ema-decay 0.9999 \
+--teacher-backbone ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+--teacher-backbone-arch dinov3_vits16 \
+--distill-feat 1.0
+```
+
+CNN + DINOv3 backbone feature distillation (stride 16):
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch cnn \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor_dino_s16_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 64 \
+--use-anchor \
+--auto-anchors \
+--num-anchors 5 \
+--iou-loss ciou \
+--last-se se \
+--last-width-scale 1.25 \
+--use-skip \
+--output-stride 16 \
+--use-ema \
+--ema-decay 0.9999 \
+--teacher-backbone ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+--teacher-backbone-arch dinov3_vits16 \
+--distill-feat 1.0
+```
+
+CNN + DINOv3-B/16 backbone feature distillation:
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch cnn \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor_dino_b16_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 64 \
+--use-anchor \
+--auto-anchors \
+--num-anchors 5 \
+--iou-loss ciou \
+--last-se se \
+--last-width-scale 1.25 \
+--use-skip \
+--output-stride 8 \
+--use-ema \
+--ema-decay 0.9999 \
+--teacher-backbone ckpts/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth \
+--teacher-backbone-arch dinov3_vitb16 \
+--distill-feat 1.0
+```
+
+CNN + ViT-Tiny distillation backbone (vitt_distill.pt):
+
+```bash
+SIZE=64x64
+uv run python train.py \
+--arch cnn \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor_vitt_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 64 \
+--use-anchor \
+--auto-anchors \
+--num-anchors 5 \
+--iou-loss ciou \
+--last-se se \
+--last-width-scale 1.25 \
+--use-skip \
+--output-stride 8 \
+--use-ema \
+--ema-decay 0.9999 \
+--teacher-backbone ckpts/vitt_distill.pt \
+--teacher-backbone-arch vit_tiny \
+--distill-feat 1.0
+```
+
 Options:
 - `--last-se {none,se,ese}`: apply SE/eSE only on the last CNN block.
 - `--last-width-scale 1.25`: scale only the last block channels (e.g., 1.25 = +25%).

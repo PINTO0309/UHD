@@ -101,7 +101,7 @@ class MiniCenterNet(nn.Module):
         self.head_off = nn.Conv2d(out_c, 2, kernel_size=1)
         self.head_wh = nn.Conv2d(out_c, 2, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, return_feat: bool = False) -> Dict[str, torch.Tensor]:
         x = self.stem(x)
         s1 = self.stage1(x)
         s2 = self.stage2(s1)
@@ -116,11 +116,15 @@ class MiniCenterNet(nn.Module):
             s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
-        return {
+        feats = s3
+        out = {
             "hm": torch.sigmoid(self.head_hm(s3)),
             "off": self.head_off(s3),
             "wh": self.head_wh(s3),
         }
+        if return_feat:
+            return out, feats
+        return out
 
 
 class AnchorCNN(nn.Module):
@@ -180,7 +184,7 @@ class AnchorCNN(nn.Module):
         if anchors is not None:
             self.anchors = anchors.to(self.anchors.device)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_feat: bool = False) -> torch.Tensor:
         x = self.stem(x)
         s1 = self.stage1(x)
         s2 = self.stage2(s1)
@@ -195,7 +199,11 @@ class AnchorCNN(nn.Module):
             s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
-        return self.head(s3)
+        feats = s3
+        out = self.head(s3)
+        if return_feat:
+            return out, feats
+        return out
 
 
 def _get_2d_sincos_pos_embed(h: int, w: int, dim: int) -> torch.Tensor:

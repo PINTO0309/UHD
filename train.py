@@ -19,6 +19,7 @@ from tqdm import tqdm
 from uhd.data import YoloDataset, detection_collate
 from uhd.losses import anchor_loss, centernet_loss, detr_loss
 from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_map
+from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
 
@@ -95,10 +96,13 @@ def parse_args():
     parser.add_argument("--teacher-use-skip", action="store_true", help="Force teacher use-skip on (otherwise checkpoint/student default).")
     parser.add_argument("--teacher-activation", choices=["relu", "swish"], default=None, help="Teacher activation (defaults to checkpoint or student).")
     parser.add_argument("--teacher-use-fpn", action="store_true", help="Force teacher use-fpn on (otherwise checkpoint/student default).")
+    parser.add_argument("--teacher-backbone", default=None, help="Path to teacher backbone checkpoint for feature distillation (e.g., DINOv3).")
+    parser.add_argument("--teacher-backbone-arch", default=None, help="Teacher backbone architecture hint (e.g., dinov3_vits16, dinov3_vitb16).")
     parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
     parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
     parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
     parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for teacher logits in distillation.")
+    parser.add_argument("--distill-feat", type=float, default=0.0, help="Weight for feature-map distillation from teacher backbone (CNN only).")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
@@ -417,6 +421,27 @@ def collect_box_wh(dataset) -> np.ndarray:
     return np.array(wh_list, dtype=np.float32)
 
 
+def _infer_cnn_feat_channels(model: torch.nn.Module, use_anchor: bool, num_classes: int) -> int:
+    """Best-effort inference of CNN feature channels (pre-head)."""
+    if use_anchor and hasattr(model, "head"):
+        head = getattr(model, "head", None)
+        if isinstance(head, torch.nn.Conv2d):
+            w = head.weight
+            if isinstance(w, torch.Tensor) and w.dim() == 4:
+                return int(w.shape[1])
+    head_hm = getattr(model, "head_hm", None)
+    if isinstance(head_hm, torch.nn.Conv2d):
+        w = head_hm.weight
+        if isinstance(w, torch.Tensor) and w.dim() == 4:
+            return int(w.shape[1])
+    stage3 = getattr(model, "stage3", None)
+    if isinstance(stage3, torch.nn.Module) and hasattr(stage3, "pw"):
+        pw = getattr(stage3, "pw", None)
+        if isinstance(pw, torch.nn.Conv2d):
+            return int(pw.out_channels)
+    return max(num_classes, 1)
+
+
 def run_coco_eval(images, annos, dets, class_ids, per_class=False):
     try:
         try:
@@ -471,10 +496,13 @@ def train_one_epoch(
     grad_clip_norm: float = 0.0,
     ema: ModelEma = None,
     teacher_model: torch.nn.Module = None,
+    teacher_backbone: torch.nn.Module = None,
+    feature_adapter: torch.nn.Module = None,
     distill_kl: float = 0.0,
     distill_box_l1: float = 0.0,
     distill_cosine: bool = False,
     distill_temperature: float = 1.0,
+    distill_feat: float = 0.0,
     use_anchor: bool = False,
     anchors: torch.Tensor = None,
     iou_loss_type: str = "giou",
@@ -492,10 +520,14 @@ def train_one_epoch(
     total_iou = 0.0
     total_distill_kl = 0.0
     total_distill_l1 = 0.0
+    total_distill_feat = 0.0
     steps = 0
     distill_scale = 1.0
-    if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0):
+    if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0):
         distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
+    clip_params = list(model.parameters())
+    if feature_adapter is not None:
+        clip_params += [p for p in feature_adapter.parameters() if p.requires_grad]
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
@@ -504,6 +536,8 @@ def train_one_epoch(
         with torch.autocast(device_type=device.type, dtype=torch.float16 if device.type == "cuda" else torch.bfloat16, enabled=scaler.is_enabled()):
             teacher_logits = None
             teacher_boxes = None
+            teacher_feats = None
+            student_feats = None
             if teacher_model is not None:
                 with torch.no_grad():
                     t_out = teacher_model(imgs)
@@ -513,12 +547,33 @@ def train_one_epoch(
                         teacher_boxes = None
                     else:
                         teacher_logits, teacher_boxes = t_out
+            if teacher_backbone is not None and distill_feat > 0 and arch == "cnn":
+                with torch.no_grad():
+                    teacher_feats = teacher_backbone(imgs)
             if arch == "cnn":
-                outputs = model(imgs)
+                need_feats = teacher_feats is not None and distill_feat > 0
+                outputs = model(imgs, return_feat=need_feats)
+                if need_feats:
+                    outputs, student_feats = outputs
                 if use_anchor:
                     loss_dict = anchor_loss(outputs, targets_dev, anchors=anchors, num_classes=num_classes, iou_loss=iou_loss_type)
                 else:
                     loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
+                if need_feats and student_feats is not None:
+                    t_feat = teacher_feats
+                    if t_feat is not None and t_feat.shape[2:] != student_feats.shape[2:]:
+                        t_feat = torch.nn.functional.interpolate(
+                            t_feat, size=student_feats.shape[2:], mode="bilinear", align_corners=False
+                        )
+                    if t_feat is not None:
+                        s_proj = feature_adapter(student_feats) if feature_adapter is not None else student_feats
+                        loss_feat = torch.nn.functional.l1_loss(
+                            torch.nn.functional.normalize(s_proj, dim=1),
+                            torch.nn.functional.normalize(t_feat, dim=1),
+                            reduction="mean",
+                        )
+                        loss_dict["loss"] = loss_dict["loss"] + (distill_feat * distill_scale) * loss_feat
+                        loss_dict["distill_feat"] = loss_feat
             else:
                 logits, box_pred = model(imgs)
                 loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
@@ -540,13 +595,13 @@ def train_one_epoch(
             scaler.scale(loss).backward()
             if grad_clip_norm and grad_clip_norm > 0:
                 scaler.unscale_(optimizer)
-                clip_grad_norm_(model.parameters(), grad_clip_norm)
+                clip_grad_norm_(clip_params, grad_clip_norm)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss.backward()
             if grad_clip_norm and grad_clip_norm > 0:
-                clip_grad_norm_(model.parameters(), grad_clip_norm)
+                clip_grad_norm_(clip_params, grad_clip_norm)
             optimizer.step()
         if ema is not None:
             ema.update(model)
@@ -561,6 +616,8 @@ def train_one_epoch(
                 total_hm += float(loss_dict["hm"].item())
                 total_off += float(loss_dict["off"].item())
                 total_wh += float(loss_dict["wh"].item())
+            if "distill_feat" in loss_dict:
+                total_distill_feat += float(loss_dict["distill_feat"].item())
         else:
             total_cls += float(loss_dict["cls"].item())
             total_l1 += float(loss_dict["l1"].item())
@@ -616,6 +673,8 @@ def train_one_epoch(
                     "wh": total_wh / steps if steps else 0.0,
                 }
             )
+        if distill_feat > 0:
+            logs["distill_feat"] = total_distill_feat / steps if steps else 0.0
     else:
         logs.update(
             {
@@ -847,6 +906,9 @@ def main():
     distill_box_l1 = float(args.distill_box_l1)
     distill_temperature = float(args.distill_temperature)
     distill_cosine = bool(args.distill_cosine)
+    distill_feat = float(args.distill_feat)
+    teacher_backbone = args.teacher_backbone
+    teacher_backbone_arch = args.teacher_backbone_arch
     teacher_ckpt = args.teacher_ckpt
     teacher_arch = args.teacher_arch
     teacher_num_queries = args.teacher_num_queries
@@ -872,11 +934,12 @@ def main():
 
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
+    img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
         nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn
-        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn
-        nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine
+        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch
+        nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
         nonlocal last_se, last_width_scale
         if "classes" in meta:
@@ -945,6 +1008,10 @@ def main():
                 teacher_activation = meta["teacher_activation"]
             if "teacher_use_fpn" in meta:
                 teacher_use_fpn = bool(meta["teacher_use_fpn"])
+            if "teacher_backbone" in meta and meta["teacher_backbone"]:
+                teacher_backbone = meta["teacher_backbone"]
+            if "teacher_backbone_arch" in meta and meta["teacher_backbone_arch"]:
+                teacher_backbone_arch = meta["teacher_backbone_arch"]
             if "distill_kl" in meta:
                 distill_kl = float(meta["distill_kl"])
             if "distill_box_l1" in meta:
@@ -953,11 +1020,16 @@ def main():
                 distill_temperature = float(meta["distill_temperature"])
             if "distill_cosine" in meta:
                 distill_cosine = bool(meta["distill_cosine"])
+            if "distill_feat" in meta:
+                distill_feat = float(meta["distill_feat"])
 
     if pretrain_meta is not None:
         apply_meta(pretrain_meta, f"ckpt {args.ckpt}", allow_distill=False)
     if ckpt_meta is not None:
         apply_meta(ckpt_meta, f"resume {args.resume}", allow_distill=True)
+    if args.arch == "cnn" and distill_feat > 0 and not teacher_backbone:
+        print("distill-feat requested but --teacher-backbone not provided; disabling feature distillation.")
+        distill_feat = 0.0
     set_seed(args.seed)
     device = default_device(args.device)
     run_dir = os.path.join("runs", args.exp_name)
@@ -1015,6 +1087,8 @@ def main():
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
     ema_helper = None
+    teacher_backbone_model = None
+    feature_adapter = None
 
     if pretrain_meta is not None:
         _load_with_log(
@@ -1037,7 +1111,30 @@ def main():
             else:
                 ema_helper.ema.load_state_dict(model.state_dict())
         print(f"Initialized model weights from {args.ckpt}")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    backbone_cfg = None
+    if args.arch == "cnn" and distill_feat > 0 and teacher_backbone:
+        try:
+            teacher_backbone_model, backbone_cfg = load_dinov3_backbone(
+                teacher_backbone, img_size=(img_h, img_w), device=device, arch_hint=teacher_backbone_arch
+            )
+            teacher_dim = getattr(teacher_backbone_model, "embed_dim", None)
+            student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
+            if teacher_dim is None:
+                teacher_dim = student_channels
+            if student_channels != teacher_dim:
+                feature_adapter = torch.nn.Conv2d(student_channels, teacher_dim, kernel_size=1).to(device)
+            else:
+                feature_adapter = torch.nn.Identity()
+            print(f"Loaded teacher backbone from {teacher_backbone} (dim={teacher_dim}, stride={backbone_cfg.get('out_stride', 'auto') if backbone_cfg else 'auto'})")
+        except Exception as e:
+            print(f"Failed to load teacher backbone {teacher_backbone}: {e}")
+            teacher_backbone_model = None
+            feature_adapter = None
+            distill_feat = 0.0
+    params = list(model.parameters())
+    if feature_adapter is not None and len(list(feature_adapter.parameters())) > 0:
+        params += list(feature_adapter.parameters())
+    optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
     try:
         scaler = torch.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
     except TypeError:
@@ -1049,6 +1146,11 @@ def main():
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
         model.load_state_dict(ckpt["model"])
+        if feature_adapter is not None and "feat_adapter" in ckpt and ckpt["feat_adapter"] is not None:
+            try:
+                feature_adapter.load_state_dict(ckpt["feat_adapter"])
+            except Exception as e:
+                print(f"Warning: could not load feature adapter from resume checkpoint: {e}")
         if "optimizer" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer"])
         if "scaler" in ckpt and ckpt["scaler"] is not None and use_amp:
@@ -1137,10 +1239,13 @@ def main():
             grad_clip_norm=grad_clip_norm,
             ema=ema_helper,
             teacher_model=teacher_model,
+            teacher_backbone=teacher_backbone_model,
+            feature_adapter=feature_adapter,
             distill_kl=distill_kl if args.arch == "transformer" else 0.0,
             distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
             distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
+            distill_feat=distill_feat if args.arch == "cnn" else 0.0,
             use_anchor=use_anchor,
             anchors=anchors_tensor,
             iou_loss_type=iou_loss_type,
@@ -1154,7 +1259,7 @@ def main():
             writer,
             "train",
             train_logs,
-            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
+            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou", "distill_feat"],
             step=epoch + 1,
         )
 
@@ -1242,6 +1347,10 @@ def main():
                 "distill_box_l1": distill_box_l1,
                 "distill_temperature": distill_temperature,
                 "distill_cosine": distill_cosine,
+                "teacher_backbone": teacher_backbone,
+                "teacher_backbone_arch": teacher_backbone_arch,
+                "distill_feat": distill_feat,
+                "feat_adapter": feature_adapter.state_dict() if feature_adapter is not None else None,
             }
                 best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
                 best_path = os.path.join(run_dir, best_name)
@@ -1293,6 +1402,10 @@ def main():
             "distill_box_l1": distill_box_l1,
             "distill_temperature": distill_temperature,
             "distill_cosine": distill_cosine,
+            "teacher_backbone": teacher_backbone,
+            "teacher_backbone_arch": teacher_backbone_arch,
+            "distill_feat": distill_feat,
+            "feat_adapter": feature_adapter.state_dict() if feature_adapter is not None else None,
         }
         last_name = f"last_{epoch+1:04d}.pt"
         last_path = os.path.join(run_dir, last_name)
