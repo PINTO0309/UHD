@@ -268,21 +268,31 @@ class TinyDETR(nn.Module):
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
     if arch == "cnn":
+        width = kwargs.get("width", 32)
+        num_classes = kwargs.get("num_classes", 1)
+        use_skip = kwargs.get("use_skip", False)
+        activation = kwargs.get("activation", "swish")
+        last_se = kwargs.get("last_se", "none")
+        last_width_scale = kwargs.get("last_width_scale", 1.0)
         if kwargs.get("use_anchor", False):
             return AnchorCNN(
-                width=kwargs.get("width", 32),
-                num_classes=kwargs.get("num_classes", 1),
+                width=width,
+                num_classes=num_classes,
                 num_anchors=kwargs.get("num_anchors", 3),
                 anchors=kwargs.get("anchors", ()),
-                use_skip=kwargs.get("use_skip", False),
-                activation=kwargs.get("activation", "swish"),
+                use_skip=use_skip,
+                activation=activation,
+                last_se=last_se,
+                last_width_scale=last_width_scale,
             )
         else:
             return MiniCenterNet(
-                width=kwargs.get("width", 32),
-                num_classes=kwargs.get("num_classes", 1),
-                use_skip=kwargs.get("use_skip", False),
-                activation=kwargs.get("activation", "swish"),
+                width=width,
+                num_classes=num_classes,
+                use_skip=use_skip,
+                activation=activation,
+                last_se=last_se,
+                last_width_scale=last_width_scale,
             )
     if arch == "transformer":
         return TinyDETR(
