@@ -568,14 +568,12 @@ def train_one_epoch(
                         )
                     if t_feat is not None:
                         with torch.amp.autocast(device_type=device.type, enabled=False):
-                            s_proj = feature_adapter(student_feats) if feature_adapter is not None else student_feats
-                            s_proj = s_proj.float()
+                            s_in = student_feats.float()
+                            s_proj = feature_adapter(s_in) if feature_adapter is not None else s_in
                             t_feat_f = t_feat.float()
-                            s_norm = torch.nn.functional.normalize(torch.nan_to_num(s_proj), dim=1, eps=1e-6)
-                            t_norm = torch.nn.functional.normalize(torch.nan_to_num(t_feat_f), dim=1, eps=1e-6)
-                            loss_feat = torch.nn.functional.l1_loss(
-                                torch.nan_to_num(s_norm), torch.nan_to_num(t_norm), reduction="mean"
-                            )
+                            s_norm = F.normalize(torch.nan_to_num(s_proj), dim=1, eps=1e-6)
+                            t_norm = F.normalize(torch.nan_to_num(t_feat_f), dim=1, eps=1e-6)
+                            loss_feat = F.l1_loss(torch.nan_to_num(s_norm), torch.nan_to_num(t_norm), reduction="mean")
                         loss_dict["loss"] = loss_dict["loss"] + (distill_feat * distill_scale) * loss_feat
                         loss_dict["distill_feat"] = loss_feat
             else:
