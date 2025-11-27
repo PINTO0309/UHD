@@ -75,6 +75,9 @@ class MiniCenterNet(nn.Module):
             _make_activation(activation),
         )
         self.use_skip = use_skip
+        if self.use_skip:
+            self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+            self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
         self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
         self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
         self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
@@ -94,7 +97,13 @@ class MiniCenterNet(nn.Module):
         s2 = self.stage2(s1)
         s3 = self.stage3(s2)
         if self.use_skip:
-            s3 = s3 + F.adaptive_avg_pool2d(s2, s3.shape[2:]) + F.adaptive_avg_pool2d(s1, s3.shape[2:])
+            skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
+            skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
+            if self.skip_s2 is not None:
+                skip2 = self.skip_s2(skip2)
+            if self.skip_s1 is not None:
+                skip1 = self.skip_s1(skip1)
+            s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
         return {
@@ -127,6 +136,9 @@ class AnchorCNN(nn.Module):
             _make_activation(activation),
         )
         self.use_skip = use_skip
+        if self.use_skip:
+            self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+            self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
         self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
         self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
         self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
@@ -155,7 +167,13 @@ class AnchorCNN(nn.Module):
         s2 = self.stage2(s1)
         s3 = self.stage3(s2)
         if self.use_skip:
-            s3 = s3 + F.adaptive_avg_pool2d(s2, s3.shape[2:]) + F.adaptive_avg_pool2d(s1, s3.shape[2:])
+            skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
+            skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
+            if self.skip_s2 is not None:
+                skip2 = self.skip_s2(skip2)
+            if self.skip_s1 is not None:
+                skip1 = self.skip_s1(skip1)
+            s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
         return self.head(s3)
