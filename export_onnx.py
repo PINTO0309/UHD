@@ -43,6 +43,15 @@ class TransformerWrapper(torch.nn.Module):
         return logits, boxes
 
 
+class AnchorWrapper(torch.nn.Module):
+    def __init__(self, model: torch.nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        return self.model(x)
+
+
 def _infer_transformer_config(state_dict, fallback_layers: int, fallback_num_queries: int, fallback_d_model: int):
     num_queries = fallback_num_queries
     d_model = fallback_d_model
@@ -88,6 +97,9 @@ def _infer_cnn_width(state_dict, fallback_width: int) -> int:
     w = state_dict.get("head_hm.weight")
     if isinstance(w, torch.Tensor) and w.dim() > 1:
         return int(w.shape[1])
+    w = state_dict.get("head.weight")
+    if isinstance(w, torch.Tensor) and w.dim() > 1:
+        return int(w.shape[1])
     return int(fallback_width)
 
 
@@ -111,6 +123,9 @@ def main():
     parser.add_argument("--topk", type=int, default=100, help="Top-K for postprocess (CNN).")
     parser.add_argument("--merge-postprocess", action="store_true", help="Export with postprocess merged.")
     parser.add_argument("--batch-size", type=int, default=1, help="Fixed batch size when dynamic is not set.")
+    parser.add_argument("--use-anchor", action="store_true", help="Force anchor-based CNN head (overrides checkpoint flag).")
+    parser.add_argument("--last-se", choices=["none", "se", "ese"], default=None, help="Override last SE mode for CNN (defaults to checkpoint).")
+    parser.add_argument("--last-width-scale", type=float, default=None, help="Override last width scale for CNN (defaults to checkpoint).")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -125,6 +140,10 @@ def main():
         activation = ckpt_activation
     classes = ckpt.get("classes", [0])
     num_classes = len(classes) if isinstance(classes, (list, tuple)) else int(classes)
+    use_anchor = bool(ckpt.get("use_anchor", False) or args.use_anchor)
+    anchors = ckpt.get("anchors", [])
+    last_se = args.last_se or ckpt.get("last_se", "none")
+    last_width_scale = args.last_width_scale if args.last_width_scale is not None else ckpt.get("last_width_scale", 1.0)
     # Prefer checkpoint hyper-params when available; infer layers/queries/d_model from state_dict if missing
     num_queries = ckpt.get("num_queries")
     d_model = ckpt.get("d_model")
@@ -164,44 +183,100 @@ def main():
         activation=activation,
         use_skip=use_skip,
         use_fpn=use_fpn,
+        use_anchor=use_anchor,
+        anchors=anchors,
+        last_se=last_se,
+        last_width_scale=last_width_scale,
     )
     model.load_state_dict(state_dict)
     model.eval()
 
     if arch == "cnn":
-        wrapper = CnnWrapper(model)
-        if args.merge_postprocess:
-            class PostCNN(torch.nn.Module):
-                def __init__(self, net, k):
-                    super().__init__()
-                    self.net = net
-                    self.k = k
+        if use_anchor:
+            wrapper = AnchorWrapper(model)
+            if args.merge_postprocess:
+                class PostAnchor(torch.nn.Module):
+                    def __init__(self, net, anchors, k):
+                        super().__init__()
+                        self.net = net
+                        self.register_buffer("anchors", anchors if isinstance(anchors, torch.Tensor) else torch.tensor(anchors, dtype=torch.float32))
+                        self.k = k
 
-                def forward(self, x):
-                    hm, off, wh = self.net(x)
-                    b, c, h, w = hm.shape
-                    hm_flat = hm.view(b, -1)
-                    k = min(self.k, hm_flat.shape[1])
-                    scores, inds = torch.topk(hm_flat, k=k, dim=1)
-                    cls = inds // (h * w)
-                    rem = inds % (h * w)
-                    ys = rem // w
-                    xs = rem % w
-                    off_flat = off.view(b, 2, -1)
-                    wh_flat = wh.view(b, 2, -1)
-                    off_g = torch.gather(off_flat, 2, inds.unsqueeze(1).expand(-1, 2, -1))
-                    wh_g = torch.gather(wh_flat, 2, inds.unsqueeze(1).expand(-1, 2, -1))
-                    cx = (xs.float() + off_g[:, 0, :]) / w
-                    cy = (ys.float() + off_g[:, 1, :]) / h
-                    bw = wh_g[:, 0, :] / w
-                    bh = wh_g[:, 1, :] / h
-                    dets = torch.stack([scores, cls.float(), cx, cy, bw, bh], dim=-1)
-                    return dets
+                    def forward(self, x):
+                        pred = self.net(x)  # B x (A*(5+C)) x H x W
+                        b, _, h, w = pred.shape
+                        na = self.anchors.shape[0]
+                        # reshape to B x A x H x W x (5+C)
+                        num_classes = pred.shape[1] // na - 5
+                        pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+                        tx, ty, tw, th = pred[..., 0], pred[..., 1], pred[..., 2], pred[..., 3]
+                        obj = pred[..., 4].sigmoid()
+                        cls = pred[..., 5:].sigmoid()
+                        gy, gx = torch.meshgrid(torch.arange(h, device=pred.device), torch.arange(w, device=pred.device), indexing="ij")
+                        gx = gx.view(1, 1, h, w)
+                        gy = gy.view(1, 1, h, w)
+                        pred_cx = (tx.sigmoid() + gx) / float(w)
+                        pred_cy = (ty.sigmoid() + gy) / float(h)
+                        pred_w = self.anchors[:, 0].view(1, na, 1, 1) * tw.exp()
+                        pred_h = self.anchors[:, 1].view(1, na, 1, 1) * th.exp()
 
-            wrapper = PostCNN(wrapper, args.topk)
-            output_names = ["detections"]
+                        scores_all = obj.unsqueeze(-1) * cls  # B x A x H x W x C
+                        max_scores, max_cls = scores_all.max(dim=-1)  # B x A x H x W
+                        flat_scores = max_scores.view(b, -1)
+                        k = min(self.k, flat_scores.shape[1])
+                        scores, idxs = torch.topk(flat_scores, k=k, dim=1)
+                        a_idx = idxs // (h * w)
+                        rem = idxs % (h * w)
+                        ys = rem // w
+                        xs = rem % w
+                        batch_idx = torch.arange(b, device=pred.device).view(-1, 1)
+                        cls_topk = torch.gather(max_cls.view(b, -1), 1, idxs)
+                        cx = pred_cx[batch_idx, a_idx, ys, xs]
+                        cy = pred_cy[batch_idx, a_idx, ys, xs]
+                        pw = pred_w[batch_idx, a_idx, ys, xs]
+                        ph = pred_h[batch_idx, a_idx, ys, xs]
+                        dets = torch.stack([scores, cls_topk.float(), cx, cy, pw, ph], dim=-1)
+                        return dets
+
+                anchors_tensor = model.anchors if hasattr(model, "anchors") else torch.tensor(anchors if anchors else [[0.1, 0.1]], dtype=torch.float32)
+                wrapper = PostAnchor(wrapper, anchors_tensor, args.topk)
+                output_names = ["detections"]
+            else:
+                output_names = ["pred"]
         else:
-            output_names = ["hm", "off", "wh"]
+            wrapper = CnnWrapper(model)
+            if args.merge_postprocess:
+                class PostCNN(torch.nn.Module):
+                    def __init__(self, net, k):
+                        super().__init__()
+                        self.net = net
+                        self.k = k
+
+                    def forward(self, x):
+                        hm, off, wh = self.net(x)
+                        b, c, h, w = hm.shape
+                        hm_flat = hm.view(b, -1)
+                        k = min(self.k, hm_flat.shape[1])
+                        scores, inds = torch.topk(hm_flat, k=k, dim=1)
+                        cls = inds // (h * w)
+                        rem = inds % (h * w)
+                        ys = rem // w
+                        xs = rem % w
+                        off_flat = off.view(b, 2, -1)
+                        wh_flat = wh.view(b, 2, -1)
+                        off_g = torch.gather(off_flat, 2, inds.unsqueeze(1).expand(-1, 2, -1))
+                        wh_g = torch.gather(wh_flat, 2, inds.unsqueeze(1).expand(-1, 2, -1))
+                        cx = (xs.float() + off_g[:, 0, :]) / w
+                        cy = (ys.float() + off_g[:, 1, :]) / h
+                        bw = wh_g[:, 0, :] / w
+                        bh = wh_g[:, 1, :] / h
+                        dets = torch.stack([scores, cls.float(), cx, cy, bw, bh], dim=-1)
+                        return dets
+
+                wrapper = PostCNN(wrapper, args.topk)
+                output_names = ["detections"]
+            else:
+                output_names = ["hm", "off", "wh"]
     elif arch == "transformer":
         wrapper = TransformerWrapper(model)
         if args.merge_postprocess:
