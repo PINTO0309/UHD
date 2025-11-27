@@ -99,6 +99,7 @@ def parse_args():
     parser.add_argument("--teacher-use-fpn", action="store_true", help="Force teacher use-fpn on (otherwise checkpoint/student default).")
     parser.add_argument("--teacher-backbone", default=None, help="Path to teacher backbone checkpoint for feature distillation (e.g., DINOv3).")
     parser.add_argument("--teacher-backbone-arch", default=None, help="Teacher backbone architecture hint (e.g., dinov3_vits16, dinov3_vitb16).")
+    parser.add_argument("--teacher-backbone-norm", default="imagenet", choices=["imagenet", "none"], help="Normalization applied to teacher backbone input.")
     parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
     parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
     parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
@@ -499,6 +500,7 @@ def train_one_epoch(
     teacher_model: torch.nn.Module = None,
     teacher_backbone: torch.nn.Module = None,
     feature_adapter: torch.nn.Module = None,
+    teacher_backbone_norm: str = "imagenet",
     distill_kl: float = 0.0,
     distill_box_l1: float = 0.0,
     distill_cosine: bool = False,
@@ -550,7 +552,13 @@ def train_one_epoch(
                         teacher_logits, teacher_boxes = t_out
             if teacher_backbone is not None and distill_feat > 0 and arch == "cnn":
                 with torch.no_grad():
-                    teacher_feats = teacher_backbone(imgs)
+                    imgs_t = imgs
+                    if teacher_backbone_norm == "imagenet":
+                        mean = torch.tensor([0.485, 0.456, 0.406], device=imgs.device, dtype=torch.float32).view(1, 3, 1, 1)
+                        std = torch.tensor([0.229, 0.224, 0.225], device=imgs.device, dtype=torch.float32).view(1, 3, 1, 1)
+                        imgs_t = imgs_t.float()
+                        imgs_t = (imgs_t - mean) / std
+                    teacher_feats = teacher_backbone(imgs_t)
             if arch == "cnn":
                 need_feats = teacher_feats is not None and distill_feat > 0
                 outputs = model(imgs, return_feat=need_feats)
@@ -911,6 +919,7 @@ def main():
     distill_feat = float(args.distill_feat)
     teacher_backbone = args.teacher_backbone
     teacher_backbone_arch = args.teacher_backbone_arch
+    teacher_backbone_norm = args.teacher_backbone_norm
     teacher_ckpt = args.teacher_ckpt
     teacher_arch = args.teacher_arch
     teacher_num_queries = args.teacher_num_queries
@@ -940,7 +949,7 @@ def main():
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
         nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn
-        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch
+        nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
         nonlocal last_se, last_width_scale
@@ -1014,6 +1023,8 @@ def main():
                 teacher_backbone = meta["teacher_backbone"]
             if "teacher_backbone_arch" in meta and meta["teacher_backbone_arch"]:
                 teacher_backbone_arch = meta["teacher_backbone_arch"]
+            if "teacher_backbone_norm" in meta and meta["teacher_backbone_norm"]:
+                teacher_backbone_norm = meta["teacher_backbone_norm"]
             if "distill_kl" in meta:
                 distill_kl = float(meta["distill_kl"])
             if "distill_box_l1" in meta:
@@ -1243,6 +1254,7 @@ def main():
             teacher_model=teacher_model,
             teacher_backbone=teacher_backbone_model,
             feature_adapter=feature_adapter,
+            teacher_backbone_norm=teacher_backbone_norm,
             distill_kl=distill_kl if args.arch == "transformer" else 0.0,
             distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
             distill_cosine=distill_cosine,
@@ -1345,6 +1357,7 @@ def main():
                 "teacher_use_skip": teacher_use_skip,
                 "teacher_activation": teacher_activation,
                 "teacher_use_fpn": teacher_use_fpn,
+                "teacher_backbone_norm": teacher_backbone_norm,
                 "distill_kl": distill_kl,
                 "distill_box_l1": distill_box_l1,
                 "distill_temperature": distill_temperature,
@@ -1400,6 +1413,7 @@ def main():
             "teacher_use_skip": teacher_use_skip,
             "teacher_activation": teacher_activation,
             "teacher_use_fpn": teacher_use_fpn,
+            "teacher_backbone_norm": teacher_backbone_norm,
             "distill_kl": distill_kl,
             "distill_box_l1": distill_box_l1,
             "distill_temperature": distill_temperature,

@@ -166,6 +166,7 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --teacher-backbone ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
 --teacher-backbone-arch dinov3_vits16 \
+--teacher-backbone-norm imagenet \
 --distill-feat 1.0
 ```
 
@@ -199,6 +200,7 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --teacher-backbone ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
 --teacher-backbone-arch dinov3_vits16 \
+--teacher-backbone-norm imagenet \
 --distill-feat 1.0
 ```
 
@@ -232,6 +234,7 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --teacher-backbone ckpts/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth \
 --teacher-backbone-arch dinov3_vitb16 \
+--teacher-backbone-norm imagenet \
 --distill-feat 1.0
 ```
 
@@ -265,6 +268,7 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --teacher-backbone ckpts/vitt_distill.pt \
 --teacher-backbone-arch vit_tiny \
+--teacher-backbone-norm imagenet \
 --distill-feat 1.0
 ```
 
