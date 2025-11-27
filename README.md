@@ -131,7 +131,9 @@ uv run python train.py \
 --last-se se \
 --last-width-scale 1.25 \
 --use-skip \
---output-stride 8
+--output-stride 8 \
+--use-ema \
+--ema-decay 0.9999
 ```
 
 Options:
