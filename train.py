@@ -8,6 +8,7 @@ from typing import Dict, Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import yaml
 from PIL import Image, ImageDraw
 from torch.nn.utils import clip_grad_norm_
@@ -566,12 +567,15 @@ def train_one_epoch(
                             t_feat, size=student_feats.shape[2:], mode="bilinear", align_corners=False
                         )
                     if t_feat is not None:
-                        s_proj = feature_adapter(student_feats) if feature_adapter is not None else student_feats
-                        loss_feat = torch.nn.functional.l1_loss(
-                            torch.nn.functional.normalize(s_proj, dim=1),
-                            torch.nn.functional.normalize(t_feat, dim=1),
-                            reduction="mean",
-                        )
+                        with torch.amp.autocast(device_type=device.type, enabled=False):
+                            s_proj = feature_adapter(student_feats) if feature_adapter is not None else student_feats
+                            s_proj = s_proj.float()
+                            t_feat_f = t_feat.float()
+                            s_norm = torch.nn.functional.normalize(torch.nan_to_num(s_proj), dim=1, eps=1e-6)
+                            t_norm = torch.nn.functional.normalize(torch.nan_to_num(t_feat_f), dim=1, eps=1e-6)
+                            loss_feat = torch.nn.functional.l1_loss(
+                                torch.nan_to_num(s_norm), torch.nan_to_num(t_norm), reduction="mean"
+                            )
                         loss_dict["loss"] = loss_dict["loss"] + (distill_feat * distill_scale) * loss_feat
                         loss_dict["distill_feat"] = loss_feat
             else:

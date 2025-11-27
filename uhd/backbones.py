@@ -199,6 +199,15 @@ def load_dinov3_backbone(
     add_pos_embed: bool = True,
 ) -> Tuple[DinoV3Backbone, Dict[str, int]]:
     state = torch.load(ckpt_path, map_location="cpu")
+    # Normalize key naming for qkv bias mask if present
+    if any("attn.qkv.bias_mask" in k for k in state.keys()):
+        new_state = {}
+        for k, v in state.items():
+            if "attn.qkv.bias_mask" in k:
+                new_state[k.replace("attn.qkv.bias_mask", "attn.qkv_bias_mask")] = v
+            else:
+                new_state[k] = v
+        state = new_state
     if not isinstance(state, dict):
         raise ValueError(f"Checkpoint at {ckpt_path} must be a state_dict-like mapping.")
     cfg = _infer_dinov3_config(state, arch_hint=arch_hint)
