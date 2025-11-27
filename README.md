@@ -126,7 +126,11 @@ uv run python train.py \
 --cnn-width 64 \
 --use-anchor \
 --auto-anchors \
---iou-loss ciou
+--num-anchors 5 \
+--iou-loss ciou \
+--last-se se \
+--last-width-scale 1.25 \
+--use-skip
 ```
 
 Options:
