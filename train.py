@@ -125,6 +125,7 @@ def parse_args():
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
+    parser.add_argument("--output-stride", type=int, default=16, help="Final feature stride for CNN (4, 8, or 16).")
     parser.add_argument(
         "--anchors",
         default="",
@@ -865,6 +866,7 @@ def main():
     iou_loss_type = args.iou_loss
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
+    output_stride = int(args.output_stride)
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -912,6 +914,10 @@ def main():
         if "activation" in meta and meta["activation"] != activation:
             print(f"Overriding CLI activation={activation} with {label} activation={meta['activation']}")
             activation = meta["activation"]
+        if "output_stride" in meta and meta["output_stride"]:
+            if int(meta["output_stride"]) != output_stride:
+                print(f"Overriding CLI output-stride={output_stride} with {label} output-stride={int(meta['output_stride'])}")
+            output_stride = int(meta["output_stride"])
         if "use_ema" in meta and bool(meta["use_ema"]) != use_ema:
             print(f"Overriding CLI use-ema={use_ema} with {label} use-ema={bool(meta['use_ema'])}")
             use_ema = bool(meta["use_ema"])
@@ -1004,6 +1010,7 @@ def main():
         anchors=anchor_list,
         last_se=last_se,
         last_width_scale=last_width_scale,
+        output_stride=output_stride,
     ).to(device)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -1213,6 +1220,7 @@ def main():
                 "iou_loss": iou_loss_type,
                 "last_se": last_se,
                 "last_width_scale": last_width_scale,
+                "output_stride": output_stride,
                 "grad_clip_norm": grad_clip_norm,
                 "activation": activation,
                 "best_map": best_map,
@@ -1263,6 +1271,7 @@ def main():
             "iou_loss": iou_loss_type,
             "last_se": last_se,
             "last_width_scale": last_width_scale,
+            "output_stride": output_stride,
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
             "best_map": best_map,

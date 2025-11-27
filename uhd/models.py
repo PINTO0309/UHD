@@ -65,8 +65,11 @@ class MiniCenterNet(nn.Module):
         activation: str = "swish",
         last_se: str = "none",
         last_width_scale: float = 1.0,
+        out_stride: int = 4,
     ) -> None:
         super().__init__()
+        if out_stride not in (4, 8, 16):
+            raise ValueError(f"out_stride must be one of (4, 8, 16); got {out_stride}")
         last_scale = max(1.0, float(last_width_scale))
         out_c = int(round(width * last_scale))
         self.stem = nn.Sequential(
@@ -78,9 +81,16 @@ class MiniCenterNet(nn.Module):
         if self.use_skip:
             self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
             self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-        self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
-        self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
-        self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
+        # Choose strides to reach the requested output stride (total downsample factor).
+        if out_stride == 4:
+            s1, s2, s3 = 2, 1, 1
+        elif out_stride == 8:
+            s1, s2, s3 = 2, 2, 1
+        else:  # 16
+            s1, s2, s3 = 2, 2, 2
+        self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
+        self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
+        self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
             self.se = SEModule(out_c)
         elif last_se == "ese":
@@ -126,8 +136,11 @@ class AnchorCNN(nn.Module):
         activation: str = "swish",
         last_se: str = "none",
         last_width_scale: float = 1.0,
+        out_stride: int = 4,
     ) -> None:
         super().__init__()
+        if out_stride not in (4, 8, 16):
+            raise ValueError(f"out_stride must be one of (4, 8, 16); got {out_stride}")
         last_scale = max(1.0, float(last_width_scale))
         out_c = int(round(width * last_scale))
         self.stem = nn.Sequential(
@@ -139,9 +152,15 @@ class AnchorCNN(nn.Module):
         if self.use_skip:
             self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
             self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-        self.stage1 = DWConvBlock(width, width, stride=2, activation=activation)  # 64 -> 32
-        self.stage2 = DWConvBlock(width, width, stride=2, activation=activation)  # 32 -> 16
-        self.stage3 = DWConvBlock(width, out_c, stride=2, activation=activation)  # 16 -> 8
+        if out_stride == 4:
+            s1, s2, s3 = 2, 1, 1
+        elif out_stride == 8:
+            s1, s2, s3 = 2, 2, 1
+        else:  # 16
+            s1, s2, s3 = 2, 2, 2
+        self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
+        self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
+        self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
             self.se = SEModule(out_c)
         elif last_se == "ese":
@@ -292,6 +311,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         activation = kwargs.get("activation", "swish")
         last_se = kwargs.get("last_se", "none")
         last_width_scale = kwargs.get("last_width_scale", 1.0)
+        out_stride = kwargs.get("output_stride", 4)
         if kwargs.get("use_anchor", False):
             return AnchorCNN(
                 width=width,
@@ -302,6 +322,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 activation=activation,
                 last_se=last_se,
                 last_width_scale=last_width_scale,
+                out_stride=out_stride,
             )
         else:
             return MiniCenterNet(
@@ -311,6 +332,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 activation=activation,
                 last_se=last_se,
                 last_width_scale=last_width_scale,
+                out_stride=out_stride,
             )
     if arch == "transformer":
         return TinyDETR(

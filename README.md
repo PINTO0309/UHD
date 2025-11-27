@@ -130,7 +130,8 @@ uv run python train.py \
 --iou-loss ciou \
 --last-se se \
 --last-width-scale 1.25 \
---use-skip
+--use-skip \
+--output-stride 8
 ```
 
 Options:
@@ -246,6 +247,7 @@ uv run python train.py \
 | `--classes` | Comma-separated target class IDs. | `0` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
+| `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
 | `--num-queries` | Transformer query count. | `10` |
 | `--d-model` | Transformer model dimension. | `64` |
 | `--heads` | Transformer attention heads. | `4` |
