@@ -75,6 +75,22 @@ def _infer_transformer_config(state_dict, fallback_layers: int, fallback_num_que
     return num_queries, d_model, layers
 
 
+def _infer_cnn_width(state_dict, fallback_width: int) -> int:
+    """Try to recover CNN width from checkpoint weights when metadata is missing."""
+    if not isinstance(state_dict, dict):
+        return int(fallback_width)
+    # Prefer stem conv if present
+    for key in ("stem.0.weight", "stem.weight", "stage1.dw.weight", "stage1.pw.weight"):
+        w = state_dict.get(key)
+        if isinstance(w, torch.Tensor):
+            return int(w.shape[0])
+    # Head conv stores width on channel dimension 1
+    w = state_dict.get("head_hm.weight")
+    if isinstance(w, torch.Tensor) and w.dim() > 1:
+        return int(w.shape[1])
+    return int(fallback_width)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export checkpoint to ONNX (auto-detect arch).")
     parser.add_argument("--checkpoint", required=True, help="Path to .pt checkpoint.")
@@ -125,10 +141,20 @@ def main():
     heads = int(heads if heads is not None else args.heads)
     dim_feedforward = int(dim_feedforward if dim_feedforward is not None else args.dim_feedforward)
     h, w = parse_img_size(args.img_size)
+    # Pick the state dict we will actually load (model vs EMA) for width inference as well
+    state_dict = None
+    if args.use_ema and "ema" in ckpt and ckpt["ema"] is not None:
+        state_dict = ckpt["ema"]
+    else:
+        state_dict = ckpt["model"]
+    width = ckpt.get("width")
+    if arch == "cnn":
+        width = _infer_cnn_width(state_dict, fallback_width=width or args.cnn_width)
+    width = int(width if width is not None else args.cnn_width)
 
     model = build_model(
         arch,
-        width=args.cnn_width,
+        width=width,
         num_queries=num_queries,
         d_model=d_model,
         heads=heads,
@@ -139,10 +165,7 @@ def main():
         use_skip=use_skip,
         use_fpn=use_fpn,
     )
-    if args.use_ema and "ema" in ckpt and ckpt["ema"] is not None:
-        model.load_state_dict(ckpt["ema"])
-    else:
-        model.load_state_dict(ckpt["model"])
+    model.load_state_dict(state_dict)
     model.eval()
 
     if arch == "cnn":
