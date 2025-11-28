@@ -952,7 +952,7 @@ def main():
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
-        nonlocal last_se, last_width_scale
+        nonlocal last_se, last_width_scale, output_stride
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
             if set(ckpt_classes) != set(class_ids):
