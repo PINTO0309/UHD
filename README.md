@@ -188,7 +188,9 @@ uv run python train.py \
 --use-anchor \
 --auto-anchors \
 --num-anchors ${ANCHOR} \
---iou-loss ciou \
+--iou-loss giou \
+--anchor-assigner simota \
+--anchor-cls-loss vfl \
 --last-se se \
 --use-ema \
 --ema-decay 0.9999 \
@@ -504,6 +506,9 @@ uv run python train.py \
 | `--auto-anchors` | Compute anchors from training labels when using anchor head. | `False` |
 | `--num-anchors` | Number of anchors to use when auto-computing. | `3` |
 | `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
+| `--anchor-assigner` | Anchor assigner strategy (`legacy`, `simota`). | `legacy` |
+| `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`). | `bce` |
+| `--simota-topk` | Top-K IoUs for dynamic-k in SimOTA. | `10` |
 | `--last-se` | Apply SE/eSE only on the last CNN block. | `none` |
 | `--last-width-scale` | Channel scale for last CNN block (e.g., `1.25`). | `1.0` |
 | `--num-queries` | Transformer query count. | `10` |

@@ -223,6 +223,9 @@ def anchor_loss(
     anchors: torch.Tensor,
     num_classes: int,
     iou_loss: str = "giou",
+    assigner: str = "legacy",
+    cls_loss_type: str = "bce",
+    simota_topk: int = 10,
 ) -> Dict[str, torch.Tensor]:
     """
     YOLO-style anchor loss with optional IoU/GIoU/CIoU regression.
@@ -252,39 +255,84 @@ def anchor_loss(
     gx = gx.view(1, 1, h, w)
     gy = gy.view(1, 1, h, w)
 
-    for bi, tgt in enumerate(targets):
-        boxes = tgt["boxes"].to(device)
-        labels = tgt["labels"].to(device)
-        if boxes.numel() == 0:
-            continue
-        gxs = (boxes[:, 0] * w).clamp(0, w - 1e-3)
-        gys = (boxes[:, 1] * h).clamp(0, h - 1e-3)
-        gis = gxs.long()
-        gjs = gys.long()
-        wh = boxes[:, 2:4]
-        # anchor matching by IoU on w,h only
-        awh = anchors_dev[:, None, :]  # A x 1 x 2
-        inter = torch.min(awh, wh[None, :, :]).prod(dim=2)
-        union = (awh[:, :, 0] * awh[:, :, 1]) + (wh[None, :, 0] * wh[None, :, 1]) - inter + 1e-7
-        anchor_iou = inter / union  # A x G
-        best_anchor = anchor_iou.argmax(dim=0)  # G
-        for gi, gj, a, box, cls in zip(gis, gjs, best_anchor, boxes, labels):
-            if gi < 0 or gj < 0 or gi >= w or gj >= h:
-                continue
-            target_obj[bi, a, gj, gi] = 1.0
-            target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
-            target_box[bi, a, gj, gi] = box
-
-    # decode predictions
     pred_cx = (tx.sigmoid() + gx) / w
     pred_cy = (ty.sigmoid() + gy) / h
     pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * tw.exp()
     pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * th.exp()
     pred_box = torch.stack([pred_cx, pred_cy, pred_w, pred_h], dim=-1)
 
+    if assigner == "legacy":
+        for bi, tgt in enumerate(targets):
+            boxes = tgt["boxes"].to(device)
+            labels = tgt["labels"].to(device)
+            if boxes.numel() == 0:
+                continue
+            gxs = (boxes[:, 0] * w).clamp(0, w - 1e-3)
+            gys = (boxes[:, 1] * h).clamp(0, h - 1e-3)
+            gis = gxs.long()
+            gjs = gys.long()
+            wh = boxes[:, 2:4]
+            # anchor matching by IoU on w,h only
+            awh = anchors_dev[:, None, :]  # A x 1 x 2
+            inter = torch.min(awh, wh[None, :, :]).prod(dim=2)
+            union = (awh[:, :, 0] * awh[:, :, 1]) + (wh[None, :, 0] * wh[None, :, 1]) - inter + 1e-7
+            anchor_iou = inter / union  # A x G
+            best_anchor = anchor_iou.argmax(dim=0)  # G
+            for gi, gj, a, box, cls in zip(gis, gjs, best_anchor, boxes, labels):
+                if gi < 0 or gj < 0 or gi >= w or gj >= h:
+                    continue
+                target_obj[bi, a, gj, gi] = 1.0
+                target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
+                target_box[bi, a, gj, gi] = box
+    elif assigner == "simota":
+        n_pos_total = 0
+        for bi, tgt in enumerate(targets):
+            boxes = tgt["boxes"].to(device)
+            labels = tgt["labels"].to(device)
+            if boxes.numel() == 0:
+                continue
+            # flatten predictions
+            pb = pred_box[bi].reshape(-1, 4)  # N x 4
+            obj_b = obj_logit[bi].reshape(-1)
+            cls_b = cls_logit[bi].reshape(-1, num_classes)
+            ious = box_iou(pb, boxes)  # N x G
+            cls_probs = cls_b.sigmoid()
+            assigned = torch.zeros(pb.shape[0], dtype=torch.bool, device=device)
+            for gi in range(boxes.shape[0]):
+                cls_id = int(labels[gi].item())
+                iou_g = ious[:, gi]
+                topk = min(simota_topk, iou_g.numel())
+                topk_vals, topk_idx = torch.topk(iou_g, k=topk, dim=0)
+                dynamic_k = max(int(topk_vals.sum().item()), 1)
+                dynamic_k = min(dynamic_k, topk)
+                if dynamic_k < topk:
+                    topk_idx = topk_idx[:dynamic_k]
+                # build cost: cls + 3*(1-iou)
+                cls_target = torch.ones_like(topk_idx, dtype=torch.float32, device=device)
+                pred_cls = cls_probs[topk_idx, cls_id]
+                cls_cost = F.binary_cross_entropy(pred_cls.clamp(1e-4, 1 - 1e-4), cls_target, reduction="none")
+                iou_cost = 1.0 - iou_g[topk_idx]
+                cost = cls_cost + 3.0 * iou_cost
+                # select lowest cost anchors (dynamic_k)
+                order = torch.argsort(cost)
+                selected = topk_idx[order[:dynamic_k]]
+                for idx in selected:
+                    if assigned[idx]:
+                        continue
+                    assigned[idx] = True
+                    n_pos_total += 1
+                    a = int(idx // (h * w))
+                    rem = int(idx % (h * w))
+                    gj = rem // w
+                    gi = rem % w
+                    target_obj[bi, a, gj, gi] = 1.0
+                    target_cls[bi, a, gj, gi, cls_id] = iou_g[idx]
+                    target_box[bi, a, gj, gi] = boxes[gi]
+    else:
+        raise ValueError(f"Unknown assigner: {assigner}")
+
     bce_obj = nn.BCEWithLogitsLoss(reduction="mean")
     bce_cls = nn.BCEWithLogitsLoss(reduction="sum")
-
     obj_loss = bce_obj(obj_logit, target_obj)
 
     pos_mask = target_obj > 0.5
@@ -294,10 +342,26 @@ def anchor_loss(
         p_box = pred_box[pos_mask]
         iou_val = _bbox_iou_single(p_box, t_box, iou_type=iou_loss)
         box_loss = (1.0 - iou_val).mean()
-        cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+        if cls_loss_type == "vfl":
+            # varifocal: target carries IoU quality; negatives are zero
+            t = torch.zeros_like(cls_logit)
+            t[pos_mask] = target_cls[pos_mask]
+            cls_loss = varifocal_loss(cls_logit, t, alpha=0.75, gamma=2.0)
+        else:
+            cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
     else:
         box_loss = torch.tensor(0.0, device=device)
         cls_loss = torch.tensor(0.0, device=device)
 
     total = box_loss + obj_loss + cls_loss
     return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss}
+
+
+def varifocal_loss(pred: torch.Tensor, target: torch.Tensor, alpha: float = 0.75, gamma: float = 2.0) -> torch.Tensor:
+    """
+    Varifocal Loss (adapted from VFNet). pred: logits, target: quality scores (0..1).
+    """
+    pred_sigmoid = pred.sigmoid()
+    weight = target * target + alpha * (1 - target) * torch.pow(pred_sigmoid, gamma)
+    loss = F.binary_cross_entropy_with_logits(pred, target, reduction="none") * weight
+    return loss.mean()

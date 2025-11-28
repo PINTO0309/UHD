@@ -150,6 +150,9 @@ def parse_args():
     parser.add_argument("--auto-anchors", action="store_true", help="Compute anchors from training labels when using anchor head.")
     parser.add_argument("--num-anchors", type=int, default=3, help="Number of anchors to use when auto-computing.")
     parser.add_argument("--iou-loss", choices=["iou", "giou", "ciou"], default="giou", help="IoU loss type for anchor head.")
+    parser.add_argument("--anchor-assigner", choices=["legacy", "simota"], default="legacy", help="Anchor assigner strategy.")
+    parser.add_argument("--anchor-cls-loss", choices=["bce", "vfl"], default="bce", help="Classification loss for anchor head.")
+    parser.add_argument("--simota-topk", type=int, default=10, help="Top-K IoUs for dynamic-k in SimOTA.")
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
     parser.add_argument("--last-width-scale", type=float, default=1.0, help="Channel scale for last CNN block (e.g., 1.25).")
     # Transformer params
@@ -586,7 +589,16 @@ def train_one_epoch(
                 if need_feats:
                     outputs, student_feats = outputs
                 if use_anchor:
-                    loss_dict = anchor_loss(outputs, targets_dev, anchors=anchors, num_classes=num_classes, iou_loss=iou_loss_type)
+                        loss_dict = anchor_loss(
+                            outputs,
+                            targets_dev,
+                            anchors=anchors,
+                            num_classes=num_classes,
+                            iou_loss=iou_loss_type,
+                            assigner=anchor_assigner,
+                            cls_loss_type=anchor_cls_loss,
+                            simota_topk=simota_topk,
+                        )
                 else:
                     loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                 if need_feats and student_feats is not None:
@@ -813,7 +825,16 @@ def validate(
                 if arch == "cnn":
                     outputs = model(imgs)
                     if use_anchor:
-                        loss_dict = anchor_loss(outputs, targets_dev, anchors=anchors, num_classes=num_classes, iou_loss=iou_loss_type)
+                        loss_dict = anchor_loss(
+                            outputs,
+                            targets_dev,
+                            anchors=anchors,
+                            num_classes=num_classes,
+                            iou_loss=iou_loss_type,
+                            assigner=anchor_assigner,
+                            cls_loss_type=anchor_cls_loss,
+                            simota_topk=simota_topk,
+                        )
                         preds = decode_anchor(outputs, anchors=anchors, num_classes=num_classes, conf_thresh=conf_thresh)
                     else:
                         loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
@@ -963,6 +984,9 @@ def main():
     if anchor_list:
         num_anchors = len(anchor_list)
     iou_loss_type = args.iou_loss
+    anchor_assigner = args.anchor_assigner
+    anchor_cls_loss = args.anchor_cls_loss
+    simota_topk = int(args.simota_topk)
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
     output_stride = int(args.output_stride)
@@ -987,7 +1011,7 @@ def main():
         nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
-        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
+        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
         nonlocal last_se, last_width_scale, output_stride
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
@@ -1027,6 +1051,12 @@ def main():
             num_anchors = int(meta["num_anchors"])
         if "iou_loss" in meta and meta["iou_loss"]:
             iou_loss_type = meta["iou_loss"]
+        if "anchor_assigner" in meta and meta["anchor_assigner"]:
+            anchor_assigner = meta["anchor_assigner"]
+        if "anchor_cls_loss" in meta and meta["anchor_cls_loss"]:
+            anchor_cls_loss = meta["anchor_cls_loss"]
+        if "simota_topk" in meta and meta["simota_topk"]:
+            simota_topk = int(meta["simota_topk"])
         if "last_se" in meta and meta["last_se"]:
             last_se = meta["last_se"]
         if "last_width_scale" in meta and meta["last_width_scale"]:
@@ -1152,6 +1182,9 @@ def main():
         backbone_blocks=backbone_blocks,
         backbone_se=backbone_se,
         backbone_skip=backbone_skip,
+        anchor_assigner=anchor_assigner,
+        anchor_cls_loss=anchor_cls_loss,
+        simota_topk=simota_topk,
     ).to(device)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -1401,6 +1434,9 @@ def main():
                     "auto_anchors": auto_anchors,
                     "num_anchors": num_anchors,
                     "iou_loss": iou_loss_type,
+                    "anchor_assigner": anchor_assigner,
+                    "anchor_cls_loss": anchor_cls_loss,
+                    "simota_topk": simota_topk,
                     "last_se": last_se,
                     "last_width_scale": last_width_scale,
                     "output_stride": output_stride,
@@ -1462,6 +1498,9 @@ def main():
             "auto_anchors": auto_anchors,
             "num_anchors": num_anchors,
             "iou_loss": iou_loss_type,
+            "anchor_assigner": anchor_assigner,
+            "anchor_cls_loss": anchor_cls_loss,
+            "simota_topk": simota_topk,
             "last_se": last_se,
             "last_width_scale": last_width_scale,
             "output_stride": output_stride,
