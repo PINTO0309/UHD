@@ -403,7 +403,13 @@ uv run python train.py \
 - `off`: L1 loss on center offsets (within-cell quantization correction)
 - `wh`: L1 loss on width/height (feature-map scale)
 
-Transformer loss terms
+## Loss terms (CNN / Anchor head, `--use-anchor`)
+- `loss`: total anchor loss (`box + obj + cls`)
+- `obj`: BCE on objectness for each anchor location (positive vs. background)
+- `cls`: BCE on per-class logits for positive anchors (one-hot over target classes)
+- `box`: (1 - IoU/GIoU/CIoU) on decoded boxes for positive anchors; IoU flavor set by `--iou-loss`
+
+## Loss terms (Transformer)
 - `loss`: total loss (`cls + l1 + iou`)
 - `cls`: cross-entropy for class vs. background
 - `l1`: L1 loss on box coordinates
