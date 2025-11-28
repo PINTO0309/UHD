@@ -147,7 +147,7 @@ uv run python train.py \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_microcsp_${SIZE} \
---batch-size 32 \
+--batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -174,7 +174,7 @@ uv run python train.py \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_utresnet_${SIZE} \
---batch-size 32 \
+--batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
 --weight-decay 0.0001 \
@@ -201,7 +201,7 @@ uv run python train.py \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_shufflenet_${SIZE} \
---batch-size 32 \
+--batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
 --weight-decay 0.0001 \
