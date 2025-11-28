@@ -22,7 +22,7 @@ data_augment:
   #   scale_range: [1.0, 1.4]
   #   keep_aspect_ratio: true
   # Translation:
-  #   prob: 0.8
+  #   prob: 0.5
   #   translate: 0.1
   #   fill: [114, 114, 114]
   CLAHE:
