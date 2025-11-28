@@ -138,6 +138,7 @@ def parse_args():
     )
     parser.add_argument("--backbone-channels", default=None, help="Comma-separated channels for ultratinyresnet (e.g., '16,24,32,48').")
     parser.add_argument("--backbone-blocks", default=None, help="Comma-separated residual block counts per stage for ultratinyresnet (e.g., '1,1,2,1').")
+    parser.add_argument("--backbone-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE on backbone output (custom backbones only).")
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
     parser.add_argument("--output-stride", type=int, default=16, help="Final feature stride for CNN (4, 8, or 16).")
     parser.add_argument(
@@ -929,6 +930,7 @@ def main():
     backbone = args.backbone
     backbone_channels = parse_int_list(args.backbone_channels)
     backbone_blocks = parse_int_list(args.backbone_blocks)
+    backbone_se = args.backbone_se
     grad_clip_norm = float(args.grad_clip_norm)
     activation = args.activation
     use_ema = bool(args.use_ema)
@@ -970,6 +972,7 @@ def main():
     if backbone is None:
         backbone_channels = None
         backbone_blocks = None
+        backbone_se = "none"
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -978,7 +981,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
@@ -1006,6 +1009,8 @@ def main():
             backbone_channels = [int(x) for x in meta["backbone_channels"]]
         if "backbone_blocks" in meta and meta["backbone_blocks"]:
             backbone_blocks = [int(x) for x in meta["backbone_blocks"]]
+        if "backbone_se" in meta and meta["backbone_se"]:
+            backbone_se = meta["backbone_se"]
         if "use_anchor" in meta:
             use_anchor = bool(meta["use_anchor"])
         if "anchors" in meta and meta["anchors"]:
@@ -1140,6 +1145,7 @@ def main():
         backbone=backbone,
         backbone_channels=backbone_channels,
         backbone_blocks=backbone_blocks,
+        backbone_se=backbone_se,
     ).to(device)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -1382,6 +1388,7 @@ def main():
                     "backbone": backbone,
                     "backbone_channels": backbone_channels,
                     "backbone_blocks": backbone_blocks,
+                    "backbone_se": backbone_se,
                     "use_anchor": use_anchor,
                     "anchors": anchor_list,
                     "auto_anchors": auto_anchors,
@@ -1441,6 +1448,7 @@ def main():
             "backbone": backbone,
             "backbone_channels": backbone_channels,
             "backbone_blocks": backbone_blocks,
+            "backbone_se": backbone_se,
             "use_anchor": use_anchor,
             "anchors": anchor_list,
             "auto_anchors": auto_anchors,

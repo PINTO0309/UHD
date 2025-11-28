@@ -514,7 +514,30 @@ class TinyDETR(nn.Module):
         return self.pos_cache[key]
 
 
-def _build_backbone(name: str, activation: str, backbone_channels=None, backbone_blocks=None):
+class _BackboneWithSE(nn.Module):
+    """Wrapper to apply SE/eSE on backbone output."""
+
+    def __init__(self, backbone: nn.Module, mode: str = "none"):
+        super().__init__()
+        self.backbone = backbone
+        out_c = getattr(backbone, "out_channels", None)
+        if mode == "se":
+            self.se = SEModule(out_c)
+        elif mode == "ese":
+            self.se = EfficientSEModule(out_c)
+        else:
+            self.se = None
+        self.out_channels = out_c
+        self.out_stride = getattr(backbone, "out_stride", None)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.backbone(x)
+        if self.se is not None:
+            x = self.se(x)
+        return x
+
+
+def _build_backbone(name: str, activation: str, backbone_channels=None, backbone_blocks=None, backbone_se: str = "none"):
     if not name or str(name).lower() in ("none", "null"):
         return None, None
     name = name.lower()
@@ -532,6 +555,11 @@ def _build_backbone(name: str, activation: str, backbone_channels=None, backbone
         bb = ShuffleNetV2x025(activation=activation)
     else:
         raise ValueError(f"Unknown backbone: {name}")
+    se_mode = (backbone_se or "none").lower()
+    if se_mode not in ("none", "se", "ese"):
+        raise ValueError(f"Unknown backbone_se: {backbone_se}")
+    if se_mode != "none":
+        bb = _BackboneWithSE(bb, mode=se_mode)
     return bb, getattr(bb, "out_channels", None)
 
 
@@ -552,6 +580,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 activation=activation,
                 backbone_channels=kwargs.get("backbone_channels"),
                 backbone_blocks=kwargs.get("backbone_blocks"),
+                backbone_se=kwargs.get("backbone_se", "none"),
             )
             if backbone_name
             else (None, None)
