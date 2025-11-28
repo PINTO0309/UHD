@@ -171,6 +171,7 @@ ANCHOR=12
 uv run python train.py \
 --arch cnn \
 --backbone ultratinyresnet \
+--backbone-se \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_utresnet_${SIZE} \
@@ -403,7 +404,7 @@ uv run python train.py \
 
 Transformer example (From layers=3 To layers=4):
 
-```
+```bash
 SIZE=64x64
 uv run python train.py \
 --arch transformer \
