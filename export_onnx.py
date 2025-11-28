@@ -139,6 +139,12 @@ def main():
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default=None, help="Override last SE mode for CNN (defaults to checkpoint).")
     parser.add_argument("--last-width-scale", type=float, default=None, help="Override last width scale for CNN (defaults to checkpoint).")
     parser.add_argument("--output-stride", type=int, default=None, help="Override CNN output stride (defaults to checkpoint).")
+    parser.add_argument(
+        "--backbone",
+        default=None,
+        choices=["microcspnet", "ultratinyresnet", "shufflenetv2-0.25x", "none", None],
+        help="Optional lightweight CNN backbone (defaults to checkpoint).",
+    )
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -146,6 +152,11 @@ def main():
     ckpt_use_skip = bool(ckpt.get("use_skip", False))
     use_skip = ckpt_use_skip or bool(args.use_skip)
     use_fpn = bool(ckpt.get("use_fpn", False))
+    backbone = args.backbone if args.backbone not in ("none", None) else None
+    if backbone is None:
+        backbone = ckpt.get("backbone")
+    if backbone in ("none", "") or arch != "cnn":
+        backbone = None
     activation = args.activation
     ckpt_activation = ckpt.get("activation")
     if ckpt_activation and ckpt_activation != activation:
@@ -215,7 +226,9 @@ def main():
         last_se=last_se,
         last_width_scale=last_width_scale,
         output_stride=output_stride,
+        backbone=backbone,
     )
+    output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
     model.eval()
 

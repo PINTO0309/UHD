@@ -136,6 +136,89 @@ uv run python train.py \
 --ema-decay 0.9999
 ```
 
+CNN anchor head + lightweight backbone samples:
+
+```bash
+SIZE=64x64
+ANCHOR=12
+uv run python train.py \
+--arch cnn \
+--backbone microcspnet \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_microcsp_${SIZE} \
+--batch-size 32 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--use-anchor \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--last-se se \
+--use-ema \
+--ema-decay 0.9999 \
+--conf-thresh 0.05
+```
+
+```bash
+SIZE=64x64
+ANCHOR=12
+uv run python train.py \
+--arch cnn \
+--backbone ultratinyresnet \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_utresnet_${SIZE} \
+--batch-size 32 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--use-anchor \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--last-se se \
+--use-ema \
+--ema-decay 0.9999 \
+--conf-thresh 0.05
+```
+
+```bash
+SIZE=64x64
+ANCHOR=12
+uv run python train.py \
+--arch cnn \
+--backbone shufflenetv2-0.25x \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_shufflenet_${SIZE} \
+--batch-size 32 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--use-anchor \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--last-se se \
+--use-ema \
+--ema-decay 0.9999 \
+--conf-thresh 0.05
+```
+
 CNN + DINOv3 backbone feature distillation (teacher used only during training; ONNX export stays student-only):
 
 ```bash
@@ -363,15 +446,34 @@ uv run python train.py \
 | `--train-split` | Fraction of data used for training. | `0.8` |
 | `--val-split` | Fraction of data used for validation. | `0.2` |
 | `--img-size` | Input size `HxW` (e.g., `64x64`). | `64x64` |
-| `--exp-name` | Experiment name (logs/checkpoints under `runs/<exp-name>`). | `default` |
+| `--exp-name` | Experiment name; logs saved under `runs/<exp-name>`. | `default` |
 | `--batch-size` | Batch size. | `64` |
-| `--epochs` | Number of epochs. | `50` |
-| `--resume` | Path to checkpoint to resume training. | `""` |
+| `--epochs` | Number of epochs. | `100` |
+| `--resume` | Checkpoint to resume training (loads optimizer/scheduler). | `None` |
+| `--ckpt` | Initialize weights from checkpoint (no optimizer state). | `None` |
+| `--ckpt-non-strict` | Load `--ckpt` with `strict=False` (ignore missing/unexpected keys). | `False` |
+| `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
+| `--teacher-arch` | Teacher architecture override. | `None` |
+| `--teacher-num-queries` | Teacher DETR queries. | `None` |
+| `--teacher-d-model` | Teacher model dimension. | `None` |
+| `--teacher-heads` | Teacher attention heads. | `None` |
+| `--teacher-layers` | Teacher encoder/decoder layers. | `None` |
+| `--teacher-dim-feedforward` | Teacher FFN dimension. | `None` |
+| `--teacher-use-skip` | Force teacher skip connections on. | `False` |
+| `--teacher-activation` | Teacher activation (`relu`/`swish`). | `None` |
+| `--teacher-use-fpn` | Force teacher FPN on. | `False` |
+| `--teacher-backbone` | Teacher backbone checkpoint for feature distillation. | `None` |
+| `--teacher-backbone-arch` | Teacher backbone architecture hint. | `None` |
+| `--teacher-backbone-norm` | Teacher backbone input normalization. | `imagenet` |
+| `--distill-kl` | KL distillation weight (transformer). | `0.0` |
+| `--distill-box-l1` | Box L1 distillation weight (transformer). | `0.0` |
+| `--distill-cosine` | Cosine ramp-up of distillation weights. | `False` |
+| `--distill-temperature` | Teacher logits temperature. | `1.0` |
+| `--distill-feat` | Feature-map distillation weight (CNN only). | `0.0` |
 | `--lr` | Learning rate. | `0.001` |
 | `--weight-decay` | Weight decay. | `0.0001` |
 | `--grad-clip-norm` | Global gradient norm clip; set `0` to disable. | `5.0` |
-| `--activation` | Activation function (`relu` or `swish`). | `swish` |
-| `--num-workers` | DataLoader workers. | `2` |
+| `--num-workers` | DataLoader workers. | `8` |
 | `--device` | Device: `cuda` or `cpu`. | `cuda` if available |
 | `--seed` | Random seed. | `42` |
 | `--log-interval` | Steps between logging to progress bar. | `10` |
@@ -379,18 +481,35 @@ uv run python train.py \
 | `--conf-thresh` | Confidence threshold for decoding. | `0.3` |
 | `--topk` | Top-K for CNN decoding. | `50` |
 | `--use-amp` | Enable automatic mixed precision. | `False` |
-| `--use-ema` | Enable EMA for evaluation/checkpointing. | `False` |
-| `--ema-decay` | EMA decay (ignored if EMA disabled). | `0.9998` |
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
+| `--use-ema` | Enable EMA of model weights for evaluation/checkpointing. | `False` |
+| `--ema-decay` | EMA decay factor (ignored if EMA disabled). | `0.9998` |
+| `--coco-eval` | Run COCO-style evaluation. | `False` |
+| `--coco-per-class` | Log per-class COCO AP when COCO eval is enabled. | `False` |
 | `--classes` | Comma-separated target class IDs. | `0` |
+| `--activation` | Activation function (`relu` or `swish`). | `swish` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
+| `--backbone` | Optional lightweight CNN backbone (`microcspnet`, `ultratinyresnet`, `shufflenetv2-0.25x`, or `none`). | `None` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
+| `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
+| `--anchors` | Anchor sizes as normalized `w,h` pairs (space separated). | `""` |
+| `--auto-anchors` | Compute anchors from training labels when using anchor head. | `False` |
+| `--num-anchors` | Number of anchors to use when auto-computing. | `3` |
+| `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
+| `--last-se` | Apply SE/eSE only on the last CNN block. | `none` |
+| `--last-width-scale` | Channel scale for last CNN block (e.g., `1.25`). | `1.0` |
 | `--num-queries` | Transformer query count. | `10` |
 | `--d-model` | Transformer model dimension. | `64` |
 | `--heads` | Transformer attention heads. | `4` |
 | `--layers` | Transformer encoder/decoder layers. | `3` |
 | `--dim-feedforward` | Transformer feedforward dimension. | `128` |
+| `--use-fpn` | Enable simple FPN for transformer backbone. | `False` |
+
+Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
+- `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
+- `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8).
+- `shufflenetv2-0.25x`: Truncated ShuffleNetV2 (0.25× width) ending at 64ch, stride 8.
 
 ## Augmentation via YAML
 - Specify a YAML file with `--aug-config` to run the `data_augment:` entries in the listed order (e.g., `--aug-config uhd/aug.yaml`).

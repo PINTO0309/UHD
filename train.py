@@ -130,6 +130,12 @@ def parse_args():
     # CNN params
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
+    parser.add_argument(
+        "--backbone",
+        default=None,
+        choices=["microcspnet", "ultratinyresnet", "shufflenetv2-0.25x", "none", None],
+        help="Optional lightweight CNN backbone. Default: None (built-in tiny CNN).",
+    )
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
     parser.add_argument("--output-stride", type=int, default=16, help="Final feature stride for CNN (4, 8, or 16).")
     parser.add_argument(
@@ -907,6 +913,7 @@ def main():
     num_classes = len(class_ids)
     aug_cfg = load_aug_config(args.aug_config)
     use_skip = bool(args.use_skip)
+    backbone = args.backbone
     grad_clip_norm = float(args.grad_clip_norm)
     activation = args.activation
     use_ema = bool(args.use_ema)
@@ -940,6 +947,11 @@ def main():
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
     output_stride = int(args.output_stride)
+    if args.arch != "cnn" and backbone not in (None, "none"):
+        print(f"--backbone is only used for arch=cnn; ignoring backbone={backbone}")
+        backbone = None
+    if backbone in ("none", ""):
+        backbone = None
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
 
@@ -948,7 +960,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type
@@ -967,6 +979,11 @@ def main():
         if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
             print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
             use_fpn = bool(meta["use_fpn"])
+        if "backbone" in meta and meta["backbone"] not in (None, "none", ""):
+            ckpt_backbone = meta["backbone"]
+            if ckpt_backbone != backbone:
+                print(f"Overriding CLI backbone={backbone} with {label} backbone={ckpt_backbone}")
+            backbone = ckpt_backbone
         if "use_anchor" in meta:
             use_anchor = bool(meta["use_anchor"])
         if "anchors" in meta and meta["anchors"]:
@@ -1078,6 +1095,8 @@ def main():
             if unexpected:
                 print(f"[{label}] unexpected keys ({len(unexpected)}): {unexpected[:10]}{' ...' if len(unexpected) > 10 else ''}")
 
+    if args.arch != "cnn":
+        backbone = None
     model = build_model(
         args.arch,
         width=args.cnn_width,
@@ -1096,6 +1115,7 @@ def main():
         last_se=last_se,
         last_width_scale=last_width_scale,
         output_stride=output_stride,
+        backbone=backbone,
     ).to(device)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -1191,6 +1211,9 @@ def main():
         model.set_anchors(anchors_tensor)
         if ema_helper is not None and hasattr(ema_helper.ema, "set_anchors"):
             ema_helper.ema.set_anchors(anchors_tensor)
+
+    # Align recorded output stride to actual model if available
+    output_stride = getattr(model, "out_stride", output_stride)
 
     train_loader = DataLoader(
         train_ds,
@@ -1328,45 +1351,46 @@ def main():
                     "metrics": state_metrics,
                     "epoch": epoch + 1,
                     "arch": args.arch,
-                "classes": class_ids,
-                "augment_cfg": aug_cfg,
-                "use_skip": use_skip,
-                "use_fpn": use_fpn,
-                "use_anchor": use_anchor,
-                "anchors": anchor_list,
-                "auto_anchors": auto_anchors,
-                "num_anchors": num_anchors,
-                "iou_loss": iou_loss_type,
-                "last_se": last_se,
-                "last_width_scale": last_width_scale,
-                "output_stride": output_stride,
-                "grad_clip_norm": grad_clip_norm,
-                "activation": activation,
-                "best_map": best_map,
-                "use_ema": use_ema,
-                "ema_decay": ema_decay,
-                "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
-                "ema_updates": ema_helper.updates if ema_helper is not None else 0,
-                "teacher_ckpt": teacher_ckpt,
-                "teacher_arch": teacher_arch,
-                "teacher_num_queries": teacher_num_queries,
-                "teacher_d_model": teacher_d_model,
-                "teacher_heads": teacher_heads,
-                "teacher_layers": teacher_layers,
-                "teacher_dim_feedforward": teacher_dim_feedforward,
-                "teacher_use_skip": teacher_use_skip,
-                "teacher_activation": teacher_activation,
-                "teacher_use_fpn": teacher_use_fpn,
-                "teacher_backbone_norm": teacher_backbone_norm,
-                "distill_kl": distill_kl,
-                "distill_box_l1": distill_box_l1,
-                "distill_temperature": distill_temperature,
-                "distill_cosine": distill_cosine,
-                "teacher_backbone": teacher_backbone,
-                "teacher_backbone_arch": teacher_backbone_arch,
-                "distill_feat": distill_feat,
-                "feat_adapter": feature_adapter.state_dict() if feature_adapter is not None else None,
-            }
+                    "classes": class_ids,
+                    "augment_cfg": aug_cfg,
+                    "use_skip": use_skip,
+                    "use_fpn": use_fpn,
+                    "backbone": backbone,
+                    "use_anchor": use_anchor,
+                    "anchors": anchor_list,
+                    "auto_anchors": auto_anchors,
+                    "num_anchors": num_anchors,
+                    "iou_loss": iou_loss_type,
+                    "last_se": last_se,
+                    "last_width_scale": last_width_scale,
+                    "output_stride": output_stride,
+                    "grad_clip_norm": grad_clip_norm,
+                    "activation": activation,
+                    "best_map": best_map,
+                    "use_ema": use_ema,
+                    "ema_decay": ema_decay,
+                    "ema": ema_helper.ema.state_dict() if ema_helper is not None else None,
+                    "ema_updates": ema_helper.updates if ema_helper is not None else 0,
+                    "teacher_ckpt": teacher_ckpt,
+                    "teacher_arch": teacher_arch,
+                    "teacher_num_queries": teacher_num_queries,
+                    "teacher_d_model": teacher_d_model,
+                    "teacher_heads": teacher_heads,
+                    "teacher_layers": teacher_layers,
+                    "teacher_dim_feedforward": teacher_dim_feedforward,
+                    "teacher_use_skip": teacher_use_skip,
+                    "teacher_activation": teacher_activation,
+                    "teacher_use_fpn": teacher_use_fpn,
+                    "teacher_backbone_norm": teacher_backbone_norm,
+                    "distill_kl": distill_kl,
+                    "distill_box_l1": distill_box_l1,
+                    "distill_temperature": distill_temperature,
+                    "distill_cosine": distill_cosine,
+                    "teacher_backbone": teacher_backbone,
+                    "teacher_backbone_arch": teacher_backbone_arch,
+                    "distill_feat": distill_feat,
+                    "feat_adapter": feature_adapter.state_dict() if feature_adapter is not None else None,
+                }
                 best_name = f"best_{arch_tag}_{epoch+1:04d}_map_{map_val:.5f}.pt"
                 best_path = os.path.join(run_dir, best_name)
                 torch.save(state, best_path)
@@ -1388,6 +1412,7 @@ def main():
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
             "use_fpn": use_fpn,
+            "backbone": backbone,
             "use_anchor": use_anchor,
             "anchors": anchor_list,
             "auto_anchors": auto_anchors,

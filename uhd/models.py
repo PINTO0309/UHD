@@ -15,6 +15,20 @@ def _make_activation(name: str) -> nn.Module:
     raise ValueError(f"Unsupported activation: {name}")
 
 
+class ConvBNAct(nn.Module):
+    """Standard conv-bn-activation block."""
+
+    def __init__(self, c_in: int, c_out: int, kernel_size: int = 3, stride: int = 1, activation: str = "swish") -> None:
+        super().__init__()
+        padding = kernel_size // 2
+        self.conv = nn.Conv2d(c_in, c_out, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(c_out)
+        self.act = _make_activation(activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(self.bn(self.conv(x)))
+
+
 class DWConvBlock(nn.Module):
     def __init__(self, c_in: int, c_out: int, stride: int = 1, activation: str = "swish") -> None:
         super().__init__()
@@ -54,6 +68,153 @@ class EfficientSEModule(nn.Module):
         return x * torch.sigmoid(self.fc(w))
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, channels: int, activation: str = "swish") -> None:
+        super().__init__()
+        self.conv1 = ConvBNAct(channels, channels, kernel_size=3, stride=1, activation=activation)
+        self.conv2 = ConvBNAct(channels, channels, kernel_size=3, stride=1, activation=activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.conv2(self.conv1(x))
+
+
+class CSPTinyBlock(nn.Module):
+    """Very small CSP-style block (keeps channels constant)."""
+
+    def __init__(self, channels: int, activation: str = "swish") -> None:
+        super().__init__()
+        mid = max(1, channels // 2)
+        self.conv1 = ConvBNAct(channels, mid, kernel_size=1, stride=1, activation=activation)
+        self.conv2 = ConvBNAct(mid, mid, kernel_size=3, stride=1, activation=activation)
+        self.conv3 = ConvBNAct(mid, mid, kernel_size=3, stride=1, activation=activation)
+        self.conv4 = ConvBNAct(mid * 2, channels, kernel_size=1, stride=1, activation=activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y1 = self.conv1(x)
+        y2 = self.conv2(y1)
+        y3 = self.conv3(y2)
+        return self.conv4(torch.cat([y1, y3], dim=1))
+
+
+class MicroCSPNet(nn.Module):
+    """Tiny CSP-style backbone with stride 8 output."""
+
+    def __init__(self, activation: str = "swish") -> None:
+        super().__init__()
+        self.conv1 = ConvBNAct(3, 16, kernel_size=3, stride=1, activation=activation)
+        self.conv2 = ConvBNAct(16, 32, kernel_size=3, stride=2, activation=activation)
+        self.csp2 = CSPTinyBlock(32, activation=activation)
+        self.conv3 = ConvBNAct(32, 64, kernel_size=3, stride=2, activation=activation)
+        self.csp3 = CSPTinyBlock(64, activation=activation)
+        self.conv4 = ConvBNAct(64, 128, kernel_size=3, stride=2, activation=activation)
+        self.compress = ConvBNAct(128, 64, kernel_size=1, stride=1, activation=activation)
+        self.out_channels = 64
+        self.out_stride = 8
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.csp2(self.conv2(x))
+        x = self.csp3(self.conv3(x))
+        x = self.compress(self.conv4(x))
+        return x
+
+
+class UltraTinyResNet(nn.Module):
+    """Minimal ResNet-like backbone ending at stride 8."""
+
+    def __init__(self, activation: str = "swish") -> None:
+        super().__init__()
+        self.stem = ConvBNAct(3, 16, kernel_size=3, stride=1, activation=activation)
+        self.res1 = ResidualBlock(16, activation=activation)
+        self.down1 = ConvBNAct(16, 24, kernel_size=3, stride=2, activation=activation)
+        self.res2 = ResidualBlock(24, activation=activation)
+        self.down2 = ConvBNAct(24, 32, kernel_size=3, stride=2, activation=activation)
+        self.res3a = ResidualBlock(32, activation=activation)
+        self.res3b = ResidualBlock(32, activation=activation)
+        self.down3 = ConvBNAct(32, 48, kernel_size=3, stride=2, activation=activation)
+        self.res4 = ResidualBlock(48, activation=activation)
+        self.out_channels = 48
+        self.out_stride = 8
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.res1(x)
+        x = self.res2(self.down1(x))
+        x = self.res3b(self.res3a(self.down2(x)))
+        x = self.res4(self.down3(x))
+        return x
+
+
+def channel_shuffle(x: torch.Tensor, groups: int = 2) -> torch.Tensor:
+    b, c, h, w = x.size()
+    if c % groups != 0:
+        return x
+    x = x.reshape(b, groups, c // groups, h, w)
+    x = x.transpose(1, 2).reshape(b, c, h, w)
+    return x
+
+
+class ShuffleV2Block(nn.Module):
+    def __init__(self, c_in: int, c_out: int, stride: int, activation: str = "swish") -> None:
+        super().__init__()
+        assert stride in (1, 2)
+        self.stride = stride
+        branch_out = c_out // 2
+        act = activation
+        if stride == 1:
+            assert c_in == c_out and c_in % 2 == 0
+            self.branch2 = nn.Sequential(
+                ConvBNAct(branch_out, branch_out, kernel_size=1, stride=1, activation=act),
+                nn.Conv2d(branch_out, branch_out, kernel_size=3, stride=1, padding=1, groups=branch_out, bias=False),
+                nn.BatchNorm2d(branch_out),
+                ConvBNAct(branch_out, branch_out, kernel_size=1, stride=1, activation=act),
+            )
+        else:
+            self.branch1 = nn.Sequential(
+                nn.Conv2d(c_in, c_in, kernel_size=3, stride=2, padding=1, groups=c_in, bias=False),
+                nn.BatchNorm2d(c_in),
+                ConvBNAct(c_in, branch_out, kernel_size=1, stride=1, activation=act),
+            )
+            self.branch2 = nn.Sequential(
+                ConvBNAct(c_in, branch_out, kernel_size=1, stride=1, activation=act),
+                nn.Conv2d(branch_out, branch_out, kernel_size=3, stride=2, padding=1, groups=branch_out, bias=False),
+                nn.BatchNorm2d(branch_out),
+                ConvBNAct(branch_out, branch_out, kernel_size=1, stride=1, activation=act),
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.stride == 1:
+            x1, x2 = torch.chunk(x, 2, dim=1)
+            out = torch.cat((x1, self.branch2(x2)), dim=1)
+        else:
+            out = torch.cat((self.branch1(x), self.branch2(x)), dim=1)
+        return channel_shuffle(out)
+
+
+class ShuffleNetV2x025(nn.Module):
+    """Simplified ShuffleNetV2 (0.25x) truncated at stride 8."""
+
+    def __init__(self, activation: str = "swish") -> None:
+        super().__init__()
+        self.conv1 = ConvBNAct(3, 24, kernel_size=3, stride=2, activation=activation)
+        self.stage2 = nn.Sequential(
+            ShuffleV2Block(24, 48, stride=2, activation=activation),
+            ShuffleV2Block(48, 48, stride=1, activation=activation),
+        )
+        self.stage3 = nn.Sequential(
+            ShuffleV2Block(48, 64, stride=2, activation=activation),
+            ShuffleV2Block(64, 64, stride=1, activation=activation),
+        )
+        self.out_channels = 64
+        self.out_stride = 8
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        return x
+
+
 class MiniCenterNet(nn.Module):
     """Minimal anchor-free detector with heatmap + offsets + size."""
 
@@ -66,31 +227,45 @@ class MiniCenterNet(nn.Module):
         last_se: str = "none",
         last_width_scale: float = 1.0,
         out_stride: int = 4,
+        backbone: nn.Module = None,
+        backbone_out_channels: int = None,
     ) -> None:
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"out_stride must be one of (4, 8, 16); got {out_stride}")
         last_scale = max(1.0, float(last_width_scale))
-        out_c = int(round(width * last_scale))
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(width),
-            _make_activation(activation),
-        )
-        self.use_skip = use_skip
-        if self.use_skip:
-            self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-            self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-        # Choose strides to reach the requested output stride (total downsample factor).
-        if out_stride == 4:
-            s1, s2, s3 = 2, 1, 1
-        elif out_stride == 8:
-            s1, s2, s3 = 2, 2, 1
-        else:  # 16
-            s1, s2, s3 = 2, 2, 2
-        self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
-        self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
-        self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
+        self.custom_backbone = backbone is not None
+        self.out_stride = getattr(backbone, "out_stride", out_stride) if self.custom_backbone else out_stride
+        out_c = int(backbone_out_channels if backbone_out_channels is not None else round(width * last_scale))
+        if self.custom_backbone:
+            self.backbone = backbone
+            self.use_skip = False
+            self.skip_s2 = None
+            self.skip_s1 = None
+            self.stem = None
+            self.stage1 = None
+            self.stage2 = None
+            self.stage3 = None
+        else:
+            self.stem = nn.Sequential(
+                nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
+                nn.BatchNorm2d(width),
+                _make_activation(activation),
+            )
+            self.use_skip = use_skip
+            if self.use_skip:
+                self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+                self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+            # Choose strides to reach the requested output stride (total downsample factor).
+            if out_stride == 4:
+                s1, s2, s3 = 2, 1, 1
+            elif out_stride == 8:
+                s1, s2, s3 = 2, 2, 1
+            else:  # 16
+                s1, s2, s3 = 2, 2, 2
+            self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
+            self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
+            self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
             self.se = SEModule(out_c)
         elif last_se == "ese":
@@ -102,18 +277,21 @@ class MiniCenterNet(nn.Module):
         self.head_wh = nn.Conv2d(out_c, 2, kernel_size=1)
 
     def forward(self, x: torch.Tensor, return_feat: bool = False) -> Dict[str, torch.Tensor]:
-        x = self.stem(x)
-        s1 = self.stage1(x)
-        s2 = self.stage2(s1)
-        s3 = self.stage3(s2)
-        if self.use_skip:
-            skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
-            skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
-            if self.skip_s2 is not None:
-                skip2 = self.skip_s2(skip2)
-            if self.skip_s1 is not None:
-                skip1 = self.skip_s1(skip1)
-            s3 = s3 + skip2 + skip1
+        if self.custom_backbone:
+            s3 = self.backbone(x)
+        else:
+            x = self.stem(x)
+            s1 = self.stage1(x)
+            s2 = self.stage2(s1)
+            s3 = self.stage3(s2)
+            if self.use_skip:
+                skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
+                skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
+                if self.skip_s2 is not None:
+                    skip2 = self.skip_s2(skip2)
+                if self.skip_s1 is not None:
+                    skip1 = self.skip_s1(skip1)
+                s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
         feats = s3
@@ -141,30 +319,44 @@ class AnchorCNN(nn.Module):
         last_se: str = "none",
         last_width_scale: float = 1.0,
         out_stride: int = 4,
+        backbone: nn.Module = None,
+        backbone_out_channels: int = None,
     ) -> None:
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"out_stride must be one of (4, 8, 16); got {out_stride}")
         last_scale = max(1.0, float(last_width_scale))
-        out_c = int(round(width * last_scale))
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(width),
-            _make_activation(activation),
-        )
-        self.use_skip = use_skip
-        if self.use_skip:
-            self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-            self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
-        if out_stride == 4:
-            s1, s2, s3 = 2, 1, 1
-        elif out_stride == 8:
-            s1, s2, s3 = 2, 2, 1
-        else:  # 16
-            s1, s2, s3 = 2, 2, 2
-        self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
-        self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
-        self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
+        self.custom_backbone = backbone is not None
+        self.out_stride = getattr(backbone, "out_stride", out_stride) if self.custom_backbone else out_stride
+        out_c = int(backbone_out_channels if backbone_out_channels is not None else round(width * last_scale))
+        if self.custom_backbone:
+            self.backbone = backbone
+            self.use_skip = False
+            self.skip_s2 = None
+            self.skip_s1 = None
+            self.stem = None
+            self.stage1 = None
+            self.stage2 = None
+            self.stage3 = None
+        else:
+            self.stem = nn.Sequential(
+                nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
+                nn.BatchNorm2d(width),
+                _make_activation(activation),
+            )
+            self.use_skip = use_skip
+            if self.use_skip:
+                self.skip_s2 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+                self.skip_s1 = nn.Conv2d(width, out_c, kernel_size=1, bias=False) if out_c != width else None
+            if out_stride == 4:
+                s1, s2, s3 = 2, 1, 1
+            elif out_stride == 8:
+                s1, s2, s3 = 2, 2, 1
+            else:  # 16
+                s1, s2, s3 = 2, 2, 2
+            self.stage1 = DWConvBlock(width, width, stride=s1, activation=activation)
+            self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
+            self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
             self.se = SEModule(out_c)
         elif last_se == "ese":
@@ -185,18 +377,21 @@ class AnchorCNN(nn.Module):
             self.anchors = anchors.to(self.anchors.device)
 
     def forward(self, x: torch.Tensor, return_feat: bool = False) -> torch.Tensor:
-        x = self.stem(x)
-        s1 = self.stage1(x)
-        s2 = self.stage2(s1)
-        s3 = self.stage3(s2)
-        if self.use_skip:
-            skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
-            skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
-            if self.skip_s2 is not None:
-                skip2 = self.skip_s2(skip2)
-            if self.skip_s1 is not None:
-                skip1 = self.skip_s1(skip1)
-            s3 = s3 + skip2 + skip1
+        if self.custom_backbone:
+            s3 = self.backbone(x)
+        else:
+            x = self.stem(x)
+            s1 = self.stage1(x)
+            s2 = self.stage2(s1)
+            s3 = self.stage3(s2)
+            if self.use_skip:
+                skip2 = F.adaptive_avg_pool2d(s2, s3.shape[2:])
+                skip1 = F.adaptive_avg_pool2d(s1, s3.shape[2:])
+                if self.skip_s2 is not None:
+                    skip2 = self.skip_s2(skip2)
+                if self.skip_s1 is not None:
+                    skip1 = self.skip_s1(skip1)
+                s3 = s3 + skip2 + skip1
         if self.se is not None:
             s3 = self.se(s3)
         feats = s3
@@ -310,6 +505,27 @@ class TinyDETR(nn.Module):
         return self.pos_cache[key]
 
 
+def _build_backbone(name: str, activation: str):
+    if not name or str(name).lower() in ("none", "null"):
+        return None, None
+    name = name.lower()
+    if name in ("microcspnet", "micro-cspnet", "micro_cspnet"):
+        bb = MicroCSPNet(activation=activation)
+    elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
+        bb = UltraTinyResNet(activation=activation)
+    elif name in (
+        "shufflenetv2-0.25x",
+        "shufflenetv2_0.25x",
+        "shufflenetv2x0.25",
+        "shufflenetv2x025",
+        "shufflenetv2-0.25",
+    ):
+        bb = ShuffleNetV2x025(activation=activation)
+    else:
+        raise ValueError(f"Unknown backbone: {name}")
+    return bb, getattr(bb, "out_channels", None)
+
+
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
     if arch == "cnn":
@@ -320,6 +536,10 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         last_se = kwargs.get("last_se", "none")
         last_width_scale = kwargs.get("last_width_scale", 1.0)
         out_stride = kwargs.get("output_stride", 4)
+        backbone_name = kwargs.get("backbone")
+        backbone_module, backbone_out_channels = _build_backbone(backbone_name, activation=activation) if backbone_name else (None, None)
+        if backbone_module is not None:
+            out_stride = getattr(backbone_module, "out_stride", out_stride)
         if kwargs.get("use_anchor", False):
             return AnchorCNN(
                 width=width,
@@ -331,6 +551,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 last_se=last_se,
                 last_width_scale=last_width_scale,
                 out_stride=out_stride,
+                backbone=backbone_module,
+                backbone_out_channels=backbone_out_channels,
             )
         else:
             return MiniCenterNet(
@@ -341,6 +563,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 last_se=last_se,
                 last_width_scale=last_width_scale,
                 out_stride=out_stride,
+                backbone=backbone_module,
+                backbone_out_channels=backbone_out_channels,
             )
     if arch == "transformer":
         return TinyDETR(
