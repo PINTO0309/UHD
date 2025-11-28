@@ -122,7 +122,7 @@ class MicroCSPNet(nn.Module):
 class UltraTinyResNet(nn.Module):
     """Minimal ResNet-like backbone ending at stride 2^(stages-1) (defaults to 8)."""
 
-    def __init__(self, activation: str = "swish", channels=None, blocks=None) -> None:
+    def __init__(self, activation: str = "swish", channels=None, blocks=None, use_long_skip: bool = False) -> None:
         super().__init__()
         ch_list = list(channels) if channels is not None else [16, 24, 32, 48]
         blk_list = list(blocks) if blocks is not None else [1, 1, 2, 1]
@@ -130,18 +130,24 @@ class UltraTinyResNet(nn.Module):
             raise ValueError(f"UltraTinyResNet requires matching channels/blocks lengths; got {len(ch_list)} vs {len(blk_list)}")
         if len(ch_list) < 1:
             raise ValueError("UltraTinyResNet requires at least one stage.")
+        self.use_long_skip = bool(use_long_skip)
         self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
 
         self.downs = nn.ModuleList()
         self.blocks = nn.ModuleList()
+        self.skip_proj = nn.ModuleList()
         # stage 0 (no downsample)
         self.downs.append(nn.Identity())
         self.blocks.append(nn.Sequential(*[ResidualBlock(ch_list[0], activation=activation) for _ in range(max(blk_list[0], 0))]))
+        self.skip_proj.append(
+            ConvBNAct(ch_list[0], ch_list[-1], kernel_size=1, stride=1, activation=activation) if self.use_long_skip else nn.Identity()
+        )
         # subsequent stages with stride-2 downsamples
         prev_ch = ch_list[0]
         for ch, num_blk in zip(ch_list[1:], blk_list[1:]):
             self.downs.append(ConvBNAct(prev_ch, ch, kernel_size=3, stride=2, activation=activation))
             self.blocks.append(nn.Sequential(*[ResidualBlock(ch, activation=activation) for _ in range(max(num_blk, 0))]))
+            self.skip_proj.append(ConvBNAct(ch, ch_list[-1], kernel_size=1, stride=1, activation=activation) if self.use_long_skip else nn.Identity())
             prev_ch = ch
         self.out_channels = ch_list[-1]
         # stride doubles for every downsample stage
@@ -149,9 +155,18 @@ class UltraTinyResNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.stem(x)
+        feats = []
         for down, block in zip(self.downs, self.blocks):
             x = block(down(x))
-        return x
+            feats.append(x)
+        if self.use_long_skip and feats:
+            out = feats[-1]
+            target_hw = out.shape[2:]
+            for f, proj in zip(feats[:-1], self.skip_proj[:-1]):
+                pooled = F.adaptive_avg_pool2d(f, target_hw)
+                out = out + proj(pooled)
+            return out
+        return feats[-1] if feats else x
 
 
 def channel_shuffle(x: torch.Tensor, groups: int = 2) -> torch.Tensor:
@@ -537,14 +552,14 @@ class _BackboneWithSE(nn.Module):
         return x
 
 
-def _build_backbone(name: str, activation: str, backbone_channels=None, backbone_blocks=None, backbone_se: str = "none"):
+def _build_backbone(name: str, activation: str, backbone_channels=None, backbone_blocks=None, backbone_se: str = "none", backbone_skip: bool = False):
     if not name or str(name).lower() in ("none", "null"):
         return None, None
     name = name.lower()
     if name in ("microcspnet", "micro-cspnet", "micro_cspnet"):
         bb = MicroCSPNet(activation=activation)
     elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
-        bb = UltraTinyResNet(activation=activation, channels=backbone_channels, blocks=backbone_blocks)
+        bb = UltraTinyResNet(activation=activation, channels=backbone_channels, blocks=backbone_blocks, use_long_skip=backbone_skip)
     elif name in (
         "shufflenetv2-0.25x",
         "shufflenetv2_0.25x",
@@ -581,6 +596,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_channels=kwargs.get("backbone_channels"),
                 backbone_blocks=kwargs.get("backbone_blocks"),
                 backbone_se=kwargs.get("backbone_se", "none"),
+                backbone_skip=kwargs.get("backbone_skip", False),
             )
             if backbone_name
             else (None, None)
