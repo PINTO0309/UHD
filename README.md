@@ -172,6 +172,8 @@ uv run python train.py \
 --arch cnn \
 --backbone ultratinyresnet \
 --backbone-se se \
+--backbone-channels 32,48,80,112 \
+--backbone-blocks 1,2,3,2 \
 --backbone-skip \
 --use-skip \
 --image-dir data/wholebody34/obj_train_data \
