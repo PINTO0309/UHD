@@ -490,6 +490,8 @@ uv run python train.py \
 | `--activation` | Activation function (`relu` or `swish`). | `swish` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
 | `--backbone` | Optional lightweight CNN backbone (`microcspnet`, `ultratinyresnet`, `shufflenetv2-0.25x`, or `none`). | `None` |
+| `--backbone-channels` | Comma-separated channels for `ultratinyresnet` (e.g., `16,24,32,48`). | `None` |
+| `--backbone-blocks` | Comma-separated residual block counts per stage for `ultratinyresnet` (e.g., `1,1,2,1`). | `None` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
@@ -508,7 +510,7 @@ uv run python train.py \
 
 Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
 - `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
-- `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8).
+- `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8). Channel widths and blocks per stage can be overridden via `--backbone-channels` / `--backbone-blocks`.
 - `shufflenetv2-0.25x`: Truncated ShuffleNetV2 (0.25× width) ending at 64ch, stride 8.
 
 ## Augmentation via YAML

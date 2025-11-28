@@ -120,28 +120,37 @@ class MicroCSPNet(nn.Module):
 
 
 class UltraTinyResNet(nn.Module):
-    """Minimal ResNet-like backbone ending at stride 8."""
+    """Minimal ResNet-like backbone ending at stride 2^(stages-1) (defaults to 8)."""
 
-    def __init__(self, activation: str = "swish") -> None:
+    def __init__(self, activation: str = "swish", channels=None, blocks=None) -> None:
         super().__init__()
-        self.stem = ConvBNAct(3, 16, kernel_size=3, stride=1, activation=activation)
-        self.res1 = ResidualBlock(16, activation=activation)
-        self.down1 = ConvBNAct(16, 24, kernel_size=3, stride=2, activation=activation)
-        self.res2 = ResidualBlock(24, activation=activation)
-        self.down2 = ConvBNAct(24, 32, kernel_size=3, stride=2, activation=activation)
-        self.res3a = ResidualBlock(32, activation=activation)
-        self.res3b = ResidualBlock(32, activation=activation)
-        self.down3 = ConvBNAct(32, 48, kernel_size=3, stride=2, activation=activation)
-        self.res4 = ResidualBlock(48, activation=activation)
-        self.out_channels = 48
-        self.out_stride = 8
+        ch_list = list(channels) if channels is not None else [16, 24, 32, 48]
+        blk_list = list(blocks) if blocks is not None else [1, 1, 2, 1]
+        if len(ch_list) != len(blk_list):
+            raise ValueError(f"UltraTinyResNet requires matching channels/blocks lengths; got {len(ch_list)} vs {len(blk_list)}")
+        if len(ch_list) < 1:
+            raise ValueError("UltraTinyResNet requires at least one stage.")
+        self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
+
+        self.downs = nn.ModuleList()
+        self.blocks = nn.ModuleList()
+        # stage 0 (no downsample)
+        self.downs.append(nn.Identity())
+        self.blocks.append(nn.Sequential(*[ResidualBlock(ch_list[0], activation=activation) for _ in range(max(blk_list[0], 0))]))
+        # subsequent stages with stride-2 downsamples
+        prev_ch = ch_list[0]
+        for ch, num_blk in zip(ch_list[1:], blk_list[1:]):
+            self.downs.append(ConvBNAct(prev_ch, ch, kernel_size=3, stride=2, activation=activation))
+            self.blocks.append(nn.Sequential(*[ResidualBlock(ch, activation=activation) for _ in range(max(num_blk, 0))]))
+            prev_ch = ch
+        self.out_channels = ch_list[-1]
+        # stride doubles for every downsample stage
+        self.out_stride = 2 ** (len(ch_list) - 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.stem(x)
-        x = self.res1(x)
-        x = self.res2(self.down1(x))
-        x = self.res3b(self.res3a(self.down2(x)))
-        x = self.res4(self.down3(x))
+        for down, block in zip(self.downs, self.blocks):
+            x = block(down(x))
         return x
 
 
@@ -505,14 +514,14 @@ class TinyDETR(nn.Module):
         return self.pos_cache[key]
 
 
-def _build_backbone(name: str, activation: str):
+def _build_backbone(name: str, activation: str, backbone_channels=None, backbone_blocks=None):
     if not name or str(name).lower() in ("none", "null"):
         return None, None
     name = name.lower()
     if name in ("microcspnet", "micro-cspnet", "micro_cspnet"):
         bb = MicroCSPNet(activation=activation)
     elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
-        bb = UltraTinyResNet(activation=activation)
+        bb = UltraTinyResNet(activation=activation, channels=backbone_channels, blocks=backbone_blocks)
     elif name in (
         "shufflenetv2-0.25x",
         "shufflenetv2_0.25x",
@@ -537,7 +546,16 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         last_width_scale = kwargs.get("last_width_scale", 1.0)
         out_stride = kwargs.get("output_stride", 4)
         backbone_name = kwargs.get("backbone")
-        backbone_module, backbone_out_channels = _build_backbone(backbone_name, activation=activation) if backbone_name else (None, None)
+        backbone_module, backbone_out_channels = (
+            _build_backbone(
+                backbone_name,
+                activation=activation,
+                backbone_channels=kwargs.get("backbone_channels"),
+                backbone_blocks=kwargs.get("backbone_blocks"),
+            )
+            if backbone_name
+            else (None, None)
+        )
         if backbone_module is not None:
             out_stride = getattr(backbone_module, "out_stride", out_stride)
         if kwargs.get("use_anchor", False):

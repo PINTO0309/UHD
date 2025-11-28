@@ -23,6 +23,17 @@ def parse_img_size(arg: str):
     return val, val
 
 
+def _parse_int_list(arg):
+    if arg is None:
+        return None
+    if isinstance(arg, (list, tuple)):
+        return [int(x) for x in arg]
+    s = str(arg).replace(" ", "")
+    if s == "":
+        return None
+    return [int(p) for p in s.split(",") if p != ""]
+
+
 class CnnWrapper(torch.nn.Module):
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
@@ -145,6 +156,8 @@ def main():
         choices=["microcspnet", "ultratinyresnet", "shufflenetv2-0.25x", "none", None],
         help="Optional lightweight CNN backbone (defaults to checkpoint).",
     )
+    parser.add_argument("--backbone-channels", default=None, help="Comma-separated channels for ultratinyresnet (e.g., '16,24,32,48').")
+    parser.add_argument("--backbone-blocks", default=None, help="Comma-separated residual block counts per stage for ultratinyresnet (e.g., '1,1,2,1').")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -153,10 +166,18 @@ def main():
     use_skip = ckpt_use_skip or bool(args.use_skip)
     use_fpn = bool(ckpt.get("use_fpn", False))
     backbone = args.backbone if args.backbone not in ("none", None) else None
+    backbone_channels = _parse_int_list(args.backbone_channels)
+    backbone_blocks = _parse_int_list(args.backbone_blocks)
     if backbone is None:
         backbone = ckpt.get("backbone")
+    if backbone_channels is None:
+        backbone_channels = _parse_int_list(ckpt.get("backbone_channels"))
+    if backbone_blocks is None:
+        backbone_blocks = _parse_int_list(ckpt.get("backbone_blocks"))
     if backbone in ("none", "") or arch != "cnn":
         backbone = None
+        backbone_channels = None
+        backbone_blocks = None
     activation = args.activation
     ckpt_activation = ckpt.get("activation")
     if ckpt_activation and ckpt_activation != activation:
@@ -227,6 +248,8 @@ def main():
         last_width_scale=last_width_scale,
         output_stride=output_stride,
         backbone=backbone,
+        backbone_channels=backbone_channels,
+        backbone_blocks=backbone_blocks,
     )
     output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
