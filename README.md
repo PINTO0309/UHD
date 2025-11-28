@@ -490,8 +490,8 @@ uv run python train.py \
 | `--activation` | Activation function (`relu` or `swish`). | `swish` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
 | `--backbone` | Optional lightweight CNN backbone (`microcspnet`, `ultratinyresnet`, `shufflenetv2-0.25x`, or `none`). | `None` |
-| `--backbone-channels` | Comma-separated channels for `ultratinyresnet` (e.g., `16,24,32,48`). | `None` |
-| `--backbone-blocks` | Comma-separated residual block counts per stage for `ultratinyresnet` (e.g., `1,1,2,1`). | `None` |
+| `--backbone-channels` | Comma-separated channels for `ultratinyresnet` (e.g., `16,32,48,64`). | `None` |
+| `--backbone-blocks` | Comma-separated residual block counts per stage for `ultratinyresnet` (e.g., `1,2,2,1`). | `None` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
