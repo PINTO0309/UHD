@@ -1,17 +1,17 @@
 data_augment:
-  RandomPhotometricDistort:
-    prob: 0.5
+  # RandomPhotometricDistort:
+  #   prob: 0.5
   # RandomHSV:
   #   prob: 0.75
   #   hue_gain: 0.015
   #   saturation_gain: 0.7
   #   value_gain: 0.4
-  Blur:
-    prob: 0.01
-    blur_limit: [3, 7]
-  MedianBlur:
-    prob: 0.01
-    blur_limit: [3, 7]
+  # Blur:
+  #   prob: 0.01
+  #   blur_limit: [3, 7]
+  # MedianBlur:
+  #   prob: 0.01
+  #   blur_limit: [3, 7]
   # VerticalFlip:
   #   prob: 0.5
   HorizontalFlip:
@@ -29,5 +29,5 @@ data_augment:
     prob: 0.01
     clip_limit: 4.0
     tile_grid_size: [8, 8]
-  ToGray: 0.01
+  # ToGray: 0.01
   RemoveOutliers: 1e-8
