@@ -166,6 +166,40 @@ uv run python train.py \
 ```
 
 ```bash
+###################################### SimOTA
+SIZE=64x64
+ANCHOR=12
+uv run python train.py \
+--arch cnn \
+--backbone ultratinyresnet \
+--backbone-se se \
+--backbone-channels 32,48,80,112 \
+--backbone-blocks 1,2,3,2 \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_utresnet_simota_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--use-anchor \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss giou \
+--anchor-assigner simota \
+--anchor-cls-loss vfl \
+--last-se se \
+--use-ema \
+--ema-decay 0.9999 \
+--conf-thresh 0.05
+```
+
+```bash
+###################################### SimOTA + Skip
 SIZE=64x64
 ANCHOR=12
 uv run python train.py \
@@ -178,7 +212,7 @@ uv run python train.py \
 --use-skip \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name cnn_anchor${ANCHOR}_utresnet_${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_utresnet_simota_skip_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \

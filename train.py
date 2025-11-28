@@ -533,6 +533,9 @@ def train_one_epoch(
     use_anchor: bool = False,
     anchors: torch.Tensor = None,
     iou_loss_type: str = "giou",
+    anchor_assigner: str = "legacy",
+    anchor_cls_loss: str = "bce",
+    simota_topk: int = 10,
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
@@ -751,6 +754,9 @@ def validate(
     use_anchor: bool = False,
     anchors: torch.Tensor = None,
     iou_loss_type: str = "giou",
+    anchor_assigner: str = "legacy",
+    anchor_cls_loss: str = "bce",
+    simota_topk: int = 10,
 ) -> Dict[str, float]:
     model.eval()
     all_preds = []
@@ -1355,6 +1361,9 @@ def main():
             use_anchor=use_anchor,
             anchors=anchors_tensor,
             iou_loss_type=iou_loss_type,
+            anchor_assigner=anchor_assigner,
+            anchor_cls_loss=anchor_cls_loss,
+            simota_topk=simota_topk,
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"
@@ -1392,6 +1401,9 @@ def main():
                 use_anchor=use_anchor,
                 anchors=anchors_tensor,
                 iou_loss_type=iou_loss_type,
+                anchor_assigner=anchor_assigner,
+                anchor_cls_loss=anchor_cls_loss,
+                simota_topk=simota_topk,
             )
             fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
             val_msg = f"epoch {epoch+1}/{args.epochs} val: {fmt_val}"
