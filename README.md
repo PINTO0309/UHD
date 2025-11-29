@@ -197,7 +197,7 @@ SIZE=64x64
 ANCHOR=12
 uv run python train.py \
 --arch cnn \
---backbone shufflenetv2-0.25x \
+--backbone enhanced-shufflenet \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_shufflenet_${SIZE} \
@@ -489,7 +489,7 @@ uv run python train.py \
 | `--classes` | Comma-separated target class IDs. | `0` |
 | `--activation` | Activation function (`relu` or `swish`). | `swish` |
 | `--cnn-width` | Width multiplier for CNN backbone. | `32` |
-| `--backbone` | Optional lightweight CNN backbone (`microcspnet`, `ultratinyresnet`, `shufflenetv2-0.25x`, or `none`). | `None` |
+| `--backbone` | Optional lightweight CNN backbone (`microcspnet`, `ultratinyresnet`, `enhanced-shufflenet`, or `none`). | `None` |
 | `--backbone-channels` | Comma-separated channels for `ultratinyresnet` (e.g., `16,32,48,64`). | `None` |
 | `--backbone-blocks` | Comma-separated residual block counts per stage for `ultratinyresnet` (e.g., `1,2,2,1`). | `None` |
 | `--backbone-se` | Apply SE/eSE on backbone output (custom backbones only). | `none` |
@@ -517,7 +517,7 @@ uv run python train.py \
 Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
 - `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
 - `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8). Channel widths and blocks per stage can be overridden via `--backbone-channels` / `--backbone-blocks`; optional long skips across stages via `--backbone-skip`; optional lightweight FPN fusion via `--backbone-fpn`.
-- `shufflenetv2-0.25x`: Truncated ShuffleNetV2 (0.25× width) ending at 64ch, stride 8.
+- `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with deeper refinement and squeeze, ending at 64ch, stride 8.
 All custom backbones can optionally apply SE/eSE on the backbone output via `--backbone-se {none,se,ese}`.
 
 ## Augmentation via YAML

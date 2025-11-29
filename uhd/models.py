@@ -178,10 +178,14 @@ class UltraTinyResNet(nn.Module):
                 pooled = F.adaptive_avg_pool2d(f, target_hw)
                 out = out + proj(pooled)
         if self.use_fpn and feats:
-            target_hw = out.shape[2:]
-            for f, conv in zip(feats[:-1], self.fpn_convs):
-                up = F.interpolate(f, size=target_hw, mode="nearest")
-                out = out + conv(up)
+            target_hw = feats[-1].shape[2:]
+            cur = feats[-1]
+            for f, conv in zip(reversed(feats[:-1]), reversed(self.fpn_convs)):
+                cur = F.interpolate(cur, size=f.shape[2:], mode="nearest")
+                cur = cur + conv(f)
+            if cur.shape[2:] != target_hw:
+                cur = F.interpolate(cur, size=target_hw, mode="nearest")
+            out = cur
         return out
 
 
@@ -231,20 +235,29 @@ class ShuffleV2Block(nn.Module):
         return channel_shuffle(out)
 
 
-class ShuffleNetV2x025(nn.Module):
-    """Simplified ShuffleNetV2 (0.25x) truncated at stride 8."""
+class EnhancedShuffleNet(nn.Module):
+    """
+    ShuffleNetV2+ inspired (arXiv:2111.00902) scaled-down backbone (0.25x-ish) with stride 8 output.
+    Deeper stages and channel squeeze vs the prior minimal variant.
+    """
 
     def __init__(self, activation: str = "swish") -> None:
         super().__init__()
-        self.conv1 = ConvBNAct(3, 24, kernel_size=3, stride=2, activation=activation)
+        act = activation
+        self.conv1 = ConvBNAct(3, 24, kernel_size=3, stride=2, activation=act)  # 32x32
+        # Stage2: stride 2 entry + extra refinements (paper uses more repeats; trimmed for tiny setting)
         self.stage2 = nn.Sequential(
-            ShuffleV2Block(24, 48, stride=2, activation=activation),
-            ShuffleV2Block(48, 48, stride=1, activation=activation),
+            ShuffleV2Block(24, 48, stride=2, activation=act),  # 16x16
+            ShuffleV2Block(48, 48, stride=1, activation=act),
+            ShuffleV2Block(48, 48, stride=1, activation=act),
         )
+        # Stage3: stride 2 to reach 8x8 + multiple refinements
         self.stage3 = nn.Sequential(
-            ShuffleV2Block(48, 64, stride=2, activation=activation),
-            ShuffleV2Block(64, 64, stride=1, activation=activation),
+            ShuffleV2Block(48, 64, stride=2, activation=act),  # 8x8
+            ShuffleV2Block(64, 64, stride=1, activation=act),
+            ShuffleV2Block(64, 64, stride=1, activation=act),
         )
+        self.out_conv = ConvBNAct(64, 64, kernel_size=1, stride=1, activation=act)
         self.out_channels = 64
         self.out_stride = 8
 
@@ -252,6 +265,7 @@ class ShuffleNetV2x025(nn.Module):
         x = self.conv1(x)
         x = self.stage2(x)
         x = self.stage3(x)
+        x = self.out_conv(x)
         return x
 
 
@@ -591,13 +605,11 @@ def _build_backbone(
             use_fpn=backbone_fpn,
         )
     elif name in (
-        "shufflenetv2-0.25x",
-        "shufflenetv2_0.25x",
-        "shufflenetv2x0.25",
-        "shufflenetv2x025",
-        "shufflenetv2-0.25",
+        "enhanced-shufflenet",
+        "enhanced_shufflenet",
+        "enhancedshufflenet",
     ):
-        bb = ShuffleNetV2x025(activation=activation)
+        bb = EnhancedShuffleNet(activation=activation)
     else:
         raise ValueError(f"Unknown backbone: {name}")
     se_mode = (backbone_se or "none").lower()

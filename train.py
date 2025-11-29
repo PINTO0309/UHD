@@ -133,7 +133,7 @@ def parse_args():
     parser.add_argument(
         "--backbone",
         default=None,
-        choices=["microcspnet", "ultratinyresnet", "shufflenetv2-0.25x", "none", None],
+        choices=["microcspnet", "ultratinyresnet", "enhanced-shufflenet", "none", None],
         help="Optional lightweight CNN backbone. Default: None (built-in tiny CNN).",
     )
     parser.add_argument("--backbone-channels", default=None, help="Comma-separated channels for ultratinyresnet (e.g., '16,24,32,48').")
