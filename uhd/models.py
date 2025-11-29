@@ -245,25 +245,34 @@ class EnhancedShuffleNet(nn.Module):
         super().__init__()
         act = activation
         self.conv1 = ConvBNAct(3, 32, kernel_size=3, stride=2, activation=act)  # 32x32
-        # Stage2: stride 2 entry, progressive widening via squeeze/expand
+        # Stage2: stride 2 entry, progressive widening via squeeze/expand (doubled depth)
         self.stage2 = nn.Sequential(
             ShuffleV2Block(32, 64, stride=2, activation=act),  # 16x16
             ConvBNAct(64, 80, kernel_size=1, stride=1, activation=act),
             ShuffleV2Block(80, 80, stride=1, activation=act),
             ShuffleV2Block(80, 80, stride=1, activation=act),
-            ConvBNAct(80, 80, kernel_size=1, stride=1, activation=act),
-            ShuffleV2Block(80, 80, stride=1, activation=act),
+            ConvBNAct(80, 96, kernel_size=1, stride=1, activation=act),
+            ShuffleV2Block(96, 96, stride=1, activation=act),
+            ShuffleV2Block(96, 96, stride=1, activation=act),
+            ConvBNAct(96, 112, kernel_size=1, stride=1, activation=act),
+            ShuffleV2Block(112, 112, stride=1, activation=act),
+            ShuffleV2Block(112, 112, stride=1, activation=act),
         )
-        # Stage3: stride 2 to reach 8x8, further widening then squeeze at end
+        # Stage3: stride 2 to reach 8x8, further widening then squeeze at end (doubled depth)
         self.stage3 = nn.Sequential(
-            ShuffleV2Block(80, 112, stride=2, activation=act),  # 8x8
-            ConvBNAct(112, 112, kernel_size=1, stride=1, activation=act),
-            ShuffleV2Block(112, 112, stride=1, activation=act),
-            ConvBNAct(112, 112, kernel_size=1, stride=1, activation=act),
-            ShuffleV2Block(112, 112, stride=1, activation=act),
+            ShuffleV2Block(112, 144, stride=2, activation=act),  # 8x8
+            ConvBNAct(144, 160, kernel_size=1, stride=1, activation=act),
+            ShuffleV2Block(160, 160, stride=1, activation=act),
+            ShuffleV2Block(160, 160, stride=1, activation=act),
+            ConvBNAct(160, 176, kernel_size=1, stride=1, activation=act),
+            ShuffleV2Block(176, 176, stride=1, activation=act),
+            ShuffleV2Block(176, 176, stride=1, activation=act),
+            ConvBNAct(176, 192, kernel_size=1, stride=1, activation=act),
+            ShuffleV2Block(192, 192, stride=1, activation=act),
+            ShuffleV2Block(192, 192, stride=1, activation=act),
         )
-        self.out_conv = ConvBNAct(112, 80, kernel_size=1, stride=1, activation=act)
-        self.out_channels = 80
+        self.out_conv = ConvBNAct(192, 128, kernel_size=1, stride=1, activation=act)
+        self.out_channels = 128
         self.out_stride = 8
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
