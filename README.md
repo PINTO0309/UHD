@@ -259,7 +259,7 @@ uv run python train.py \
 --backbone enhanced-shufflenet \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name cnn_anchor${ANCHOR}_shufflenet_${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_eshufflenet_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
@@ -576,7 +576,7 @@ uv run python train.py \
 Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
 - `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
 - `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8). Channel widths and blocks per stage can be overridden via `--backbone-channels` / `--backbone-blocks`; optional long skips across stages via `--backbone-skip`; optional lightweight FPN fusion via `--backbone-fpn`.
-- `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with deeper refinement and squeeze, ending at 64ch, stride 8.
+- `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with progressive widening and deeper refinements, ending at ~96ch, stride 8.
 All custom backbones can optionally apply SE/eSE on the backbone output via `--backbone-se {none,se,ese}`.
 
 ## Augmentation via YAML
@@ -617,6 +617,14 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   uv run python export_onnx.py \
   --checkpoint runs/transformer_64x64/best_tf_0002_map_0.01072.pt \
   --output model_tf_${SIZE}.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
+
+  SIZE=64x64
+  uv run python export_onnx.py \
+  --checkpoint runs/cnn_anchor12_eshufflenet_64x64/best_cnn_0001_map_0.00000.pt \
+  --output model_cnn_anchor12_eshufflenet_${SIZE}.onnx \
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess
