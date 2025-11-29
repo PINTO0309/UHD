@@ -842,7 +842,7 @@ def validate(
                             cls_loss_type=anchor_cls_loss,
                             simota_topk=simota_topk,
                         )
-                        preds = decode_anchor(outputs, anchors=anchors, num_classes=num_classes, conf_thresh=conf_thresh)
+                        preds = decode_anchor(outputs, anchors=anchors, num_classes=num_classes, conf_thresh=conf_thresh, nms_thresh=0.5)
                     else:
                         loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                         preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)

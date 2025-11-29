@@ -241,9 +241,10 @@ class EnhancedShuffleNet(nn.Module):
     Deeper stages and channel squeeze vs the prior minimal variant.
     """
 
-    def __init__(self, activation: str = "swish") -> None:
+    def __init__(self, activation: str = "swish", use_global_skip: bool = False) -> None:
         super().__init__()
         act = activation
+        self.use_global_skip = bool(use_global_skip)
         self.conv1 = ConvBNAct(3, 32, kernel_size=3, stride=2, activation=act)  # 32x32
         # Stage2: stride 2 entry, progressive widening via squeeze/expand (doubled depth)
         self.stage2 = nn.Sequential(
@@ -274,13 +275,29 @@ class EnhancedShuffleNet(nn.Module):
         self.out_conv = ConvBNAct(192, 128, kernel_size=1, stride=1, activation=act)
         self.out_channels = 128
         self.out_stride = 8
+        # Stage-level shortcuts
+        # Downsample stage2 input to match stage2 output spatial size
+        self.stage2_shortcut = ConvBNAct(32, 112, kernel_size=1, stride=2, activation=act)
+        self.stage3_shortcut = ConvBNAct(112, 192, kernel_size=1, stride=2, activation=act)
+        if self.use_global_skip:
+            self.global_proj1 = ConvBNAct(32, 128, kernel_size=1, stride=4, activation=act)  # 32x32 -> 8x8
+            self.global_proj2 = ConvBNAct(112, 128, kernel_size=1, stride=2, activation=act)  # 16x16 -> 8x8
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv1(x)
-        x = self.stage2(x)
-        x = self.stage3(x)
-        x = self.out_conv(x)
-        return x
+        s1 = self.conv1(x)  # 32x32
+        s2_in = s1
+        s2 = self.stage2(s1)  # 16x16
+        s2 = s2 + self.stage2_shortcut(s2_in)
+        s3_in = s2
+        s3 = self.stage3(s2)  # 8x8
+        s3 = s3 + self.stage3_shortcut(s3_in)
+        out = self.out_conv(s3)
+        if self.use_global_skip:
+            # fuse shallow signals into final output
+            skip1 = self.global_proj1(s1)
+            skip2 = self.global_proj2(s2)
+            out = out + F.adaptive_avg_pool2d(skip1, out.shape[2:]) + F.adaptive_avg_pool2d(skip2, out.shape[2:])
+        return out
 
 
 class MiniCenterNet(nn.Module):
@@ -623,7 +640,7 @@ def _build_backbone(
         "enhanced_shufflenet",
         "enhancedshufflenet",
     ):
-        bb = EnhancedShuffleNet(activation=activation)
+        bb = EnhancedShuffleNet(activation=activation, use_global_skip=backbone_skip)
     else:
         raise ValueError(f"Unknown backbone: {name}")
     se_mode = (backbone_se or "none").lower()

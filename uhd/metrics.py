@@ -60,7 +60,7 @@ def decode_detr(
 
 
 def decode_anchor(
-    pred: torch.Tensor, anchors: torch.Tensor, num_classes: int, conf_thresh: float = 0.3
+    pred: torch.Tensor, anchors: torch.Tensor, num_classes: int, conf_thresh: float = 0.3, nms_thresh: float = 0.5
 ) -> List[List[Tuple[float, int, torch.Tensor]]]:
     """
     YOLO-style decoding: pred shape B x (A*(5+C)) x H x W, anchors A x 2 (normalized w,h).
@@ -112,10 +112,41 @@ def decode_anchor(
             cy_sel = pred_cy_i[a_idx, gy_idx, gx_idx]
             bw_sel = pred_w_i[a_idx, gy_idx, gx_idx]
             bh_sel = pred_h_i[a_idx, gy_idx, gx_idx]
+            boxes_raw = []
             for sc, cls_id, cx, cy, bw, bh in zip(sel_scores, sel_cls, cx_sel, cy_sel, bw_sel, bh_sel):
-                boxes_i.append((float(sc), int(cls_id.item()), torch.stack([cx, cy, bw, bh]).detach().cpu()))
+                boxes_raw.append((float(sc), int(cls_id.item()), torch.stack([cx, cy, bw, bh]).detach().cpu()))
+            boxes_i = nms_per_class(boxes_raw, iou_thresh=nms_thresh)
         preds.append(boxes_i)
     return preds
+
+
+def nms_per_class(boxes: List[Tuple[float, int, torch.Tensor]], iou_thresh: float = 0.5) -> List[Tuple[float, int, torch.Tensor]]:
+    """Apply per-class NMS on a list of (score, cls, box[cx,cy,w,h]) tuples."""
+    if not boxes:
+        return []
+    out: List[Tuple[float, int, torch.Tensor]] = []
+    boxes_by_cls = {}
+    for sc, cls, box in boxes:
+        boxes_by_cls.setdefault(cls, []).append((sc, box))
+    for cls, items in boxes_by_cls.items():
+        # sort by score
+        items = sorted(items, key=lambda x: x[0], reverse=True)
+        keep = []
+        while items:
+            sc, box = items.pop(0)
+            keep.append((sc, cls, box))
+            if not items:
+                break
+            ious = box_iou(box.unsqueeze(0), torch.stack([b for _, b in items], dim=0)).squeeze(0)
+            remaining = []
+            for (sc2, b2), iou in zip(items, ious):
+                if float(iou) < iou_thresh:
+                    remaining.append((sc2, b2))
+            items = remaining
+        out.extend(keep)
+    # sort combined by score
+    out.sort(key=lambda x: x[0], reverse=True)
+    return out
 
 
 def _average_precision(preds, iou_thresh: float, npos: int) -> float:

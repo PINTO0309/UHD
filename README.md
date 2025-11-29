@@ -257,6 +257,7 @@ ANCHOR=12
 uv run python train.py \
 --arch cnn \
 --backbone enhanced-shufflenet \
+--backbone-skip \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_eshufflenet_${SIZE} \
