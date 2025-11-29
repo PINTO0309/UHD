@@ -202,6 +202,7 @@ uv run python train.py \
 --backbone-se se \
 --backbone-channels 32,48,80,112 \
 --backbone-blocks 1,2,3,2 \
+--backbone-out-stride 16 \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
 --exp-name cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE} \
