@@ -162,11 +162,9 @@ uv run python train.py \
 --last-se se \
 --use-ema \
 --ema-decay 0.9999 \
---conf-thresh 0.05
+--conf-thresh 0.15
 ```
-
 ```bash
-###################################### SimOTA
 SIZE=64x64
 ANCHOR=12
 uv run python train.py \
@@ -177,7 +175,7 @@ uv run python train.py \
 --backbone-blocks 1,2,3,2 \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name cnn_anchor${ANCHOR}_utresnet_simota_${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_utresnet_enh2_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
@@ -189,50 +187,11 @@ uv run python train.py \
 --use-anchor \
 --auto-anchors \
 --num-anchors ${ANCHOR} \
---iou-loss giou \
---anchor-assigner simota \
---anchor-cls-loss vfl \
---last-se se \
+--iou-loss ciou \
 --use-ema \
 --ema-decay 0.9999 \
---conf-thresh 0.05
+--conf-thresh 0.15
 ```
-
-```bash
-###################################### SimOTA + Skip
-SIZE=64x64
-ANCHOR=12
-uv run python train.py \
---arch cnn \
---backbone ultratinyresnet \
---backbone-se se \
---backbone-channels 32,48,80,112 \
---backbone-blocks 1,2,3,2 \
---backbone-skip \
---use-skip \
---image-dir data/wholebody34/obj_train_data \
---img-size ${SIZE} \
---exp-name cnn_anchor${ANCHOR}_utresnet_simota_skip_${SIZE} \
---batch-size 64 \
---epochs 300 \
---lr 0.001 \
---weight-decay 0.0001 \
---num-workers 12 \
---device cuda \
---use-amp \
---classes 0 \
---use-anchor \
---auto-anchors \
---num-anchors ${ANCHOR} \
---iou-loss giou \
---anchor-assigner simota \
---anchor-cls-loss vfl \
---last-se se \
---use-ema \
---ema-decay 0.9999 \
---conf-thresh 0.05
-```
-
 ```bash
 SIZE=64x64
 ANCHOR=12
@@ -257,7 +216,7 @@ uv run python train.py \
 --last-se se \
 --use-ema \
 --ema-decay 0.9999 \
---conf-thresh 0.05
+--conf-thresh 0.15
 ```
 
 CNN + DINOv3 backbone feature distillation (teacher used only during training; ONNX export stays student-only):
