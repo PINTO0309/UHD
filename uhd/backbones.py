@@ -197,10 +197,25 @@ def load_dinov3_backbone(
     device: torch.device,
     arch_hint: str = None,
     add_pos_embed: bool = True,
+    verbose: bool = False,
 ) -> Tuple[DinoV3Backbone, Dict[str, int]]:
+    def _strip_prefixes(sd: Dict[str, torch.Tensor], prefixes) -> Dict[str, torch.Tensor]:
+        out = {}
+        for k, v in sd.items():
+            new_k = k
+            for p in prefixes:
+                if new_k.startswith(p):
+                    new_k = new_k[len(p) :]
+                    break
+            out[new_k] = v
+        return out
+
     state = torch.load(ckpt_path, map_location="cpu")
+    if isinstance(state, dict) and "model" in state and isinstance(state["model"], dict):
+        # deimv2 finetune checkpoints store weights under model with backbone prefixes
+        state = state["model"]
     # Normalize key naming for qkv bias mask if present
-    if any("attn.qkv.bias_mask" in k for k in state.keys()):
+    if isinstance(state, dict) and any("attn.qkv.bias_mask" in k for k in state.keys()):
         new_state = {}
         for k, v in state.items():
             if "attn.qkv.bias_mask" in k:
@@ -210,6 +225,15 @@ def load_dinov3_backbone(
         state = new_state
     if not isinstance(state, dict):
         raise ValueError(f"Checkpoint at {ckpt_path} must be a state_dict-like mapping.")
+    if "cls_token" not in state:
+        # try stripping common prefixes used by wrapped backbones
+        prefixes = [
+            "backbone.dinov3._model.",
+            "backbone.dinov3.model.",
+            "backbone.",
+            "module.",
+        ]
+        state = _strip_prefixes(state, prefixes)
     cfg = _infer_dinov3_config(state, arch_hint=arch_hint)
     model = DinoV3Backbone(
         img_size=img_size,
@@ -222,10 +246,11 @@ def load_dinov3_backbone(
         add_pos_embed=add_pos_embed,
     )
     missing, unexpected = model.load_state_dict(state, strict=False)
-    if missing:
-        print(f"[DINOv3] Missing keys ({len(missing)}): {missing[:10]}{' ...' if len(missing) > 10 else ''}")
-    if unexpected:
-        print(f"[DINOv3] Unexpected keys ({len(unexpected)}): {unexpected[:10]}{' ...' if len(unexpected) > 10 else ''}")
+    if verbose:
+        if missing:
+            print(f"[DINOv3] Missing keys ({len(missing)}): {missing[:10]}{' ...' if len(missing) > 10 else ''}")
+        if unexpected:
+            print(f"[DINOv3] Unexpected keys ({len(unexpected)}): {unexpected[:10]}{' ...' if len(unexpected) > 10 else ''}")
     model.to(device)
     model.eval()
     for p in model.parameters():
