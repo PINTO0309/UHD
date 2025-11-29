@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
@@ -794,6 +794,10 @@ def validate(
     ]
 
     def render_sample(img_path, pred_list, save_path):
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 14)
+        except Exception:
+            font = ImageFont.load_default()
         with Image.open(img_path) as im:
             im = im.convert("RGB")
             draw = ImageDraw.Draw(im)
@@ -815,8 +819,7 @@ def validate(
                     continue
                 color = colors[cls % len(colors)]
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-                label_cls = class_ids[cls] if class_ids and cls < len(class_ids) else cls
-                draw.text((x1, y1), f"{label_cls}:{score:.2f}", fill=color)
+                draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
             im.save(save_path)
 
     with torch.no_grad():
