@@ -129,6 +129,7 @@ class UltraTinyResNet(nn.Module):
         blocks=None,
         use_long_skip: bool = False,
         use_fpn: bool = False,
+        target_out_stride: int = None,
     ) -> None:
         super().__init__()
         ch_list = list(channels) if channels is not None else [16, 24, 32, 48]
@@ -164,6 +165,13 @@ class UltraTinyResNet(nn.Module):
         self.out_channels = ch_list[-1]
         # stride doubles for every downsample stage
         self.out_stride = 2 ** (len(ch_list) - 1)
+        self.extra_downs = nn.ModuleList()
+        if target_out_stride is not None and target_out_stride > self.out_stride:
+            cur = self.out_stride
+            while cur < target_out_stride:
+                self.extra_downs.append(ConvBNAct(self.out_channels, self.out_channels, kernel_size=3, stride=2, activation=activation))
+                cur *= 2
+            self.out_stride = cur
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.stem(x)
@@ -186,6 +194,8 @@ class UltraTinyResNet(nn.Module):
             if cur.shape[2:] != target_hw:
                 cur = F.interpolate(cur, size=target_hw, mode="nearest")
             out = cur
+        for down in self.extra_downs:
+            out = down(out)
         return out
 
 
@@ -621,6 +631,7 @@ def _build_backbone(
     backbone_se: str = "none",
     backbone_skip: bool = False,
     backbone_fpn: bool = False,
+    backbone_out_stride: int = None,
 ):
     if not name or str(name).lower() in ("none", "null"):
         return None, None
@@ -634,6 +645,7 @@ def _build_backbone(
             blocks=backbone_blocks,
             use_long_skip=backbone_skip,
             use_fpn=backbone_fpn,
+            target_out_stride=backbone_out_stride,
         )
     elif name in (
         "enhanced-shufflenet",

@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--backbone-se", choices=["none", "se", "ese"], default=None, help="Apply SE/eSE on backbone output (custom backbones only).")
     parser.add_argument("--backbone-skip", action="store_true", help="Add long skip fusion across custom backbone stages (ultratinyresnet).")
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
+    parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -174,6 +175,7 @@ def main():
     backbone_se = args.backbone_se
     backbone_skip = bool(args.backbone_skip)
     backbone_fpn = bool(args.backbone_fpn)
+    backbone_out_stride = int(args.backbone_out_stride) if args.backbone_out_stride is not None else None
     if backbone is None:
         backbone = ckpt.get("backbone")
     if backbone_channels is None:
@@ -186,6 +188,8 @@ def main():
         backbone_skip = bool(ckpt.get("backbone_skip"))
     if "backbone_fpn" in ckpt:
         backbone_fpn = bool(ckpt.get("backbone_fpn"))
+    if backbone_out_stride is None and "backbone_out_stride" in ckpt and ckpt["backbone_out_stride"] is not None:
+        backbone_out_stride = int(ckpt["backbone_out_stride"])
     if backbone in ("none", "") or arch != "cnn":
         backbone = None
         backbone_channels = None
@@ -193,6 +197,7 @@ def main():
         backbone_se = "none"
         backbone_skip = False
         backbone_fpn = False
+        backbone_out_stride = None
     activation = args.activation
     ckpt_activation = ckpt.get("activation")
     if ckpt_activation and ckpt_activation != activation:
@@ -268,6 +273,7 @@ def main():
         backbone_se=backbone_se,
         backbone_skip=backbone_skip,
         backbone_fpn=backbone_fpn,
+        backbone_out_stride=backbone_out_stride,
     )
     output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)

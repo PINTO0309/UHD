@@ -555,6 +555,7 @@ uv run python train.py \
 | `--backbone-se` | Apply SE/eSE on backbone output (custom backbones only). | `none` |
 | `--backbone-skip` | Add long skip fusion across custom backbone stages (ultratinyresnet). | `False` |
 | `--backbone-fpn` | Enable a tiny FPN fusion inside custom backbones (ultratinyresnet). | `False` |
+| `--backbone-out-stride` | Override custom backbone output stride (e.g., `8` or `16`). | `None` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
