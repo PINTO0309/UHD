@@ -637,6 +637,15 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess
+
+  SIZE=64x64
+  ANCHOR=100
+  uv run python export_onnx.py \
+  --checkpoint runs/cnn_anchor${ANCHOR}_utresnet_skip_nofpn_64x64/best_cnn_0041_map_0.16861.pt \
+  --output model_cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}_ex.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
   ```
 - `--arch` can force `cnn`/`transformer`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
 - `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.
