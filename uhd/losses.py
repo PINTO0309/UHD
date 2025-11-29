@@ -296,11 +296,10 @@ def anchor_loss(
             obj_b = obj_logit[bi].reshape(-1)
             cls_b = cls_logit[bi].reshape(-1, num_classes)
             ious = box_iou(pb, boxes)  # N x G
-            cls_probs = cls_b.sigmoid()
             assigned = torch.zeros(pb.shape[0], dtype=torch.bool, device=device)
-            for gi in range(boxes.shape[0]):
-                cls_id = int(labels[gi].item())
-                iou_g = ious[:, gi]
+            for gt_idx in range(boxes.shape[0]):
+                cls_id = int(labels[gt_idx].item())
+                iou_g = ious[:, gt_idx]
                 topk = min(simota_topk, iou_g.numel())
                 topk_vals, topk_idx = torch.topk(iou_g, k=topk, dim=0)
                 dynamic_k = max(int(topk_vals.sum().item()), 1)
@@ -309,8 +308,8 @@ def anchor_loss(
                     topk_idx = topk_idx[:dynamic_k]
                 # build cost: cls + 3*(1-iou)
                 cls_target = torch.ones_like(topk_idx, dtype=torch.float32, device=device)
-                pred_cls = cls_probs[topk_idx, cls_id]
-                cls_cost = F.binary_cross_entropy(pred_cls.clamp(1e-4, 1 - 1e-4), cls_target, reduction="none")
+                pred_cls_logit = cls_b[topk_idx, cls_id]
+                cls_cost = F.binary_cross_entropy_with_logits(pred_cls_logit, cls_target, reduction="none")
                 iou_cost = 1.0 - iou_g[topk_idx]
                 cost = cls_cost + 3.0 * iou_cost
                 # select lowest cost anchors (dynamic_k)
@@ -327,7 +326,7 @@ def anchor_loss(
                     gi = rem % w
                     target_obj[bi, a, gj, gi] = 1.0
                     target_cls[bi, a, gj, gi, cls_id] = iou_g[idx]
-                    target_box[bi, a, gj, gi] = boxes[gi]
+                    target_box[bi, a, gj, gi] = boxes[gt_idx]
     else:
         raise ValueError(f"Unknown assigner: {assigner}")
 
@@ -345,7 +344,7 @@ def anchor_loss(
         if cls_loss_type == "vfl":
             # varifocal: target carries IoU quality; negatives are zero
             t = torch.zeros_like(cls_logit)
-            t[pos_mask] = target_cls[pos_mask]
+            t[pos_mask] = target_cls[pos_mask].to(t.dtype)
             cls_loss = varifocal_loss(cls_logit, t, alpha=0.75, gamma=2.0)
         else:
             cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
