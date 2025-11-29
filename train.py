@@ -1000,6 +1000,8 @@ def main():
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
     output_stride = int(args.output_stride)
+    if backbone is not None and backbone_out_stride is not None:
+        output_stride = backbone_out_stride
     if args.arch != "cnn" and backbone not in (None, "none"):
         print(f"--backbone is only used for arch=cnn; ignoring backbone={backbone}")
         backbone = None
@@ -1204,6 +1206,7 @@ def main():
         anchor_cls_loss=anchor_cls_loss,
         simota_topk=simota_topk,
     ).to(device)
+    output_stride = getattr(model, "out_stride", output_stride)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
     ema_helper = None

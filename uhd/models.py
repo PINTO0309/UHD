@@ -683,6 +683,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_se=kwargs.get("backbone_se", "none"),
                 backbone_skip=kwargs.get("backbone_skip", False),
                 backbone_fpn=kwargs.get("backbone_fpn", False),
+                backbone_out_stride=kwargs.get("backbone_out_stride"),
             )
             if backbone_name
             else (None, None)

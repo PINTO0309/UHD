@@ -211,6 +211,8 @@ def main():
     last_se = args.last_se or ckpt.get("last_se", "none")
     last_width_scale = args.last_width_scale if args.last_width_scale is not None else ckpt.get("last_width_scale", 1.0)
     output_stride = args.output_stride if args.output_stride is not None else ckpt.get("output_stride", 4)
+    if backbone is not None and backbone_out_stride is not None:
+        output_stride = backbone_out_stride
     # Prefer checkpoint hyper-params when available; infer layers/queries/d_model from state_dict if missing
     num_queries = ckpt.get("num_queries")
     d_model = ckpt.get("d_model")
@@ -275,6 +277,7 @@ def main():
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
     )
+    output_stride = getattr(model, "out_stride", output_stride)
     output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
     model.eval()
