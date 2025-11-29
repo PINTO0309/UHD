@@ -623,9 +623,19 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --merge-postprocess
 
   SIZE=64x64
+  ANCHOR=12
+  uv run python export_onnx.py \
+  --checkpoint runs/cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}/best_cnn_0001_map_0.00000.pt \
+  --output model_cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
+
+  SIZE=64x64
+  ANCHOR=12
   uv run python export_onnx.py \
   --checkpoint runs/cnn_anchor12_eshufflenet_64x64/best_cnn_0001_map_0.00000.pt \
-  --output model_cnn_anchor12_eshufflenet_${SIZE}.onnx \
+  --output model_cnn_anchor${ANCHOR}_eshufflenet_${SIZE}.onnx \
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess
