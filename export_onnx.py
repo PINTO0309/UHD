@@ -160,6 +160,7 @@ def main():
     parser.add_argument("--backbone-blocks", default=None, help="Comma-separated residual block counts per stage for ultratinyresnet (e.g., '1,1,2,1').")
     parser.add_argument("--backbone-se", choices=["none", "se", "ese"], default=None, help="Apply SE/eSE on backbone output (custom backbones only).")
     parser.add_argument("--backbone-skip", action="store_true", help="Add long skip fusion across custom backbone stages (ultratinyresnet).")
+    parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     args = parser.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -172,6 +173,7 @@ def main():
     backbone_blocks = _parse_int_list(args.backbone_blocks)
     backbone_se = args.backbone_se
     backbone_skip = bool(args.backbone_skip)
+    backbone_fpn = bool(args.backbone_fpn)
     if backbone is None:
         backbone = ckpt.get("backbone")
     if backbone_channels is None:
@@ -182,12 +184,15 @@ def main():
         backbone_se = ckpt.get("backbone_se", "none")
     if "backbone_skip" in ckpt:
         backbone_skip = bool(ckpt.get("backbone_skip"))
+    if "backbone_fpn" in ckpt:
+        backbone_fpn = bool(ckpt.get("backbone_fpn"))
     if backbone in ("none", "") or arch != "cnn":
         backbone = None
         backbone_channels = None
         backbone_blocks = None
         backbone_se = "none"
         backbone_skip = False
+        backbone_fpn = False
     activation = args.activation
     ckpt_activation = ckpt.get("activation")
     if ckpt_activation and ckpt_activation != activation:
@@ -262,6 +267,7 @@ def main():
         backbone_blocks=backbone_blocks,
         backbone_se=backbone_se,
         backbone_skip=backbone_skip,
+        backbone_fpn=backbone_fpn,
     )
     output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
