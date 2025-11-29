@@ -224,17 +224,18 @@ uv run python train.py \
 ```
 ```bash
 SIZE=64x64
-ANCHOR=12
+ANCHOR=100
 uv run python train.py \
 --arch cnn \
 --backbone ultratinyresnet \
---backbone-fpn \
+--backbone-skip \
 --backbone-se se \
---backbone-channels 32,48,80,112 \
---backbone-blocks 1,2,3,2 \
+--backbone-channels 32,48,80,112,144 \
+--backbone-blocks 4,4,4,4,4 \
+--backbone-out-stride 16 \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name cnn_anchor${ANCHOR}_utresnet_noskip_fpn_${SIZE} \
+--exp-name cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
@@ -249,7 +250,11 @@ uv run python train.py \
 --iou-loss ciou \
 --use-ema \
 --ema-decay 0.9999 \
---conf-thresh 0.15
+--conf-thresh 0.15 \
+--teacher-backbone ckpts/deimv2_dinov3_s_wholebody34.pth \
+--teacher-backbone-arch dinov3_vits16 \
+--teacher-backbone-norm imagenet \
+--distill-feat 1.0
 ```
 
 ```bash
@@ -629,15 +634,6 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   uv run python export_onnx.py \
   --checkpoint runs/cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}/best_cnn_0001_map_0.00000.pt \
   --output model_cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}.onnx \
-  --img-size ${SIZE} \
-  --opset 17 \
-  --merge-postprocess
-
-  SIZE=64x64
-  ANCHOR=12
-  uv run python export_onnx.py \
-  --checkpoint runs/cnn_anchor12_eshufflenet_64x64/best_cnn_0001_map_0.00000.pt \
-  --output model_cnn_anchor${ANCHOR}_eshufflenet_${SIZE}.onnx \
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess

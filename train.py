@@ -525,6 +525,10 @@ def train_one_epoch(
     ema: ModelEma = None,
     teacher_model: torch.nn.Module = None,
     teacher_backbone: torch.nn.Module = None,
+    teacher_arch: str = None,
+    teacher_use_anchor: bool = False,
+    teacher_anchors: torch.Tensor = None,
+    teacher_num_classes: int = None,
     feature_adapter: torch.nn.Module = None,
     teacher_backbone_norm: str = "imagenet",
     distill_kl: float = 0.0,
@@ -560,7 +564,40 @@ def train_one_epoch(
     clip_params = list(model.parameters())
     if feature_adapter is not None:
         clip_params += [p for p in feature_adapter.parameters() if p.requires_grad]
+
+    def _decode_anchor_pred(pred_raw: torch.Tensor, anchor_tensor: torch.Tensor, num_cls: int):
+        b, _, h, w = pred_raw.shape
+        na = anchor_tensor.shape[0]
+        pred = pred_raw.view(b, na, 5 + num_cls, h, w)
+        tx = pred[:, :, 0]
+        ty = pred[:, :, 1]
+        tw = pred[:, :, 2]
+        th = pred[:, :, 3]
+        cls_logit = pred[:, :, 5:]
+        # grid
+        gy, gx = torch.meshgrid(torch.arange(h, device=pred_raw.device), torch.arange(w, device=pred_raw.device), indexing="ij")
+        gx = gx.view(1, 1, h, w)
+        gy = gy.view(1, 1, h, w)
+        cx = (tx.sigmoid() + gx) / float(w)
+        cy = (ty.sigmoid() + gy) / float(h)
+        pw = anchor_tensor[:, 0].view(1, na, 1, 1)
+        ph = anchor_tensor[:, 1].view(1, na, 1, 1)
+        bw = pw * tw.exp()
+        bh = ph * th.exp()
+        boxes = torch.stack([cx, cy, bw, bh], dim=-1)  # B x A x H x W x 4
+        cls_logits = cls_logit.permute(0, 1, 3, 4, 2)  # B x A x H x W x C
+        return boxes, cls_logits, h, w
+
+    def _interp_anchor_map(tensor_map: torch.Tensor, target_hw):
+        # tensor_map: B x A x H x W x F
+        b, a, h, w, f = tensor_map.shape
+        tensor_map = tensor_map.reshape(b, a * f, h, w)
+        tensor_map = torch.nn.functional.interpolate(tensor_map, size=target_hw, mode="bilinear", align_corners=False)
+        tensor_map = tensor_map.view(b, a, target_hw[0], target_hw[1], f)
+        return tensor_map
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
+    warn_anchor_mismatch = False
+    warn_class_mismatch = False
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
         targets_dev = move_targets(targets, device)
@@ -569,16 +606,29 @@ def train_one_epoch(
             teacher_logits = None
             teacher_boxes = None
             teacher_feats = None
+            teacher_anchor_pred = None
+            teacher_ct_pred = None
             student_feats = None
             if teacher_model is not None:
                 with torch.no_grad():
-                    t_out = teacher_model(imgs)
-                    if isinstance(t_out, dict):
-                        # CNN teacher not supported for distillation
-                        teacher_logits = None
-                        teacher_boxes = None
+                    if (teacher_arch or "transformer") == "transformer":
+                        t_out = teacher_model(imgs)
+                        if isinstance(t_out, dict):
+                            teacher_logits = None
+                            teacher_boxes = None
+                        else:
+                            teacher_logits, teacher_boxes = t_out
                     else:
-                        teacher_logits, teacher_boxes = t_out
+                        t_out = teacher_model(imgs, return_feat=True)
+                        if isinstance(t_out, tuple) and len(t_out) == 2:
+                            pred_part, feat_part = t_out
+                            teacher_feats = feat_part
+                            if isinstance(pred_part, dict):
+                                teacher_ct_pred = pred_part
+                            else:
+                                teacher_anchor_pred = pred_part
+                        elif isinstance(t_out, dict):
+                            teacher_ct_pred = t_out
             if teacher_backbone is not None and distill_feat > 0 and arch == "cnn":
                 with torch.no_grad():
                     imgs_t = imgs
@@ -622,6 +672,74 @@ def train_one_epoch(
                             loss_feat = F.l1_loss(torch.nan_to_num(s_norm), torch.nan_to_num(t_norm), reduction="mean")
                         loss_dict["loss"] = loss_dict["loss"] + (distill_feat * distill_scale) * loss_feat
                         loss_dict["distill_feat"] = loss_feat
+                # CNN logit/box distillation from CNN teacher
+                if teacher_model is not None and (teacher_arch or "cnn") == "cnn":
+                    if use_anchor and teacher_use_anchor and teacher_anchor_pred is not None and anchors is not None and teacher_anchors is not None:
+                        t_nc = teacher_num_classes if teacher_num_classes is not None else num_classes
+                        if t_nc != num_classes:
+                            if not warn_class_mismatch:
+                                print(f"Teacher classes ({t_nc}) != student ({num_classes}); skipping logit/box distill for anchor head.")
+                                warn_class_mismatch = True
+                        else:
+                            t_na = teacher_anchors.shape[0]
+                            s_na = anchors.shape[0]
+                            if t_na != s_na:
+                                if not warn_anchor_mismatch:
+                                    print(f"Teacher anchors ({t_na}) != student ({s_na}); skipping anchor logit/box distill.")
+                                    warn_anchor_mismatch = True
+                            else:
+                                t_boxes, t_cls_logits, th, tw = _decode_anchor_pred(teacher_anchor_pred, teacher_anchors.to(device), t_nc)
+                                s_boxes, s_cls_logits, sh, sw = _decode_anchor_pred(outputs, anchors, num_classes)
+                                if (th, tw) != (sh, sw):
+                                    t_boxes = _interp_anchor_map(t_boxes, (sh, sw))
+                                    t_cls_logits = _interp_anchor_map(t_cls_logits, (sh, sw))
+                                if distill_kl > 0:
+                                    temp = max(distill_temperature, 1e-6)
+                                    t_prob = (t_cls_logits.detach() / temp).softmax(dim=-1)
+                                    s_logprob = (s_cls_logits / temp).log_softmax(dim=-1)
+                                    kl = torch.nn.functional.kl_div(
+                                        s_logprob.reshape(-1, num_classes),
+                                        t_prob.reshape(-1, num_classes),
+                                        reduction="batchmean",
+                                    ) * (temp * temp)
+                                    loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                                    loss_dict["distill_kl"] = kl
+                                if distill_box_l1 > 0:
+                                    l1d = torch.nn.functional.l1_loss(
+                                        torch.nan_to_num(s_boxes),
+                                        torch.nan_to_num(t_boxes.detach()),
+                                        reduction="mean",
+                                    )
+                                    loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
+                                    loss_dict["distill_box_l1"] = l1d
+                    elif (not use_anchor) and teacher_ct_pred is not None and isinstance(teacher_ct_pred, dict):
+                        t_hm = teacher_ct_pred.get("hm")
+                        t_off = teacher_ct_pred.get("off")
+                        t_wh = teacher_ct_pred.get("wh")
+                        sh, sw = outputs["hm"].shape[2], outputs["hm"].shape[3]
+                        if t_hm is not None:
+                            if t_hm.shape[1] != outputs["hm"].shape[1] and not warn_class_mismatch:
+                                print(f"Teacher heatmap classes ({t_hm.shape[1]}) != student ({outputs['hm'].shape[1]}); skipping heatmap distill.")
+                                warn_class_mismatch = True
+                            elif t_hm.shape[1] == outputs["hm"].shape[1] and distill_kl > 0:
+                                t_hm_resized = torch.nn.functional.interpolate(t_hm, size=(sh, sw), mode="bilinear", align_corners=False)
+                                s_prob = torch.clamp(outputs["hm"], 1e-6, 1 - 1e-6)
+                                t_prob = torch.clamp(t_hm_resized.detach(), 1e-6, 1 - 1e-6)
+                                kl = torch.nn.functional.kl_div(torch.log(s_prob), t_prob, reduction="batchmean")
+                                loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                                loss_dict["distill_kl"] = kl
+                        if distill_box_l1 > 0:
+                            comp = []
+                            if t_off is not None:
+                                t_off_r = torch.nn.functional.interpolate(t_off, size=(sh, sw), mode="bilinear", align_corners=False)
+                                comp.append(torch.nn.functional.l1_loss(outputs["off"], t_off_r.detach(), reduction="mean"))
+                            if t_wh is not None:
+                                t_wh_r = torch.nn.functional.interpolate(t_wh, size=(sh, sw), mode="bilinear", align_corners=False)
+                                comp.append(torch.nn.functional.l1_loss(outputs["wh"], t_wh_r.detach(), reduction="mean"))
+                            if comp:
+                                l1d = sum(comp) / len(comp)
+                                loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
+                                loss_dict["distill_box_l1"] = l1d
             else:
                 logits, box_pred = model(imgs)
                 loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
@@ -666,6 +784,10 @@ def train_one_epoch(
                 total_wh += float(loss_dict["wh"].item())
             if "distill_feat" in loss_dict:
                 total_distill_feat += float(loss_dict["distill_feat"].item())
+            if "distill_kl" in loss_dict:
+                total_distill_kl += float(loss_dict["distill_kl"].item())
+            if "distill_box_l1" in loss_dict:
+                total_distill_l1 += float(loss_dict["distill_box_l1"].item())
         else:
             total_cls += float(loss_dict["cls"].item())
             total_l1 += float(loss_dict["l1"].item())
@@ -723,6 +845,10 @@ def train_one_epoch(
             )
         if distill_feat > 0:
             logs["distill_feat"] = total_distill_feat / steps if steps else 0.0
+        if distill_kl > 0:
+            logs["distill_kl"] = total_distill_kl / steps if steps else 0.0
+        if distill_box_l1 > 0:
+            logs["distill_box_l1"] = total_distill_l1 / steps if steps else 0.0
     else:
         logs.update(
             {
@@ -990,6 +1116,9 @@ def main():
     teacher_use_skip = bool(args.teacher_use_skip)
     teacher_activation = args.teacher_activation
     teacher_use_fpn = bool(args.teacher_use_fpn)
+    teacher_use_anchor = False
+    teacher_anchor_tensor = None
+    teacher_num_classes = None
     use_anchor = bool(args.use_anchor)
     anchor_list = parse_anchors_str(args.anchors)
     auto_anchors = bool(args.auto_anchors)
@@ -1140,8 +1269,8 @@ def main():
         apply_meta(pretrain_meta, f"ckpt {args.ckpt}", allow_distill=False)
     if ckpt_meta is not None:
         apply_meta(ckpt_meta, f"resume {args.resume}", allow_distill=True)
-    if args.arch == "cnn" and distill_feat > 0 and not teacher_backbone:
-        print("distill-feat requested but --teacher-backbone not provided; disabling feature distillation.")
+    if args.arch == "cnn" and distill_feat > 0 and not (teacher_backbone or teacher_ckpt):
+        print("distill-feat requested but no teacher backbone or teacher checkpoint provided; disabling feature distillation.")
         distill_feat = 0.0
     set_seed(args.seed)
     device = default_device(args.device)
@@ -1214,7 +1343,9 @@ def main():
         model.set_anchors(anchors_tensor)
     ema_helper = None
     teacher_backbone_model = None
+    teacher_feature_dim = None
     feature_adapter = None
+    teacher_model_arch = None
 
     if pretrain_meta is not None:
         _load_with_log(
@@ -1247,6 +1378,7 @@ def main():
             student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
             if teacher_dim is None:
                 teacher_dim = student_channels
+            teacher_feature_dim = teacher_dim
             if student_channels != teacher_dim:
                 feature_adapter = torch.nn.Conv2d(student_channels, teacher_dim, kernel_size=1).to(device)
             else:
@@ -1328,9 +1460,8 @@ def main():
     if teacher_ckpt:
         t_meta = torch.load(teacher_ckpt, map_location="cpu")
         t_arch = (teacher_arch or t_meta.get("arch", args.arch)).lower()
-        if t_arch != "transformer":
-            print(f"Teacher arch {t_arch} not supported for distillation (only transformer). Skipping teacher.")
-        else:
+        teacher_model_arch = t_arch
+        if t_arch == "transformer":
             t_use_skip = teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
             t_activation = teacher_activation or t_meta.get("activation", activation)
             t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
@@ -1351,7 +1482,81 @@ def main():
             teacher_model.eval()
             for p in teacher_model.parameters():
                 p.requires_grad = False
+            teacher_num_classes = num_classes
             print(f"Loaded teacher from {teacher_ckpt} (arch={t_arch})")
+        elif t_arch == "cnn":
+            t_use_skip = teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
+            t_activation = teacher_activation or t_meta.get("activation", activation)
+            t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
+            t_use_anchor = bool(t_meta.get("use_anchor", use_anchor))
+            t_anchor_list = t_meta.get("anchors", anchor_list) or []
+            t_anchor_list = [tuple(map(float, a)) for a in t_anchor_list]
+            t_num_anchors = int(t_meta.get("num_anchors", len(t_anchor_list) if t_anchor_list else num_anchors))
+            t_last_se = t_meta.get("last_se", last_se)
+            t_last_width_scale = t_meta.get("last_width_scale", last_width_scale)
+            t_output_stride = int(t_meta.get("output_stride", output_stride))
+            t_backbone = t_meta.get("backbone", backbone)
+            t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
+            t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
+            t_backbone_se = t_meta.get("backbone_se", backbone_se)
+            t_backbone_skip = t_meta.get("backbone_skip", backbone_skip)
+            t_backbone_fpn = t_meta.get("backbone_fpn", backbone_fpn)
+            t_backbone_out_stride = t_meta.get("backbone_out_stride", backbone_out_stride)
+            t_anchor_assigner = t_meta.get("anchor_assigner", anchor_assigner)
+            t_anchor_cls_loss = t_meta.get("anchor_cls_loss", anchor_cls_loss)
+            t_simota_topk = int(t_meta.get("simota_topk", simota_topk))
+            t_classes = [int(c) for c in t_meta.get("classes", class_ids)]
+            t_num_classes = len(t_classes)
+            teacher_model = build_model(
+                t_arch,
+                width=args.cnn_width,
+                num_classes=t_num_classes,
+                use_skip=t_use_skip,
+                activation=t_activation,
+                use_fpn=t_use_fpn,
+                use_anchor=t_use_anchor,
+                num_anchors=t_num_anchors,
+                anchors=t_anchor_list,
+                last_se=t_last_se,
+                last_width_scale=t_last_width_scale,
+                output_stride=t_output_stride,
+                backbone=t_backbone,
+                backbone_channels=t_backbone_channels,
+                backbone_blocks=t_backbone_blocks,
+                backbone_se=t_backbone_se,
+                backbone_skip=t_backbone_skip,
+                backbone_fpn=t_backbone_fpn,
+                backbone_out_stride=t_backbone_out_stride,
+                anchor_assigner=t_anchor_assigner,
+                anchor_cls_loss=t_anchor_cls_loss,
+                simota_topk=t_simota_topk,
+            ).to(device)
+            teacher_model.load_state_dict(t_meta["model"])
+            teacher_model.eval()
+            for p in teacher_model.parameters():
+                p.requires_grad = False
+            if t_use_anchor and t_anchor_list and hasattr(teacher_model, "set_anchors"):
+                teacher_model.set_anchors(torch.tensor(t_anchor_list, dtype=torch.float32, device=device))
+            teacher_use_anchor = t_use_anchor
+            teacher_num_classes = t_num_classes
+            if hasattr(teacher_model, "anchors"):
+                teacher_anchor_tensor = getattr(teacher_model, "anchors")
+                if isinstance(teacher_anchor_tensor, torch.Tensor):
+                    teacher_anchor_tensor = teacher_anchor_tensor.to(device)
+            if args.arch == "cnn" and distill_feat > 0:
+                if teacher_feature_dim is None:
+                    teacher_feature_dim = _infer_cnn_feat_channels(teacher_model, use_anchor=t_use_anchor, num_classes=t_num_classes)
+                student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
+                if teacher_feature_dim is not None and feature_adapter is None:
+                    if student_channels != teacher_feature_dim:
+                        feature_adapter = torch.nn.Conv2d(student_channels, teacher_feature_dim, kernel_size=1).to(device)
+                    else:
+                        feature_adapter = torch.nn.Identity()
+            print(f"Loaded teacher from {teacher_ckpt} (arch={t_arch})")
+        else:
+            print(f"Teacher arch {t_arch} not supported for distillation (only transformer/cnn). Skipping teacher.")
+    if teacher_model_arch:
+        teacher_arch = teacher_model_arch
 
     for epoch in range(start_epoch, args.epochs):
         train_logs = train_one_epoch(
@@ -1369,10 +1574,14 @@ def main():
             ema=ema_helper,
             teacher_model=teacher_model,
             teacher_backbone=teacher_backbone_model,
+            teacher_arch=teacher_arch,
+            teacher_use_anchor=teacher_use_anchor,
+            teacher_anchors=teacher_anchor_tensor,
+            teacher_num_classes=teacher_num_classes,
             feature_adapter=feature_adapter,
             teacher_backbone_norm=teacher_backbone_norm,
-            distill_kl=distill_kl if args.arch == "transformer" else 0.0,
-            distill_box_l1=distill_box_l1 if args.arch == "transformer" else 0.0,
+            distill_kl=distill_kl,
+            distill_box_l1=distill_box_l1,
             distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
             distill_feat=distill_feat if args.arch == "cnn" else 0.0,
@@ -1392,7 +1601,7 @@ def main():
             writer,
             "train",
             train_logs,
-            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou", "distill_feat"],
+            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou", "distill_feat", "distill_kl", "distill_box_l1"],
             step=epoch + 1,
         )
 
