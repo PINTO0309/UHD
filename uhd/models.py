@@ -237,10 +237,9 @@ class UltraTinyResNet(nn.Module):
                         s = F.adaptive_avg_pool2d(f, target_hw)
                     s = proj(s)
                 else:
-                    # Plain add/concat skip: project then pool to match final spatial size if needed.
-                    s = proj(f)
-                    if s.shape[2:] != target_hw:
-                        s = F.adaptive_avg_pool2d(s, target_hw)
+                    # Plain add/concat skip: pool to target spatial size first, then project.
+                    pooled = f if f.shape[2:] == target_hw else F.adaptive_avg_pool2d(f, target_hw)
+                    s = proj(pooled)
                 skips.append(s)
             if self.skip_mode in ("cat", "shuffle_cat", "s2d_cat"):
                 merged = torch.cat([out] + skips, dim=1)
