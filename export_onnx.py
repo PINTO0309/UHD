@@ -166,6 +166,11 @@ def main():
         action="store_true",
         help="Use stride+shuffle concat fusion for long skips (ultratinyresnet); implies --backbone-skip.",
     )
+    parser.add_argument(
+        "--backbone-skip-s2d-cat",
+        action="store_true",
+        help="Use space-to-depth concat fusion for long skips (ultratinyresnet); implies --backbone-skip.",
+    )
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     args = parser.parse_args()
@@ -182,10 +187,15 @@ def main():
     backbone_skip = bool(args.backbone_skip)
     backbone_skip_cat = bool(args.backbone_skip_cat)
     backbone_skip_shuffle_cat = bool(args.backbone_skip_shuffle_cat)
-    if backbone_skip_shuffle_cat:
+    backbone_skip_s2d_cat = bool(args.backbone_skip_s2d_cat)
+    if backbone_skip_s2d_cat:
+        backbone_skip = True
+        backbone_skip_shuffle_cat = False
+        backbone_skip_cat = False
+    elif backbone_skip_shuffle_cat:
         backbone_skip = True
         backbone_skip_cat = False
-    if backbone_skip_cat:
+    elif backbone_skip_cat:
         backbone_skip = True
     backbone_fpn = bool(args.backbone_fpn)
     backbone_out_stride = int(args.backbone_out_stride) if args.backbone_out_stride is not None else None
@@ -206,7 +216,13 @@ def main():
         if backbone_skip_shuffle_cat:
             backbone_skip = True
             backbone_skip_cat = False
-    if backbone_skip_cat and not backbone_skip_shuffle_cat:
+    if "backbone_skip_s2d_cat" in ckpt:
+        backbone_skip_s2d_cat = bool(ckpt.get("backbone_skip_s2d_cat"))
+        if backbone_skip_s2d_cat:
+            backbone_skip = True
+            backbone_skip_shuffle_cat = False
+            backbone_skip_cat = False
+    if backbone_skip_cat and not (backbone_skip_shuffle_cat or backbone_skip_s2d_cat):
         backbone_skip = True
     if "backbone_fpn" in ckpt:
         backbone_fpn = bool(ckpt.get("backbone_fpn"))
@@ -220,6 +236,7 @@ def main():
         backbone_skip = False
         backbone_skip_cat = False
         backbone_skip_shuffle_cat = False
+        backbone_skip_s2d_cat = False
         backbone_fpn = False
         backbone_out_stride = None
     activation = args.activation
@@ -300,6 +317,7 @@ def main():
         backbone_skip=backbone_skip,
         backbone_skip_cat=backbone_skip_cat,
         backbone_skip_shuffle_cat=backbone_skip_shuffle_cat,
+        backbone_skip_s2d_cat=backbone_skip_s2d_cat,
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
     )

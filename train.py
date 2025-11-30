@@ -146,6 +146,11 @@ def parse_args():
         action="store_true",
         help="Use stride+shuffle concat fusion for long skips (ultratinyresnet); implies --backbone-skip.",
     )
+    parser.add_argument(
+        "--backbone-skip-s2d-cat",
+        action="store_true",
+        help="Use space-to-depth concat fusion for long skips (ultratinyresnet); implies --backbone-skip.",
+    )
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
@@ -1099,7 +1104,12 @@ def main():
     backbone_skip = bool(args.backbone_skip)
     backbone_skip_cat = bool(args.backbone_skip_cat)
     backbone_skip_shuffle_cat = bool(args.backbone_skip_shuffle_cat)
-    if backbone_skip_shuffle_cat:
+    backbone_skip_s2d_cat = bool(args.backbone_skip_s2d_cat)
+    if backbone_skip_s2d_cat:
+        backbone_skip = True
+        backbone_skip_shuffle_cat = False
+        backbone_skip_cat = False
+    elif backbone_skip_shuffle_cat:
         backbone_skip = True
         backbone_skip_cat = False
     elif backbone_skip_cat:
@@ -1159,6 +1169,7 @@ def main():
         backbone_skip = False
         backbone_skip_cat = False
         backbone_skip_shuffle_cat = False
+        backbone_skip_s2d_cat = False
         backbone_fpn = False
         backbone_out_stride = None
     if args.resume and args.ckpt:
@@ -1169,7 +1180,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_fpn, backbone_out_stride
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1209,6 +1220,12 @@ def main():
             backbone_skip_shuffle_cat = bool(meta["backbone_skip_shuffle_cat"])
             if backbone_skip_shuffle_cat:
                 backbone_skip = True
+                backbone_skip_cat = False
+        if "backbone_skip_s2d_cat" in meta:
+            backbone_skip_s2d_cat = bool(meta["backbone_skip_s2d_cat"])
+            if backbone_skip_s2d_cat:
+                backbone_skip = True
+                backbone_skip_shuffle_cat = False
                 backbone_skip_cat = False
         if "backbone_fpn" in meta:
             backbone_fpn = bool(meta["backbone_fpn"])
@@ -1358,6 +1375,7 @@ def main():
         backbone_skip=backbone_skip,
         backbone_skip_cat=backbone_skip_cat,
         backbone_skip_shuffle_cat=backbone_skip_shuffle_cat,
+        backbone_skip_s2d_cat=backbone_skip_s2d_cat,
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
         anchor_assigner=anchor_assigner,
@@ -1533,6 +1551,11 @@ def main():
             if t_backbone_skip_shuffle_cat:
                 t_backbone_skip = True
                 t_backbone_skip_cat = False
+            t_backbone_skip_s2d_cat = t_meta.get("backbone_skip_s2d_cat", backbone_skip_s2d_cat)
+            if t_backbone_skip_s2d_cat:
+                t_backbone_skip = True
+                t_backbone_skip_shuffle_cat = False
+                t_backbone_skip_cat = False
             t_backbone_fpn = t_meta.get("backbone_fpn", backbone_fpn)
             t_backbone_out_stride = t_meta.get("backbone_out_stride", backbone_out_stride)
             t_anchor_assigner = t_meta.get("anchor_assigner", anchor_assigner)
@@ -1560,6 +1583,7 @@ def main():
                 backbone_skip=t_backbone_skip,
                 backbone_skip_cat=t_backbone_skip_cat,
                 backbone_skip_shuffle_cat=t_backbone_skip_shuffle_cat,
+                backbone_skip_s2d_cat=t_backbone_skip_s2d_cat,
                 backbone_fpn=t_backbone_fpn,
                 backbone_out_stride=t_backbone_out_stride,
                 anchor_assigner=t_anchor_assigner,
@@ -1705,6 +1729,7 @@ def main():
                     "backbone_skip": backbone_skip,
                     "backbone_skip_cat": backbone_skip_cat,
                     "backbone_skip_shuffle_cat": backbone_skip_shuffle_cat,
+                    "backbone_skip_s2d_cat": backbone_skip_s2d_cat,
                     "backbone_fpn": backbone_fpn,
                     "backbone_out_stride": backbone_out_stride,
                     "use_anchor": use_anchor,
@@ -1773,6 +1798,7 @@ def main():
             "backbone_skip": backbone_skip,
             "backbone_skip_cat": backbone_skip_cat,
             "backbone_skip_shuffle_cat": backbone_skip_shuffle_cat,
+            "backbone_skip_s2d_cat": backbone_skip_s2d_cat,
             "backbone_fpn": backbone_fpn,
             "backbone_out_stride": backbone_out_stride,
             "use_anchor": use_anchor,

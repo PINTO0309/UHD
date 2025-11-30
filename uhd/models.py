@@ -141,8 +141,8 @@ class UltraTinyResNet(nn.Module):
             raise ValueError("UltraTinyResNet requires at least one stage.")
         self.use_long_skip = bool(use_long_skip)
         self.skip_mode = (skip_mode or "add").lower()
-        if self.skip_mode not in ("add", "cat", "shuffle_cat"):
-            raise ValueError(f"UltraTinyResNet skip_mode must be 'add', 'cat', or 'shuffle_cat'; got {self.skip_mode}")
+        if self.skip_mode not in ("add", "cat", "shuffle_cat", "s2d_cat"):
+            raise ValueError(f"UltraTinyResNet skip_mode must be 'add', 'cat', 'shuffle_cat', or 's2d_cat'; got {self.skip_mode}")
         self.use_fpn = bool(use_fpn)
         self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
 
@@ -151,22 +151,27 @@ class UltraTinyResNet(nn.Module):
         self.skip_proj = nn.ModuleList()
         self.fpn_convs = nn.ModuleList()
         self.skip_concat_reduce = None
+        self.skip_down_factors = []
         # stage 0 (no downsample)
         self.downs.append(nn.Identity())
         self.blocks.append(nn.Sequential(*[ResidualBlock(ch_list[0], activation=activation) for _ in range(max(blk_list[0], 0))]))
         if self.use_long_skip:
             stride0 = max(1, 2 ** (len(ch_list) - 1)) if self.skip_mode == "shuffle_cat" else 1
+            factor0 = 2 ** (len(ch_list) - 1)
+            in_ch0 = ch_list[0] * (factor0 ** 2) if self.skip_mode == "s2d_cat" else ch_list[0]
             self.skip_proj.append(
                 ConvBNAct(
-                    ch_list[0],
+                    in_ch0,
                     ch_list[-1],
                     kernel_size=3 if self.skip_mode == "shuffle_cat" else 1,
                     stride=stride0,
                     activation=activation,
                 )
             )
+            self.skip_down_factors.append(factor0)
         else:
             self.skip_proj.append(nn.Identity())
+            self.skip_down_factors.append(1)
         # subsequent stages with stride-2 downsamples
         prev_ch = ch_list[0]
         for idx, (ch, num_blk) in enumerate(zip(ch_list[1:], blk_list[1:]), start=1):
@@ -174,23 +179,27 @@ class UltraTinyResNet(nn.Module):
             self.blocks.append(nn.Sequential(*[ResidualBlock(ch, activation=activation) for _ in range(max(num_blk, 0))]))
             if self.use_long_skip:
                 # stride to match final spatial size when using shuffle_cat; otherwise keep stride 1 and pool later
-                stride = max(1, 2 ** (len(ch_list) - idx - 1)) if self.skip_mode == "shuffle_cat" else 1
+                factor = 2 ** (len(ch_list) - idx - 1)
+                stride = max(1, factor) if self.skip_mode == "shuffle_cat" else 1
+                in_ch = ch * (factor ** 2) if self.skip_mode == "s2d_cat" else ch
                 self.skip_proj.append(
                     ConvBNAct(
-                        ch,
+                        in_ch,
                         ch_list[-1],
                         kernel_size=3 if self.skip_mode == "shuffle_cat" else 1,
                         stride=stride,
                         activation=activation,
                     )
                 )
+                self.skip_down_factors.append(factor)
             else:
                 self.skip_proj.append(nn.Identity())
+                self.skip_down_factors.append(1)
             prev_ch = ch
         if self.use_fpn:
             for ch in ch_list[:-1]:
                 self.fpn_convs.append(ConvBNAct(ch, ch_list[-1], kernel_size=1, stride=1, activation=activation))
-        if self.use_long_skip and self.skip_mode in ("cat", "shuffle_cat"):
+        if self.use_long_skip and self.skip_mode in ("cat", "shuffle_cat", "s2d_cat"):
             # fuse concatenated skips back to out_channels for the head
             num_concat = len(ch_list)  # one per stage including the final
             self.skip_concat_reduce = ConvBNAct(ch_list[-1] * num_concat, ch_list[-1], kernel_size=1, stride=1, activation=activation)
@@ -215,17 +224,25 @@ class UltraTinyResNet(nn.Module):
         if self.use_long_skip and feats:
             target_hw = out.shape[2:]
             skips = []
-            for f, proj in zip(feats[:-1], self.skip_proj[:-1]):
+            for f, proj, factor in zip(feats[:-1], self.skip_proj[:-1], self.skip_down_factors[:-1]):
                 if self.skip_mode == "shuffle_cat":
                     s = proj(f)
                     if s.shape[2:] != target_hw:
                         s = F.adaptive_avg_pool2d(s, target_hw)
                     s = channel_shuffle(s, groups=2)
+                elif self.skip_mode == "s2d_cat":
+                    if factor > 1 and f.shape[2] % factor == 0 and f.shape[3] % factor == 0:
+                        s = F.pixel_unshuffle(f, downscale_factor=factor)
+                    else:
+                        s = F.adaptive_avg_pool2d(f, target_hw)
+                    s = proj(s)
                 else:
-                    pooled = F.adaptive_avg_pool2d(f, target_hw)
-                    s = proj(pooled)
+                    # Plain add/concat skip: project then pool to match final spatial size if needed.
+                    s = proj(f)
+                    if s.shape[2:] != target_hw:
+                        s = F.adaptive_avg_pool2d(s, target_hw)
                 skips.append(s)
-            if self.skip_mode in ("cat", "shuffle_cat"):
+            if self.skip_mode in ("cat", "shuffle_cat", "s2d_cat"):
                 merged = torch.cat([out] + skips, dim=1)
                 out = self.skip_concat_reduce(merged) if self.skip_concat_reduce is not None else merged
             else:
@@ -678,6 +695,7 @@ def _build_backbone(
     backbone_skip: bool = False,
     backbone_skip_cat: bool = False,
     backbone_skip_shuffle_cat: bool = False,
+    backbone_skip_s2d_cat: bool = False,
     backbone_fpn: bool = False,
     backbone_out_stride: int = None,
 ):
@@ -688,7 +706,9 @@ def _build_backbone(
         bb = MicroCSPNet(activation=activation)
     elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
         skip_mode = "add"
-        if backbone_skip_shuffle_cat:
+        if backbone_skip_s2d_cat:
+            skip_mode = "s2d_cat"
+        elif backbone_skip_shuffle_cat:
             skip_mode = "shuffle_cat"
         elif backbone_skip_cat:
             skip_mode = "cat"
@@ -738,6 +758,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_skip=kwargs.get("backbone_skip", False),
                 backbone_skip_cat=kwargs.get("backbone_skip_cat", False),
                 backbone_skip_shuffle_cat=kwargs.get("backbone_skip_shuffle_cat", False),
+                backbone_skip_s2d_cat=kwargs.get("backbone_skip_s2d_cat", False),
                 backbone_fpn=kwargs.get("backbone_fpn", False),
                 backbone_out_stride=kwargs.get("backbone_out_stride"),
             )
