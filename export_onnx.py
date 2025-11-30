@@ -301,18 +301,19 @@ def main():
                         super().__init__()
                         self.net = net
                         self.register_buffer("anchors", anchors if isinstance(anchors, torch.Tensor) else torch.tensor(anchors, dtype=torch.float32))
+                        self.anchors: torch.Tensor
                         self.k = k
 
                     def forward(self, x):
-                        pred = self.net(x)  # B x (A*(5+C)) x H x W
+                        pred: torch.Tensor = self.net(x)  # B x (A*(5+C)) x H x W
                         b, _, h, w = pred.shape
                         na = self.anchors.shape[0]
                         # reshape to B x A x H x W x (5+C)
                         num_classes = pred.shape[1] // na - 5
                         pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
                         tx, ty, tw, th = pred[..., 0], pred[..., 1], pred[..., 2], pred[..., 3]
-                        obj = pred[..., 4].sigmoid()
-                        cls = pred[..., 5:].sigmoid()
+                        obj = pred[..., 4:5].sigmoid()
+                        cls = pred[..., 5:6].sigmoid()
                         gy, gx = torch.meshgrid(torch.arange(h, device=pred.device), torch.arange(w, device=pred.device), indexing="ij")
                         gx = gx.view(1, 1, h, w)
                         gy = gy.view(1, 1, h, w)
@@ -321,21 +322,28 @@ def main():
                         pred_w = self.anchors[:, 0].view(1, na, 1, 1) * tw.exp()
                         pred_h = self.anchors[:, 1].view(1, na, 1, 1) * th.exp()
 
-                        scores_all = obj.unsqueeze(-1) * cls  # B x A x H x W x C
+                        scores_all = obj * cls  # B x A x H x W x C
                         max_scores, max_cls = scores_all.max(dim=-1)  # B x A x H x W
-                        flat_scores = max_scores.view(b, -1)
+                        n, c, h, w = max_scores.shape
+                        flat_scores = max_scores.reshape(n, c*h*w)
                         k = min(self.k, flat_scores.shape[1])
                         scores, idxs = torch.topk(flat_scores, k=k, dim=1)
-                        a_idx = idxs // (h * w)
-                        rem = idxs % (h * w)
-                        ys = rem // w
-                        xs = rem % w
-                        batch_idx = torch.arange(b, device=pred.device).view(-1, 1)
-                        cls_topk = torch.gather(max_cls.view(b, -1), 1, idxs)
-                        cx = pred_cx[batch_idx, a_idx, ys, xs]
-                        cy = pred_cy[batch_idx, a_idx, ys, xs]
-                        pw = pred_w[batch_idx, a_idx, ys, xs]
-                        ph = pred_h[batch_idx, a_idx, ys, xs]
+                        # flatten per-map while keeping batch dimension
+                        n, c, h, w = max_cls.shape
+                        flat_cls = max_cls.reshape(n, c*h*w)
+                        n, c, h, w = pred_cx.shape
+                        flat_cx = pred_cx.reshape(n, c*h*w)
+                        n, c, h, w = pred_cy.shape
+                        flat_cy = pred_cy.reshape(n, c*h*w)
+                        n, c, h, w = pred_w.shape
+                        flat_pw = pred_w.reshape(n, c*h*w)
+                        n, c, h, w = pred_h.shape
+                        flat_ph = pred_h.reshape(n, c*h*w)
+                        cls_topk = torch.gather(flat_cls, 1, idxs)
+                        cx = torch.gather(flat_cx, 1, idxs)
+                        cy = torch.gather(flat_cy, 1, idxs)
+                        pw = torch.gather(flat_pw, 1, idxs)
+                        ph = torch.gather(flat_ph, 1, idxs)
                         dets = torch.stack([scores, cls_topk.float(), cx, cy, pw, ph], dim=-1)
                         return dets
 
@@ -450,7 +458,7 @@ def main():
                     if len(shape) > 1:
                         shape[1].dim_param = dim
 
-        set_dim("N")
+        # set_dim("N")
     onnx.save(model_simp, onnx_path)
     print(f"Exported and simplified {arch} model to {onnx_path} (opset {args.opset}, dynamic={args.dynamic})")
 
