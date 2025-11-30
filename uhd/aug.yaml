@@ -29,5 +29,5 @@ data_augment:
     prob: 0.01
     clip_limit: 4.0
     tile_grid_size: [8, 8]
-  ToGray: 0.01
+  # ToGray: 0.01
   RemoveOutliers: 1e-8
