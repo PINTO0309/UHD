@@ -293,14 +293,22 @@ def anchor_loss(
                 continue
             # flatten predictions
             pb = pred_box[bi].reshape(-1, 4)  # N x 4
+            pb = torch.nan_to_num(pb, nan=0.0, posinf=1e4, neginf=0.0)
+            boxes = torch.nan_to_num(boxes, nan=0.0, posinf=1.0, neginf=0.0)
             obj_b = obj_logit[bi].reshape(-1)
             cls_b = cls_logit[bi].reshape(-1, num_classes)
             ious = box_iou(pb, boxes)  # N x G
             assigned = torch.zeros(pb.shape[0], dtype=torch.bool, device=device)
             for gt_idx in range(boxes.shape[0]):
                 cls_id = int(labels[gt_idx].item())
-                iou_g = ious[:, gt_idx]
+                if ious.numel() == 0:
+                    continue
+                iou_g = torch.nan_to_num(ious[:, gt_idx], nan=0.0, posinf=0.0, neginf=0.0)
+                if iou_g.numel() == 0:
+                    continue
                 topk = min(simota_topk, iou_g.numel())
+                if topk == 0:
+                    continue
                 topk_vals, topk_idx = torch.topk(iou_g, k=topk, dim=0)
                 dynamic_k = max(int(topk_vals.sum().item()), 1)
                 dynamic_k = min(dynamic_k, topk)
