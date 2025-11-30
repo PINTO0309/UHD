@@ -128,6 +128,7 @@ class UltraTinyResNet(nn.Module):
         channels=None,
         blocks=None,
         use_long_skip: bool = False,
+        skip_mode: str = "add",
         use_fpn: bool = False,
         target_out_stride: int = None,
     ) -> None:
@@ -139,6 +140,9 @@ class UltraTinyResNet(nn.Module):
         if len(ch_list) < 1:
             raise ValueError("UltraTinyResNet requires at least one stage.")
         self.use_long_skip = bool(use_long_skip)
+        self.skip_mode = (skip_mode or "add").lower()
+        if self.skip_mode not in ("add", "cat"):
+            raise ValueError(f"UltraTinyResNet skip_mode must be 'add' or 'cat'; got {self.skip_mode}")
         self.use_fpn = bool(use_fpn)
         self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
 
@@ -146,6 +150,7 @@ class UltraTinyResNet(nn.Module):
         self.blocks = nn.ModuleList()
         self.skip_proj = nn.ModuleList()
         self.fpn_convs = nn.ModuleList()
+        self.skip_concat_reduce = None
         # stage 0 (no downsample)
         self.downs.append(nn.Identity())
         self.blocks.append(nn.Sequential(*[ResidualBlock(ch_list[0], activation=activation) for _ in range(max(blk_list[0], 0))]))
@@ -162,6 +167,10 @@ class UltraTinyResNet(nn.Module):
         if self.use_fpn:
             for ch in ch_list[:-1]:
                 self.fpn_convs.append(ConvBNAct(ch, ch_list[-1], kernel_size=1, stride=1, activation=activation))
+        if self.use_long_skip and self.skip_mode == "cat":
+            # fuse concatenated skips back to out_channels for the head
+            num_concat = len(ch_list)  # one per stage including the final
+            self.skip_concat_reduce = ConvBNAct(ch_list[-1] * num_concat, ch_list[-1], kernel_size=1, stride=1, activation=activation)
         self.out_channels = ch_list[-1]
         # stride doubles for every downsample stage
         self.out_stride = 2 ** (len(ch_list) - 1)
@@ -182,9 +191,16 @@ class UltraTinyResNet(nn.Module):
         out = feats[-1] if feats else x
         if self.use_long_skip and feats:
             target_hw = out.shape[2:]
+            skips = []
             for f, proj in zip(feats[:-1], self.skip_proj[:-1]):
                 pooled = F.adaptive_avg_pool2d(f, target_hw)
-                out = out + proj(pooled)
+                skips.append(proj(pooled))
+            if self.skip_mode == "cat":
+                merged = torch.cat([out] + skips, dim=1)
+                out = self.skip_concat_reduce(merged) if self.skip_concat_reduce is not None else merged
+            else:
+                for s in skips:
+                    out = out + s
         if self.use_fpn and feats:
             target_hw = feats[-1].shape[2:]
             cur = feats[-1]
@@ -630,6 +646,7 @@ def _build_backbone(
     backbone_blocks=None,
     backbone_se: str = "none",
     backbone_skip: bool = False,
+    backbone_skip_cat: bool = False,
     backbone_fpn: bool = False,
     backbone_out_stride: int = None,
 ):
@@ -644,6 +661,7 @@ def _build_backbone(
             channels=backbone_channels,
             blocks=backbone_blocks,
             use_long_skip=backbone_skip,
+            skip_mode="cat" if backbone_skip_cat else "add",
             use_fpn=backbone_fpn,
             target_out_stride=backbone_out_stride,
         )
@@ -682,6 +700,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_blocks=kwargs.get("backbone_blocks"),
                 backbone_se=kwargs.get("backbone_se", "none"),
                 backbone_skip=kwargs.get("backbone_skip", False),
+                backbone_skip_cat=kwargs.get("backbone_skip_cat", False),
                 backbone_fpn=kwargs.get("backbone_fpn", False),
                 backbone_out_stride=kwargs.get("backbone_out_stride"),
             )

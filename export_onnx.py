@@ -160,6 +160,7 @@ def main():
     parser.add_argument("--backbone-blocks", default=None, help="Comma-separated residual block counts per stage for ultratinyresnet (e.g., '1,1,2,1').")
     parser.add_argument("--backbone-se", choices=["none", "se", "ese"], default=None, help="Apply SE/eSE on backbone output (custom backbones only).")
     parser.add_argument("--backbone-skip", action="store_true", help="Add long skip fusion across custom backbone stages (ultratinyresnet).")
+    parser.add_argument("--backbone-skip-cat", action="store_true", help="Use concat+1x1 fusion for long skips (ultratinyresnet); implies --backbone-skip.")
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     args = parser.parse_args()
@@ -174,6 +175,9 @@ def main():
     backbone_blocks = _parse_int_list(args.backbone_blocks)
     backbone_se = args.backbone_se
     backbone_skip = bool(args.backbone_skip)
+    backbone_skip_cat = bool(args.backbone_skip_cat)
+    if backbone_skip_cat:
+        backbone_skip = True
     backbone_fpn = bool(args.backbone_fpn)
     backbone_out_stride = int(args.backbone_out_stride) if args.backbone_out_stride is not None else None
     if backbone is None:
@@ -186,6 +190,10 @@ def main():
         backbone_se = ckpt.get("backbone_se", "none")
     if "backbone_skip" in ckpt:
         backbone_skip = bool(ckpt.get("backbone_skip"))
+    if "backbone_skip_cat" in ckpt:
+        backbone_skip_cat = bool(ckpt.get("backbone_skip_cat"))
+        if backbone_skip_cat:
+            backbone_skip = True
     if "backbone_fpn" in ckpt:
         backbone_fpn = bool(ckpt.get("backbone_fpn"))
     if backbone_out_stride is None and "backbone_out_stride" in ckpt and ckpt["backbone_out_stride"] is not None:
@@ -196,6 +204,7 @@ def main():
         backbone_blocks = None
         backbone_se = "none"
         backbone_skip = False
+        backbone_skip_cat = False
         backbone_fpn = False
         backbone_out_stride = None
     activation = args.activation
@@ -274,6 +283,7 @@ def main():
         backbone_blocks=backbone_blocks,
         backbone_se=backbone_se,
         backbone_skip=backbone_skip,
+        backbone_skip_cat=backbone_skip_cat,
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
     )

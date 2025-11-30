@@ -140,6 +140,7 @@ def parse_args():
     parser.add_argument("--backbone-blocks", default=None, help="Comma-separated residual block counts per stage for ultratinyresnet (e.g., '1,1,2,1').")
     parser.add_argument("--backbone-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE on backbone output (custom backbones only).")
     parser.add_argument("--backbone-skip", action="store_true", help="Add long skip fusion across custom backbone stages (ultratinyresnet).")
+    parser.add_argument("--backbone-skip-cat", action="store_true", help="Use concat+1x1 fusion for long skips (ultratinyresnet); implies --backbone-skip.")
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
@@ -1091,6 +1092,9 @@ def main():
     backbone_blocks = parse_int_list(args.backbone_blocks)
     backbone_se = args.backbone_se
     backbone_skip = bool(args.backbone_skip)
+    backbone_skip_cat = bool(args.backbone_skip_cat)
+    if backbone_skip_cat:
+        backbone_skip = True  # cat fusion implies enabling long skip
     backbone_fpn = bool(args.backbone_fpn)
     backbone_out_stride = int(args.backbone_out_stride) if args.backbone_out_stride is not None else None
     grad_clip_norm = float(args.grad_clip_norm)
@@ -1144,6 +1148,7 @@ def main():
         backbone_blocks = None
         backbone_se = "none"
         backbone_skip = False
+        backbone_skip_cat = False
         backbone_fpn = False
         backbone_out_stride = None
     if args.resume and args.ckpt:
@@ -1154,7 +1159,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_fpn, backbone_out_stride
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_fpn, backbone_out_stride
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1186,6 +1191,10 @@ def main():
             backbone_se = meta["backbone_se"]
         if "backbone_skip" in meta:
             backbone_skip = bool(meta["backbone_skip"])
+        if "backbone_skip_cat" in meta:
+            backbone_skip_cat = bool(meta["backbone_skip_cat"])
+            if backbone_skip_cat:
+                backbone_skip = True
         if "backbone_fpn" in meta:
             backbone_fpn = bool(meta["backbone_fpn"])
         if "backbone_out_stride" in meta and meta["backbone_out_stride"]:
@@ -1332,6 +1341,7 @@ def main():
         backbone_blocks=backbone_blocks,
         backbone_se=backbone_se,
         backbone_skip=backbone_skip,
+        backbone_skip_cat=backbone_skip_cat,
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
         anchor_assigner=anchor_assigner,
@@ -1500,6 +1510,9 @@ def main():
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
             t_backbone_se = t_meta.get("backbone_se", backbone_se)
             t_backbone_skip = t_meta.get("backbone_skip", backbone_skip)
+            t_backbone_skip_cat = t_meta.get("backbone_skip_cat", backbone_skip_cat)
+            if t_backbone_skip_cat:
+                t_backbone_skip = True
             t_backbone_fpn = t_meta.get("backbone_fpn", backbone_fpn)
             t_backbone_out_stride = t_meta.get("backbone_out_stride", backbone_out_stride)
             t_anchor_assigner = t_meta.get("anchor_assigner", anchor_assigner)
@@ -1525,6 +1538,7 @@ def main():
                 backbone_blocks=t_backbone_blocks,
                 backbone_se=t_backbone_se,
                 backbone_skip=t_backbone_skip,
+                backbone_skip_cat=t_backbone_skip_cat,
                 backbone_fpn=t_backbone_fpn,
                 backbone_out_stride=t_backbone_out_stride,
                 anchor_assigner=t_anchor_assigner,
@@ -1668,6 +1682,7 @@ def main():
                     "backbone_blocks": backbone_blocks,
                     "backbone_se": backbone_se,
                     "backbone_skip": backbone_skip,
+                    "backbone_skip_cat": backbone_skip_cat,
                     "backbone_fpn": backbone_fpn,
                     "backbone_out_stride": backbone_out_stride,
                     "use_anchor": use_anchor,
@@ -1734,6 +1749,7 @@ def main():
             "backbone_blocks": backbone_blocks,
             "backbone_se": backbone_se,
             "backbone_skip": backbone_skip,
+            "backbone_skip_cat": backbone_skip_cat,
             "backbone_fpn": backbone_fpn,
             "backbone_out_stride": backbone_out_stride,
             "use_anchor": use_anchor,
