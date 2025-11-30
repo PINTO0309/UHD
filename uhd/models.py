@@ -141,8 +141,8 @@ class UltraTinyResNet(nn.Module):
             raise ValueError("UltraTinyResNet requires at least one stage.")
         self.use_long_skip = bool(use_long_skip)
         self.skip_mode = (skip_mode or "add").lower()
-        if self.skip_mode not in ("add", "cat"):
-            raise ValueError(f"UltraTinyResNet skip_mode must be 'add' or 'cat'; got {self.skip_mode}")
+        if self.skip_mode not in ("add", "cat", "shuffle_cat"):
+            raise ValueError(f"UltraTinyResNet skip_mode must be 'add', 'cat', or 'shuffle_cat'; got {self.skip_mode}")
         self.use_fpn = bool(use_fpn)
         self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
 
@@ -154,20 +154,43 @@ class UltraTinyResNet(nn.Module):
         # stage 0 (no downsample)
         self.downs.append(nn.Identity())
         self.blocks.append(nn.Sequential(*[ResidualBlock(ch_list[0], activation=activation) for _ in range(max(blk_list[0], 0))]))
-        self.skip_proj.append(
-            ConvBNAct(ch_list[0], ch_list[-1], kernel_size=1, stride=1, activation=activation) if self.use_long_skip else nn.Identity()
-        )
+        if self.use_long_skip:
+            stride0 = max(1, 2 ** (len(ch_list) - 1)) if self.skip_mode == "shuffle_cat" else 1
+            self.skip_proj.append(
+                ConvBNAct(
+                    ch_list[0],
+                    ch_list[-1],
+                    kernel_size=3 if self.skip_mode == "shuffle_cat" else 1,
+                    stride=stride0,
+                    activation=activation,
+                )
+            )
+        else:
+            self.skip_proj.append(nn.Identity())
         # subsequent stages with stride-2 downsamples
         prev_ch = ch_list[0]
-        for ch, num_blk in zip(ch_list[1:], blk_list[1:]):
+        for idx, (ch, num_blk) in enumerate(zip(ch_list[1:], blk_list[1:]), start=1):
             self.downs.append(ConvBNAct(prev_ch, ch, kernel_size=3, stride=2, activation=activation))
             self.blocks.append(nn.Sequential(*[ResidualBlock(ch, activation=activation) for _ in range(max(num_blk, 0))]))
-            self.skip_proj.append(ConvBNAct(ch, ch_list[-1], kernel_size=1, stride=1, activation=activation) if self.use_long_skip else nn.Identity())
+            if self.use_long_skip:
+                # stride to match final spatial size when using shuffle_cat; otherwise keep stride 1 and pool later
+                stride = max(1, 2 ** (len(ch_list) - idx - 1)) if self.skip_mode == "shuffle_cat" else 1
+                self.skip_proj.append(
+                    ConvBNAct(
+                        ch,
+                        ch_list[-1],
+                        kernel_size=3 if self.skip_mode == "shuffle_cat" else 1,
+                        stride=stride,
+                        activation=activation,
+                    )
+                )
+            else:
+                self.skip_proj.append(nn.Identity())
             prev_ch = ch
         if self.use_fpn:
             for ch in ch_list[:-1]:
                 self.fpn_convs.append(ConvBNAct(ch, ch_list[-1], kernel_size=1, stride=1, activation=activation))
-        if self.use_long_skip and self.skip_mode == "cat":
+        if self.use_long_skip and self.skip_mode in ("cat", "shuffle_cat"):
             # fuse concatenated skips back to out_channels for the head
             num_concat = len(ch_list)  # one per stage including the final
             self.skip_concat_reduce = ConvBNAct(ch_list[-1] * num_concat, ch_list[-1], kernel_size=1, stride=1, activation=activation)
@@ -193,9 +216,16 @@ class UltraTinyResNet(nn.Module):
             target_hw = out.shape[2:]
             skips = []
             for f, proj in zip(feats[:-1], self.skip_proj[:-1]):
-                pooled = F.adaptive_avg_pool2d(f, target_hw)
-                skips.append(proj(pooled))
-            if self.skip_mode == "cat":
+                if self.skip_mode == "shuffle_cat":
+                    s = proj(f)
+                    if s.shape[2:] != target_hw:
+                        s = F.adaptive_avg_pool2d(s, target_hw)
+                    s = channel_shuffle(s, groups=2)
+                else:
+                    pooled = F.adaptive_avg_pool2d(f, target_hw)
+                    s = proj(pooled)
+                skips.append(s)
+            if self.skip_mode in ("cat", "shuffle_cat"):
                 merged = torch.cat([out] + skips, dim=1)
                 out = self.skip_concat_reduce(merged) if self.skip_concat_reduce is not None else merged
             else:
@@ -647,6 +677,7 @@ def _build_backbone(
     backbone_se: str = "none",
     backbone_skip: bool = False,
     backbone_skip_cat: bool = False,
+    backbone_skip_shuffle_cat: bool = False,
     backbone_fpn: bool = False,
     backbone_out_stride: int = None,
 ):
@@ -656,12 +687,17 @@ def _build_backbone(
     if name in ("microcspnet", "micro-cspnet", "micro_cspnet"):
         bb = MicroCSPNet(activation=activation)
     elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
+        skip_mode = "add"
+        if backbone_skip_shuffle_cat:
+            skip_mode = "shuffle_cat"
+        elif backbone_skip_cat:
+            skip_mode = "cat"
         bb = UltraTinyResNet(
             activation=activation,
             channels=backbone_channels,
             blocks=backbone_blocks,
             use_long_skip=backbone_skip,
-            skip_mode="cat" if backbone_skip_cat else "add",
+            skip_mode=skip_mode,
             use_fpn=backbone_fpn,
             target_out_stride=backbone_out_stride,
         )
@@ -701,6 +737,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_se=kwargs.get("backbone_se", "none"),
                 backbone_skip=kwargs.get("backbone_skip", False),
                 backbone_skip_cat=kwargs.get("backbone_skip_cat", False),
+                backbone_skip_shuffle_cat=kwargs.get("backbone_skip_shuffle_cat", False),
                 backbone_fpn=kwargs.get("backbone_fpn", False),
                 backbone_out_stride=kwargs.get("backbone_out_stride"),
             )
