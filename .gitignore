@@ -227,4 +227,3 @@ ablation_heatmaps/
 *.jpeg
 *.JPG
 split_list.csv
-ultratinyod.py
