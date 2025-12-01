@@ -30,4 +30,6 @@ data_augment:
     clip_limit: 4.0
     tile_grid_size: [8, 8]
   # ToGray: 0.01
-  RemoveOutliers: 1e-8
+
+  # (10/64)^2 ≈ 0.024414062
+  RemoveOutliers: 0.024414062
