@@ -169,7 +169,7 @@ uv run python train.py \
 ```
 ```bash
 SIZE=64x64
-ANCHOR=8
+ANCHOR=12
 CNNWIDTH=128
 uv run python train.py \
 --arch ultratinyod \
