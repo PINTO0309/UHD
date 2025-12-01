@@ -72,7 +72,7 @@ class ModelEma:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Ultra-lightweight detection trainer (CNN/Transformer).")
-    parser.add_argument("--arch", choices=["cnn", "transformer"], default="cnn")
+    parser.add_argument("--arch", choices=["cnn", "transformer", "ultratinyod"], default="cnn")
     parser.add_argument("--image-dir", default="data/wholebody34/obj_train_data", help="Directory with images and YOLO txt labels.")
     parser.add_argument("--train-split", type=float, default=0.8, help="Fraction of data for training.")
     parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of data for validation.")
@@ -555,6 +555,8 @@ def train_one_epoch(
     simota_topk: int = 10,
 ) -> Dict[str, float]:
     model.train()
+    arch_cnn_like = arch in ("cnn", "ultratinyod")
+    anchor_head = bool(use_anchor or arch == "ultratinyod")
     total_loss = 0.0
     total_hm = 0.0
     total_off = 0.0
@@ -640,7 +642,7 @@ def train_one_epoch(
                                 teacher_anchor_pred = pred_part
                         elif isinstance(t_out, dict):
                             teacher_ct_pred = t_out
-            if teacher_backbone is not None and distill_feat > 0 and arch == "cnn":
+            if teacher_backbone is not None and distill_feat > 0 and arch_cnn_like:
                 with torch.no_grad():
                     imgs_t = imgs
                     if teacher_backbone_norm == "imagenet":
@@ -649,22 +651,22 @@ def train_one_epoch(
                         imgs_t = imgs_t.float()
                         imgs_t = (imgs_t - mean) / std
                     teacher_feats = teacher_backbone(imgs_t)
-            if arch == "cnn":
+            if arch_cnn_like:
                 need_feats = teacher_feats is not None and distill_feat > 0
                 outputs = model(imgs, return_feat=need_feats)
                 if need_feats:
                     outputs, student_feats = outputs
-                if use_anchor:
-                        loss_dict = anchor_loss(
-                            outputs,
-                            targets_dev,
-                            anchors=anchors,
-                            num_classes=num_classes,
-                            iou_loss=iou_loss_type,
-                            assigner=anchor_assigner,
-                            cls_loss_type=anchor_cls_loss,
-                            simota_topk=simota_topk,
-                        )
+                if anchor_head:
+                    loss_dict = anchor_loss(
+                        outputs,
+                        targets_dev,
+                        anchors=anchors,
+                        num_classes=num_classes,
+                        iou_loss=iou_loss_type,
+                        assigner=anchor_assigner,
+                        cls_loss_type=anchor_cls_loss,
+                        simota_topk=simota_topk,
+                    )
                 else:
                     loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                 if need_feats and student_feats is not None:
@@ -684,8 +686,8 @@ def train_one_epoch(
                         loss_dict["loss"] = loss_dict["loss"] + (distill_feat * distill_scale) * loss_feat
                         loss_dict["distill_feat"] = loss_feat
                 # CNN logit/box distillation from CNN teacher
-                if teacher_model is not None and (teacher_arch or "cnn") == "cnn":
-                    if use_anchor and teacher_use_anchor and teacher_anchor_pred is not None and anchors is not None and teacher_anchors is not None:
+                if teacher_model is not None and (teacher_arch or "cnn") in ("cnn", "ultratinyod"):
+                    if anchor_head and teacher_use_anchor and teacher_anchor_pred is not None and anchors is not None and teacher_anchors is not None:
                         t_nc = teacher_num_classes if teacher_num_classes is not None else num_classes
                         if t_nc != num_classes:
                             if not warn_class_mismatch:
@@ -723,7 +725,7 @@ def train_one_epoch(
                                     )
                                     loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
                                     loss_dict["distill_box_l1"] = l1d
-                    elif (not use_anchor) and teacher_ct_pred is not None and isinstance(teacher_ct_pred, dict):
+                    elif (not anchor_head) and teacher_ct_pred is not None and isinstance(teacher_ct_pred, dict):
                         t_hm = teacher_ct_pred.get("hm")
                         t_off = teacher_ct_pred.get("off")
                         t_wh = teacher_ct_pred.get("wh")
@@ -784,8 +786,8 @@ def train_one_epoch(
             ema.update(model)
 
         total_loss += float(loss.item())
-        if arch == "cnn":
-            if use_anchor:
+        if arch_cnn_like:
+            if anchor_head:
                 total_anchor_obj += float(loss_dict["obj"].item())
                 total_anchor_cls += float(loss_dict["cls"].item())
                 total_anchor_box += float(loss_dict["box"].item())
@@ -810,8 +812,8 @@ def train_one_epoch(
         steps += 1
 
         if (step + 1) % log_interval == 0:
-            if arch == "cnn":
-                if use_anchor:
+            if arch_cnn_like:
+                if anchor_head:
                     pbar.set_postfix(
                         loss=f"{loss.item():.4f}",
                         obj=f"{loss_dict['obj'].item():.4f}",
@@ -837,8 +839,8 @@ def train_one_epoch(
                 )
 
     logs = {"loss": total_loss / steps if steps else 0.0}
-    if arch == "cnn":
-        if use_anchor:
+    if arch_cnn_like:
+        if anchor_head:
             logs.update(
                 {
                     "obj": total_anchor_obj / steps if steps else 0.0,
@@ -929,6 +931,8 @@ def validate(
         "lime",
         "pink",
     ]
+    arch_cnn_like = arch in ("cnn", "ultratinyod")
+    anchor_head = bool(use_anchor or arch == "ultratinyod")
 
     def render_sample(img_path, pred_list, save_path):
         try:
@@ -970,9 +974,9 @@ def validate(
                 dtype=torch.float16 if device.type == "cuda" else torch.bfloat16,
                 enabled=use_amp,
             ):
-                if arch == "cnn":
+                if arch_cnn_like:
                     outputs = model(imgs)
-                    if use_anchor:
+                    if anchor_head:
                         loss_dict = anchor_loss(
                             outputs,
                             targets_dev,
@@ -993,8 +997,8 @@ def validate(
                     preds = decode_detr(logits, box_pred, conf_thresh=conf_thresh)
             # accumulate losses
             total_loss += float(loss_dict["loss"].item())
-            if arch == "cnn":
-                if use_anchor:
+            if arch_cnn_like:
+                if anchor_head:
                     total_anchor_obj += float(loss_dict["obj"].item())
                     total_anchor_cls += float(loss_dict["cls"].item())
                     total_anchor_box += float(loss_dict["box"].item())
@@ -1072,8 +1076,8 @@ def validate(
     metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=iou_thresh)
     if steps > 0:
         metrics["loss"] = total_loss / steps
-        if arch == "cnn":
-            if use_anchor:
+        if arch_cnn_like:
+            if anchor_head:
                 metrics["obj"] = total_anchor_obj / steps
                 metrics["cls"] = total_anchor_cls / steps
                 metrics["box"] = total_anchor_box / steps
@@ -1142,6 +1146,7 @@ def main():
     teacher_use_anchor = False
     teacher_anchor_tensor = None
     teacher_num_classes = None
+    arch_cnn_like = args.arch in ("cnn", "ultratinyod")
     use_anchor = bool(args.use_anchor)
     anchor_list = parse_anchors_str(args.anchors)
     auto_anchors = bool(args.auto_anchors)
@@ -1155,6 +1160,9 @@ def main():
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
     output_stride = int(args.output_stride)
+    if args.arch == "ultratinyod":
+        use_anchor = True
+        output_stride = 8
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
     if args.arch != "cnn" and backbone not in (None, "none"):
@@ -1310,7 +1318,10 @@ def main():
         apply_meta(pretrain_meta, f"ckpt {args.ckpt}", allow_distill=False)
     if ckpt_meta is not None:
         apply_meta(ckpt_meta, f"resume {args.resume}", allow_distill=True)
-    if args.arch == "cnn" and distill_feat > 0 and not (teacher_backbone or teacher_ckpt):
+    if args.arch == "ultratinyod":
+        use_anchor = True
+    anchor_head = bool(use_anchor or args.arch == "ultratinyod")
+    if arch_cnn_like and distill_feat > 0 and not (teacher_backbone or teacher_ckpt):
         print("distill-feat requested but no teacher backbone or teacher checkpoint provided; disabling feature distillation.")
         distill_feat = 0.0
     set_seed(args.seed)
@@ -1323,7 +1334,7 @@ def main():
 
     train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
     anchors_tensor = None
-    if args.arch == "cnn" and use_anchor:
+    if arch_cnn_like and anchor_head:
         if anchor_list:
             anchors_np = np.array(anchor_list, dtype=np.float32)
         elif auto_anchors:
@@ -1413,7 +1424,7 @@ def main():
                 ema_helper.ema.load_state_dict(model.state_dict())
         print(f"Initialized model weights from {args.ckpt}")
     backbone_cfg = None
-    if args.arch == "cnn" and distill_feat > 0 and teacher_backbone:
+    if arch_cnn_like and distill_feat > 0 and teacher_backbone:
         try:
             teacher_backbone_model, backbone_cfg = load_dinov3_backbone(
                 teacher_backbone, img_size=(img_h, img_w), device=device, arch_hint=teacher_backbone_arch
@@ -1528,11 +1539,11 @@ def main():
                 p.requires_grad = False
             teacher_num_classes = num_classes
             print(f"Loaded teacher from {teacher_ckpt} (arch={t_arch})")
-        elif t_arch == "cnn":
+        elif t_arch in ("cnn", "ultratinyod"):
             t_use_skip = teacher_use_skip or bool(t_meta.get("use_skip", use_skip))
             t_activation = teacher_activation or t_meta.get("activation", activation)
             t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
-            t_use_anchor = bool(t_meta.get("use_anchor", use_anchor))
+            t_use_anchor = True if t_arch == "ultratinyod" else bool(t_meta.get("use_anchor", use_anchor))
             t_anchor_list = t_meta.get("anchors", anchor_list) or []
             t_anchor_list = [tuple(map(float, a)) for a in t_anchor_list]
             t_num_anchors = int(t_meta.get("num_anchors", len(t_anchor_list) if t_anchor_list else num_anchors))
@@ -1602,7 +1613,7 @@ def main():
                 teacher_anchor_tensor = getattr(teacher_model, "anchors")
                 if isinstance(teacher_anchor_tensor, torch.Tensor):
                     teacher_anchor_tensor = teacher_anchor_tensor.to(device)
-            if args.arch == "cnn" and distill_feat > 0:
+            if arch_cnn_like and distill_feat > 0:
                 if teacher_feature_dim is None:
                     teacher_feature_dim = _infer_cnn_feat_channels(teacher_model, use_anchor=t_use_anchor, num_classes=t_num_classes)
                 student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
@@ -1613,7 +1624,7 @@ def main():
                         feature_adapter = torch.nn.Identity()
             print(f"Loaded teacher from {teacher_ckpt} (arch={t_arch})")
         else:
-            print(f"Teacher arch {t_arch} not supported for distillation (only transformer/cnn). Skipping teacher.")
+            print(f"Teacher arch {t_arch} not supported for distillation (only transformer/cnn/ultratinyod). Skipping teacher.")
     if teacher_model_arch:
         teacher_arch = teacher_model_arch
 
@@ -1643,7 +1654,7 @@ def main():
             distill_box_l1=distill_box_l1,
             distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
-            distill_feat=distill_feat if args.arch == "cnn" else 0.0,
+            distill_feat=distill_feat if arch_cnn_like else 0.0,
             use_anchor=use_anchor,
             anchors=anchors_tensor,
             iou_loss_type=iou_loss_type,
@@ -1706,7 +1717,7 @@ def main():
 
             # Save checkpoints: best only when improved mAP; keep latest 10 by recency
             map_val = metrics.get("mAP@0.5", 0.0)
-            arch_tag = "cnn" if args.arch == "cnn" else "tf"
+            arch_tag = "utod" if args.arch == "ultratinyod" else ("cnn" if args.arch == "cnn" else "tf")
             if map_val > best_map:
                 best_map = map_val
                 state_metrics = metrics

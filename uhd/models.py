@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
 
+from .ultratinyod import UltraTinyOD, UltraTinyODConfig
+
 
 def _make_activation(name: str) -> nn.Module:
     act = name.lower()
@@ -792,6 +794,18 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone=backbone_module,
                 backbone_out_channels=backbone_out_channels,
             )
+    if arch == "ultratinyod":
+        cfg = UltraTinyODConfig(
+            num_classes=kwargs.get("num_classes", 1),
+            stride=kwargs.get("output_stride", 8) or 8,
+            anchors=kwargs.get("anchors") or None,
+        )
+        stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
+        return UltraTinyOD(
+            num_classes=cfg.num_classes,
+            config=cfg,
+            c_stem=int(stem_width),
+        )
     if arch == "transformer":
         return TinyDETR(
             num_queries=kwargs.get("num_queries", 10),

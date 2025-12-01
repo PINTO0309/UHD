@@ -136,6 +136,31 @@ uv run python train.py \
 --ema-decay 0.9999
 ```
 
+UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
+
+```bash
+SIZE=64x64
+ANCHOR=3
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_${SIZE} \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width 16 \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15
+```
+
 CNN anchor head + lightweight backbone samples:
 
 ```bash
@@ -507,7 +532,7 @@ uv run python train.py \
 
 | Parameter | Description | Default |
 | --- | --- | --- |
-| `--arch` | Model architecture: `cnn` or `transformer`. | `cnn` |
+| `--arch` | Model architecture: `cnn`, `transformer`, or anchor-only `ultratinyod`. | `cnn` |
 | `--image-dir` | Directory containing images and YOLO txt labels. | `data/wholebody34/obj_train_data` |
 | `--train-split` | Fraction of data used for training. | `0.8` |
 | `--val-split` | Fraction of data used for validation. | `0.2` |
@@ -650,5 +675,5 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --opset 17 \
   --merge-postprocess
   ```
-- `--arch` can force `cnn`/`transformer`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
+- `--arch` can force `cnn`/`transformer`/`ultratinyod`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
 - `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.

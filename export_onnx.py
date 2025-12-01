@@ -130,7 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description="Export checkpoint to ONNX (auto-detect arch).")
     parser.add_argument("--checkpoint", required=True, help="Path to .pt checkpoint.")
     parser.add_argument("--output", default=None, help="Output ONNX path. Default: <checkpoint>.onnx")
-    parser.add_argument("--arch", default=None, help="Override architecture (cnn/transformer).")
+    parser.add_argument("--arch", default=None, help="Override architecture (cnn/transformer/ultratinyod).")
     parser.add_argument("--img-size", default="64x64", help="Input size HxW, e.g., 64x64.")
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--num-queries", type=int, default=10)
@@ -177,6 +177,7 @@ def main():
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     arch = (args.arch or ckpt.get("arch", "cnn")).lower()
+    arch_cnn_like = arch in ("cnn", "ultratinyod")
     ckpt_use_skip = bool(ckpt.get("use_skip", False))
     use_skip = ckpt_use_skip or bool(args.use_skip)
     use_fpn = bool(ckpt.get("use_fpn", False))
@@ -247,11 +248,14 @@ def main():
     classes = ckpt.get("classes", [0])
     num_classes = len(classes) if isinstance(classes, (list, tuple)) else int(classes)
     use_anchor = bool(ckpt.get("use_anchor", False) or args.use_anchor)
+    if arch == "ultratinyod":
+        use_anchor = True
     anchors = ckpt.get("anchors", [])
     num_anchors = ckpt.get("num_anchors", None)
     last_se = args.last_se or ckpt.get("last_se", "none")
     last_width_scale = args.last_width_scale if args.last_width_scale is not None else ckpt.get("last_width_scale", 1.0)
-    output_stride = args.output_stride if args.output_stride is not None else ckpt.get("output_stride", 4)
+    default_stride = 8 if arch == "ultratinyod" else 4
+    output_stride = args.output_stride if args.output_stride is not None else ckpt.get("output_stride", default_stride)
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
     # Prefer checkpoint hyper-params when available; infer layers/queries/d_model from state_dict if missing
@@ -277,7 +281,7 @@ def main():
     else:
         state_dict = ckpt["model"]
     width = ckpt.get("width")
-    if arch == "cnn":
+    if arch_cnn_like:
         width = _infer_cnn_width(state_dict, fallback_width=width or args.cnn_width)
         if num_anchors is None:
             if anchors:
@@ -322,11 +326,10 @@ def main():
         backbone_out_stride=backbone_out_stride,
     )
     output_stride = getattr(model, "out_stride", output_stride)
-    output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
     model.eval()
 
-    if arch == "cnn":
+    if arch_cnn_like:
         if use_anchor:
             wrapper = AnchorWrapper(model)
             if args.merge_postprocess:
@@ -386,7 +389,7 @@ def main():
                 output_names = ["detections"]
             else:
                 output_names = ["pred"]
-        else:
+        elif arch == "cnn":
             wrapper = CnnWrapper(model)
             if args.merge_postprocess:
                 class PostCNN(torch.nn.Module):
