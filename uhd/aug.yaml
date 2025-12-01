@@ -17,10 +17,10 @@ data_augment:
   HorizontalFlip:
     prob: 0.5
     class_swap_map: {}
-  RandomScale:
-    prob: 0.5
-    scale_range: [1.0, 1.4]
-    keep_aspect_ratio: true
+  # RandomScale:
+  #   prob: 0.5
+  #   scale_range: [1.0, 1.4]
+  #   keep_aspect_ratio: true
   # Translation:
   #   prob: 0.5
   #   translate: 0.1
