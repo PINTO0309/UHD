@@ -718,6 +718,16 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess
+
+  SIZE=64x64
+  ANCHOR=12
+  CNNWIDTH=128
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc12_w128_64x64_aug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_aug.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
   ```
 - `--arch` can force `cnn`/`transformer`/`ultratinyod`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
 - `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.
