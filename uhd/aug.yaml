@@ -31,5 +31,5 @@ data_augment:
     tile_grid_size: [8, 8]
   # ToGray: 0.01
 
-  # (10/64)^2 ≈ 0.024414062
-  RemoveOutliers: 0.024414062
+  # (5/64)^2 ≈ 0.006103516
+  RemoveOutliers: 0.006103516
