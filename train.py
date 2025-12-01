@@ -130,6 +130,7 @@ def parse_args():
     # CNN params
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
+    parser.add_argument("--utod-residual", action="store_true", help="Enable residual skips inside the UltraTinyOD backbone.")
     parser.add_argument(
         "--backbone",
         default=None,
@@ -1101,6 +1102,7 @@ def main():
     num_classes = len(class_ids)
     aug_cfg = load_aug_config(args.aug_config)
     use_skip = bool(args.use_skip)
+    utod_residual = bool(args.utod_residual)
     backbone = args.backbone
     backbone_channels = parse_int_list(args.backbone_channels)
     backbone_blocks = parse_int_list(args.backbone_blocks)
@@ -1188,7 +1190,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1204,6 +1206,9 @@ def main():
         if "use_skip" in meta and bool(meta["use_skip"]) != use_skip:
             print(f"Overriding CLI use-skip={use_skip} with {label} use-skip={bool(meta['use_skip'])}")
             use_skip = bool(meta["use_skip"])
+        if "utod_residual" in meta and bool(meta["utod_residual"]) != utod_residual:
+            print(f"Overriding CLI utod-residual={utod_residual} with {label} utod-residual={bool(meta['utod_residual'])}")
+            utod_residual = bool(meta["utod_residual"])
         if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
             print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
             use_fpn = bool(meta["use_fpn"])
@@ -1374,6 +1379,7 @@ def main():
         activation=activation,
         use_fpn=use_fpn,
         use_anchor=use_anchor,
+        utod_use_residual=utod_residual,
         num_anchors=num_anchors,
         anchors=anchor_list,
         last_se=last_se,
@@ -1502,6 +1508,7 @@ def main():
         num_workers=args.num_workers,
         collate_fn=detection_collate,
         pin_memory=True,
+        persistent_workers=True,
     )
     val_loader = DataLoader(
         val_ds,
@@ -1510,6 +1517,7 @@ def main():
         num_workers=args.num_workers,
         collate_fn=detection_collate,
         pin_memory=True,
+        persistent_workers=True,
     )
     teacher_model = None
     if teacher_ckpt:
@@ -1550,6 +1558,7 @@ def main():
             t_last_se = t_meta.get("last_se", last_se)
             t_last_width_scale = t_meta.get("last_width_scale", last_width_scale)
             t_output_stride = int(t_meta.get("output_stride", output_stride))
+            t_utod_residual = bool(t_meta.get("utod_residual", utod_residual))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
@@ -1600,6 +1609,7 @@ def main():
                 anchor_assigner=t_anchor_assigner,
                 anchor_cls_loss=t_anchor_cls_loss,
                 simota_topk=t_simota_topk,
+                utod_use_residual=t_utod_residual,
             ).to(device)
             teacher_model.load_state_dict(t_meta["model"])
             teacher_model.eval()
@@ -1732,6 +1742,7 @@ def main():
                     "classes": class_ids,
                     "augment_cfg": aug_cfg,
                     "use_skip": use_skip,
+                    "utod_residual": utod_residual,
                     "use_fpn": use_fpn,
                     "backbone": backbone,
                     "backbone_channels": backbone_channels,
@@ -1801,6 +1812,7 @@ def main():
             "classes": class_ids,
             "augment_cfg": aug_cfg,
             "use_skip": use_skip,
+            "utod_residual": utod_residual,
             "use_fpn": use_fpn,
             "backbone": backbone,
             "backbone_channels": backbone_channels,

@@ -100,7 +100,13 @@ def _infer_cnn_width(state_dict, fallback_width: int) -> int:
     if not isinstance(state_dict, dict):
         return int(fallback_width)
     # Prefer stem conv if present
-    for key in ("stem.0.weight", "stem.weight", "stage1.dw.weight", "stage1.pw.weight"):
+    for key in (
+        "stem.0.weight",
+        "stem.weight",
+        "stage1.dw.weight",
+        "stage1.pw.weight",
+        "backbone.stem.conv.weight",  # UltraTinyOD stem
+    ):
         w = state_dict.get(key)
         if isinstance(w, torch.Tensor):
             return int(w.shape[0])
@@ -250,6 +256,7 @@ def main():
     use_anchor = bool(ckpt.get("use_anchor", False) or args.use_anchor)
     if arch == "ultratinyod":
         use_anchor = True
+    utod_use_residual = bool(ckpt.get("utod_residual", False))
     anchors = ckpt.get("anchors", [])
     num_anchors = ckpt.get("num_anchors", None)
     last_se = args.last_se or ckpt.get("last_se", "none")
@@ -309,6 +316,7 @@ def main():
         use_skip=use_skip,
         use_fpn=use_fpn,
         use_anchor=use_anchor,
+        utod_use_residual=utod_use_residual,
         num_anchors=num_anchors,
         anchors=anchors,
         last_se=last_se,

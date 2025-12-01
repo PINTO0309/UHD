@@ -140,13 +140,13 @@ UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 
 ```bash
 SIZE=64x64
-ANCHOR=3
-CNNWIDTH=16
+ANCHOR=8
+CNNWIDTH=128
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
@@ -159,8 +159,13 @@ uv run python train.py \
 --auto-anchors \
 --num-anchors ${ANCHOR} \
 --iou-loss ciou \
---conf-thresh 0.15
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0
 ```
+- UltraTinyOD でバックボーンに残差を入れたい場合は `--utod-residual` を追加してください（block3/4 に投影付きスキップを挿入）。
 
 CNN anchor head + lightweight backbone samples:
 
@@ -672,6 +677,16 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   uv run python export_onnx.py \
   --checkpoint runs/cnn_anchor${ANCHOR}_utresnet_skip_nofpn_64x64/best_cnn_0041_map_0.16861.pt \
   --output model_cnn_anchor${ANCHOR}_utresnet_skip_nofpn_${SIZE}_ex.onnx \
+  --img-size ${SIZE} \
+  --opset 17 \
+  --merge-postprocess
+
+  SIZE=64x64
+  ANCHOR=8
+  CNNWIDTH=128
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w128_64x64/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}.onnx \
   --img-size ${SIZE} \
   --opset 17 \
   --merge-postprocess

@@ -805,6 +805,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             num_classes=cfg.num_classes,
             config=cfg,
             c_stem=int(stem_width),
+            use_residual=kwargs.get("utod_use_residual", False),
         )
     if arch == "transformer":
         return TinyDETR(
