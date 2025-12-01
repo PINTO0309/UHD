@@ -138,6 +138,8 @@ uv run python train.py \
 
 UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 
+- UltraTinyOD でバックボーンに残差を入れたい場合は `--utod-residual` を追加してください（block3/4 に投影付きスキップを挿入）。
+
 ```bash
 SIZE=64x64
 ANCHOR=8
@@ -165,7 +167,33 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --grad-clip-norm 10.0
 ```
-- UltraTinyOD でバックボーンに残差を入れたい場合は `--utod-residual` を追加してください（block3/4 に投影付きスキップを挿入）。
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=128
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_aug \
+--batch-size 64 \
+--epochs 300 \
+--lr 0.001 \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0
+```
 
 CNN anchor head + lightweight backbone samples:
 
