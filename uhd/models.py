@@ -738,8 +738,18 @@ def _build_backbone(
     return bb, getattr(bb, "out_channels", None)
 
 
+def _disable_bn(module: nn.Module) -> None:
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.BatchNorm2d):
+            setattr(module, name, nn.Identity())
+        else:
+            _disable_bn(child)
+
+
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
+    use_batchnorm = kwargs.get("use_batchnorm", True)
+    model: nn.Module
     if arch == "cnn":
         width = kwargs.get("width", 32)
         num_classes = kwargs.get("num_classes", 1)
@@ -769,7 +779,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         if backbone_module is not None:
             out_stride = getattr(backbone_module, "out_stride", out_stride)
         if kwargs.get("use_anchor", False):
-            return AnchorCNN(
+            model = AnchorCNN(
                 width=width,
                 num_classes=num_classes,
                 num_anchors=kwargs.get("num_anchors", 3),
@@ -783,7 +793,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_out_channels=backbone_out_channels,
             )
         else:
-            return MiniCenterNet(
+            model = MiniCenterNet(
                 width=width,
                 num_classes=num_classes,
                 use_skip=use_skip,
@@ -794,21 +804,21 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone=backbone_module,
                 backbone_out_channels=backbone_out_channels,
             )
-    if arch == "ultratinyod":
+    elif arch == "ultratinyod":
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
             anchors=kwargs.get("anchors") or None,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
-        return UltraTinyOD(
+        model = UltraTinyOD(
             num_classes=cfg.num_classes,
             config=cfg,
             c_stem=int(stem_width),
             use_residual=kwargs.get("utod_use_residual", False),
         )
-    if arch == "transformer":
-        return TinyDETR(
+    elif arch == "transformer":
+        model = TinyDETR(
             num_queries=kwargs.get("num_queries", 10),
             d_model=kwargs.get("d_model", 64),
             nhead=kwargs.get("heads", 4),
@@ -819,4 +829,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             activation=kwargs.get("activation", "swish"),
             use_fpn=kwargs.get("use_fpn", False),
         )
-    raise ValueError(f"Unknown architecture: {arch}")
+    else:
+        raise ValueError(f"Unknown architecture: {arch}")
+    if not use_batchnorm:
+        _disable_bn(model)
+    return model

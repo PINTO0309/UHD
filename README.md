@@ -240,6 +240,7 @@ uv run python train.py \
 | `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`). | `bce` |
 | `--simota-topk` | Top-K IoUs for dynamic-k in SimOTA. | `10` |
 | `--last-se` | Apply SE/eSE only on the last CNN block. | `none` |
+| `--use-batchnorm` | Enable BatchNorm layers during training/export. | `False` |
 | `--last-width-scale` | Channel scale for last CNN block (e.g., `1.25`). | `1.0` |
 | `--num-queries` | Transformer query count. | `10` |
 | `--d-model` | Transformer model dimension. | `64` |
@@ -290,6 +291,7 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --opset 17 \
   --merge-postprocess
   ```
+- Add `--no-simp` to skip onnx-simplifier and disable constant folding (keeps explicit BatchNorm nodes).
   ```bash
   SIZE=64x64
   ANCHOR=8

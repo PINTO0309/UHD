@@ -156,6 +156,7 @@ def main():
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default=None, help="Override last SE mode for CNN (defaults to checkpoint).")
     parser.add_argument("--last-width-scale", type=float, default=None, help="Override last width scale for CNN (defaults to checkpoint).")
     parser.add_argument("--output-stride", type=int, default=None, help="Override CNN output stride (defaults to checkpoint).")
+    parser.add_argument("--no-simp", action="store_true", help="Skip onnx-simplifier.")
     parser.add_argument(
         "--backbone",
         default=None,
@@ -186,6 +187,7 @@ def main():
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     ckpt_use_skip = bool(ckpt.get("use_skip", False))
     use_skip = ckpt_use_skip or bool(args.use_skip)
+    use_batchnorm = bool(ckpt.get("use_batchnorm", True))
     use_fpn = bool(ckpt.get("use_fpn", False))
     backbone = args.backbone if args.backbone not in ("none", None) else None
     backbone_channels = _parse_int_list(args.backbone_channels)
@@ -322,6 +324,7 @@ def main():
         last_se=last_se,
         last_width_scale=last_width_scale,
         output_stride=output_stride,
+        use_batchnorm=use_batchnorm,
         backbone=backbone,
         backbone_channels=backbone_channels,
         backbone_blocks=backbone_blocks,
@@ -483,7 +486,13 @@ def main():
         output_names=output_names,
         opset_version=args.opset,
         dynamic_axes=dynamic_axes,
+        do_constant_folding=not args.no_simp,
+        training=torch.onnx.TrainingMode.EVAL,
     )
+    if args.no_simp:
+        print(f"Exported {arch} model to {onnx_path} without simplification (opset {args.opset}, dynamic={args.dynamic})")
+        return
+
     onnx_model = onnx.load(onnx_path)
     model_simp, check = simplify(onnx_model, dynamic_input_shape=bool(args.dynamic))
     if not check:

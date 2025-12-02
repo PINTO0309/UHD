@@ -168,6 +168,7 @@ def parse_args():
     parser.add_argument("--anchor-cls-loss", choices=["bce", "vfl"], default="bce", help="Classification loss for anchor head.")
     parser.add_argument("--simota-topk", type=int, default=10, help="Top-K IoUs for dynamic-k in SimOTA.")
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
+    parser.add_argument("--use-batchnorm", action="store_true", help="Enable BatchNorm layers (default: off).")
     parser.add_argument("--last-width-scale", type=float, default=1.0, help="Channel scale for last CNN block (e.g., 1.25).")
     # Transformer params
     parser.add_argument("--num-queries", type=int, default=10)
@@ -1161,6 +1162,7 @@ def main():
     simota_topk = int(args.simota_topk)
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
+    use_batchnorm = bool(args.use_batchnorm)
     output_stride = int(args.output_stride)
     if args.arch == "ultratinyod":
         use_anchor = True
@@ -1191,7 +1193,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1207,6 +1209,9 @@ def main():
         if "use_skip" in meta and bool(meta["use_skip"]) != use_skip:
             print(f"Overriding CLI use-skip={use_skip} with {label} use-skip={bool(meta['use_skip'])}")
             use_skip = bool(meta["use_skip"])
+        if "use_batchnorm" in meta and bool(meta["use_batchnorm"]) != use_batchnorm:
+            print(f"Overriding CLI use-batchnorm={use_batchnorm} with {label} use-batchnorm={bool(meta['use_batchnorm'])}")
+            use_batchnorm = bool(meta["use_batchnorm"])
         if "utod_residual" in meta and bool(meta["utod_residual"]) != utod_residual:
             print(f"Overriding CLI utod-residual={utod_residual} with {label} utod-residual={bool(meta['utod_residual'])}")
             utod_residual = bool(meta["utod_residual"])
@@ -1399,6 +1404,7 @@ def main():
         anchor_assigner=anchor_assigner,
         anchor_cls_loss=anchor_cls_loss,
         simota_topk=simota_topk,
+        use_batchnorm=use_batchnorm,
     ).to(device)
     output_stride = getattr(model, "out_stride", output_stride)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
@@ -1541,6 +1547,7 @@ def main():
                 use_skip=t_use_skip,
                 activation=t_activation,
                 use_fpn=t_use_fpn,
+                use_batchnorm=bool(t_meta.get("use_batchnorm", True)),
             ).to(device)
             teacher_model.load_state_dict(t_meta["model"])
             teacher_model.eval()
@@ -1584,6 +1591,7 @@ def main():
             t_simota_topk = int(t_meta.get("simota_topk", simota_topk))
             t_classes = [int(c) for c in t_meta.get("classes", class_ids)]
             t_num_classes = len(t_classes)
+            t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
                 width=args.cnn_width,
@@ -1611,6 +1619,7 @@ def main():
                 anchor_cls_loss=t_anchor_cls_loss,
                 simota_topk=t_simota_topk,
                 utod_use_residual=t_utod_residual,
+                use_batchnorm=t_use_batchnorm,
             ).to(device)
             teacher_model.load_state_dict(t_meta["model"])
             teacher_model.eval()
@@ -1768,6 +1777,7 @@ def main():
                     "output_stride": output_stride,
                     "grad_clip_norm": grad_clip_norm,
                     "activation": activation,
+                    "use_batchnorm": use_batchnorm,
                     "best_map": best_map,
                     "use_ema": use_ema,
                     "ema_decay": ema_decay,
@@ -1838,6 +1848,7 @@ def main():
             "output_stride": output_stride,
             "grad_clip_norm": grad_clip_norm,
             "activation": activation,
+            "use_batchnorm": use_batchnorm,
             "best_map": best_map,
             "use_ema": use_ema,
             "ema_decay": ema_decay,
