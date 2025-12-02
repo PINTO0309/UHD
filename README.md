@@ -144,7 +144,7 @@ UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=128
-LR=0.0008
+LR=0.0005
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
@@ -172,7 +172,7 @@ uv run python train.py \
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=160
-LR=0.0007
+LR=0.0005
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
