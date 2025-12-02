@@ -152,8 +152,8 @@ uv run python train.py \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_lr${LR} \
 --batch-size 64 \
 --epochs 300 \
---lr 0.001 \
---weight-decay ${LR} \
+--lr ${LR} \
+--weight-decay 0.0001 \
 --num-workers 12 \
 --device cuda \
 --use-amp \
