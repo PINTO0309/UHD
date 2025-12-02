@@ -144,15 +144,16 @@ UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=128
+LR=0.0008
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_lr${LR} \
 --batch-size 64 \
 --epochs 300 \
 --lr 0.001 \
---weight-decay 0.0001 \
+--weight-decay ${LR} \
 --num-workers 12 \
 --device cuda \
 --use-amp \
