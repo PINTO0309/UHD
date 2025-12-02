@@ -228,6 +228,7 @@ uv run python train.py \
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
+LR=0.0003
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
@@ -235,7 +236,7 @@ uv run python train.py \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE} \
 --batch-size 64 \
 --epochs 300 \
---lr 0.0005 \
+--lr ${LR} \
 --weight-decay 0.0001 \
 --num-workers 12 \
 --device cuda \
