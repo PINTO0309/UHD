@@ -1,6 +1,13 @@
 # UHD
 Ultra-lightweight human detection.
 
+|Variant|Size|mAP@0.5|CPU<br>inference<br>latency|ONNX|
+|:-:|:-:|:-:|:-:|:-:|
+|S|13.5 MB|||[Download]()|
+|C|21.0 MB|||[Download]()|
+|M|30.1 MB|||[Download]()|
+|L|30.1 MB|||[Download]()|
+
 ## Training Examples (full CLI)
 
 UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
