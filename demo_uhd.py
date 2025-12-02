@@ -243,6 +243,7 @@ class OnnxDetector:
         self.session = ort.InferenceSession(onnx_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]
+        self.model_anchors = self._load_model_anchors(onnx_path)
         self.arch = self._detect_arch()
         self.input_hw = self._resolve_input_hw(img_size)
 
@@ -267,6 +268,48 @@ class OnnxDetector:
             if isinstance(h, int) and isinstance(w, int) and h > 0 and w > 0:
                 return int(h), int(w)
         return 64, 64
+
+    def _load_model_anchors(self, onnx_path: str) -> List[Tuple[float, float]]:
+        """
+        Best-effort extraction of anchor tensors embedded in the ONNX graph.
+        Used to mirror the training/validation decode when anchors are not supplied.
+        """
+        try:
+            import onnx
+            from onnx import numpy_helper
+        except Exception:
+            return []
+        try:
+            model = onnx.load(onnx_path)
+        except Exception:
+            return []
+
+        direct_pairs: List[np.ndarray] = []
+        split_pairs: List[np.ndarray] = []
+        for init in model.graph.initializer:
+            try:
+                arr = numpy_helper.to_array(init)
+            except Exception:
+                continue
+            if not isinstance(arr, np.ndarray):
+                continue
+            if arr.dtype.kind not in ("f", "i"):
+                continue
+            if arr.ndim == 2 and arr.shape[1] == 2 and arr.shape[0] > 0:
+                direct_pairs.append(arr.astype(np.float32))
+            elif arr.ndim == 4 and arr.shape[0] == 1 and arr.shape[2] == 1 and arr.shape[3] == 1:
+                flat = arr.reshape(-1).astype(np.float32)
+                if flat.size > 1:
+                    split_pairs.append(flat)
+
+        if direct_pairs:
+            arr = direct_pairs[0]
+            return [(float(w), float(h)) for w, h in arr.tolist()]
+        for i, a in enumerate(split_pairs):
+            for b in split_pairs[i + 1 :]:
+                if a.shape == b.shape:
+                    return [(float(w), float(h)) for w, h in zip(a.tolist(), b.tolist())]
+        return []
 
     def preprocess(self, img_bgr: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
         h_in, w_in = self.input_hw
@@ -315,6 +358,8 @@ class OnnxDetector:
             decoded = _decode_detr_np(logits, boxes, conf_thresh=conf_thresh)
             return _apply_nms_list(decoded, nms_thresh)
         if self.arch == "anchor":
+            if not anchors:
+                anchors = self.model_anchors
             if not anchors:
                 raise ValueError("Anchor outputs require --anchors (normalized w,h pairs).")
             pred = outputs[0]
@@ -504,9 +549,9 @@ def main():
     parser.add_argument("--input-dir", help="Directory containing images for batch inference.")
     parser.add_argument("--output-dir", default="demo_output", help="Where to save rendered images.")
     parser.add_argument("--img-size", default=None, help="Override resize HxW (default: inferred from ONNX input).")
-    parser.add_argument("--conf-thresh", type=float, default=0.25, help="Score threshold.")
+    parser.add_argument("--conf-thresh", type=float, default=0.3, help="Score threshold (mirrors training validation default).")
     parser.add_argument("--topk", type=int, default=50, help="Top-K used for Centernet/raw CNN decoding.")
-    parser.add_argument("--anchors", default="", help='Anchor list like "0.08,0.10 0.15,0.20" for raw anchor ONNX outputs.')
+    parser.add_argument("--anchors", default="", help='Anchor list like "0.08,0.10 0.15,0.20" for raw anchor ONNX outputs (auto-detected when omitted).')
     parser.add_argument("--num-classes", type=int, default=1, help="Class count for raw CNN/anchor ONNX outputs.")
     parser.add_argument("--nms-thresh", type=float, default=0.5, help="IoU threshold used in anchor NMS.")
     parser.add_argument("--device", choices=["cpu", "cuda"], default=None, help="ONNX Runtime device (default: auto).")
@@ -526,6 +571,9 @@ def main():
     detector = OnnxDetector(args.onnx, img_size=img_hw, device=args.device)
     print(f"Loaded ONNX model {args.onnx}")
     print(f"Detected output type: {detector.arch}, input size: {detector.input_hw}")
+    if not anchors and detector.model_anchors:
+        anchors = detector.model_anchors
+        print(f"Using {len(anchors)} anchors parsed from ONNX graph.")
 
     if args.input_dir:
         run_batch(
