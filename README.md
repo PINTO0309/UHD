@@ -1,7 +1,7 @@
 # UHD
 Ultra-lightweight human detection. The number of parameters does not correlate to inference speed.
 
-|Variant|Size|mAP@0.5|CPU<br>inference<br>latency|ONNX|
+|Variant|Size|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX|
 |:-:|:-:|:-:|:-:|:-:|
 |S|13.5 MB|||[Download]()|
 |C|21.0 MB|||[Download]()|
