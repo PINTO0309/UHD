@@ -140,13 +140,14 @@ uv run python train.py \
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
+STRIDE=4
 LR=0.0003
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---output-stride 4 \
---exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_lr${LR} \
+--output-stride ${STRIDE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_s${STRIDE}_${SIZE}_lr${LR} \
 --batch-size 64 \
 --epochs 300 \
 --lr ${LR} \
