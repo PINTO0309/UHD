@@ -290,3 +290,7 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ```
 - `--arch` can force `cnn`/`transformer`/`ultratinyod`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
 - `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.
+
+## Arch
+
+<img width="350" alt="ultratinyod_res_anc8_w128_64x64" src="https://github.com/user-attachments/assets/7e11f7c4-1169-49bb-a377-8b2408fc2cf5" />
