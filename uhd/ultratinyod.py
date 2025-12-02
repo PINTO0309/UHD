@@ -160,16 +160,20 @@ class UltraTinyODBackbone(nn.Module):
         sppf: SPPFmin 128->64 (8 -> 8)
     """
 
-    def __init__(self, c_stem: int = 16, use_residual: bool = False):
+    def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8):
         super().__init__()
+        if out_stride not in (4, 8):
+            raise ValueError(f"UltraTinyODBackbone only supports out_stride 4 or 8, got {out_stride}")
         self.use_residual = bool(use_residual)
+        self.out_stride = int(out_stride)
         # 64 -> 32
         self.stem = ConvBNAct(3, c_stem, k=3, s=2)
 
         # 32 -> 16
         self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2)   # 16 -> 32
-        # 16 -> 8
-        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=2)  # 32 -> 64
+        # 16 -> 8 (stride 8) or keep 16 (stride 4)
+        stride_block2 = 2 if self.out_stride == 8 else 1
+        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2)  # 32 -> 64
         # 8 -> 8
         self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=1)  # 64 -> 128
         self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1)  # 128 -> 128
@@ -363,7 +367,7 @@ class UltraTinyOD(nn.Module):
             # config の num_classes を上書き
             config.num_classes = num_classes
 
-        self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual)
+        self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual, out_stride=int(config.stride))
         self.head = UltraTinyODHead(self.backbone.out_channels, config)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)

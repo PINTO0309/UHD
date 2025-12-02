@@ -1164,7 +1164,8 @@ def main():
     output_stride = int(args.output_stride)
     if args.arch == "ultratinyod":
         use_anchor = True
-        output_stride = 8
+        # Allow stride-4 variant; default to 8 when not explicitly set.
+        output_stride = int(args.output_stride) if int(args.output_stride) in (4, 8) else 8
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
     if args.arch != "cnn" and backbone not in (None, "none"):
