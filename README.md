@@ -1,12 +1,17 @@
 # UHD
-Ultra-lightweight human detection. The number of parameters does not correlate to inference speed.
+Ultra-lightweight human detection. The number of parameters does not correlate to inference speed. For limited use cases, an input image resolution of 64x64 is sufficient. High-level object detection architectures such as YOLO are overkill.
 
-|Variant|Size|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX|
-|:-:|:-:|:-:|:-:|:-:|
-|S|13.5 MB|||[Download]()|
-|C|21.0 MB|||[Download]()|
-|M|30.1 MB|||[Download]()|
-|L|30.1 MB|||[Download]()|
+|Input<br>64x64|Output|Input<br>64x64|Output|
+|:-:|:-:|:-:|:-:|
+|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/59b941a4-86eb-41b9-9c0a-c367e6718b4c" />|<img width="640" height="427" alt="00_dist_000000075375" src="https://github.com/user-attachments/assets/5cb2e332-86eb-4933-bf80-3f500173306f" />|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/21791bff-2cf4-4a63-87b5-f6da52bb4964" />|<img width="480" height="360" alt="01_000000073639" src="https://github.com/user-attachments/assets/ed0f9b67-7a05-4e31-8f43-8e82a468ad38" />|
+|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/6e5f1203-8aad-4d2a-8439-27a5c8d0a2a7" />|<img width="480" height="360" alt="02_000000051704" src="https://github.com/user-attachments/assets/20fba8fc-5bf6-4485-9165-ce06a1504644" />|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/5e7cd0e1-8840-4a4e-b932-b68dc71f3721" />|<img width="480" height="360" alt="07_000000016314" src="https://github.com/user-attachments/assets/b9aced38-c4eb-4ee7-a6c5-294090748eca" />|
+
+|Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|
+|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+|S|3.36 M|0.45 G|0.36728|1.21 ms|13.5 MB|[Download]()|
+|C|5.23 M|0.70 G|0.44307|1.63 ms|21.0 MB|[Download]()|
+|M|7.52 M|1.00 G|0.40016|2.22 ms|30.1 MB|[Download]()|
+|L|13.34 M|1.77 G|0.45684|3.67 ms|53.4 MB|[Download]()|
 
 ## Training Examples (full CLI)
 
