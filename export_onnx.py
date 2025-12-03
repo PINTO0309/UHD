@@ -186,6 +186,8 @@ def main():
     arch = (args.arch or ckpt.get("arch", "cnn")).lower()
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     ckpt_use_skip = bool(ckpt.get("use_skip", False))
+    if "cnn_width" in ckpt:
+        args.cnn_width = int(ckpt["cnn_width"])
     use_skip = ckpt_use_skip or bool(args.use_skip)
     use_batchnorm = bool(ckpt.get("use_batchnorm", True))
     use_fpn = bool(ckpt.get("use_fpn", False))
@@ -289,7 +291,7 @@ def main():
         state_dict = ckpt["ema"]
     else:
         state_dict = ckpt["model"]
-    width = ckpt.get("width")
+    width = ckpt.get("width", ckpt.get("cnn_width", None))
     if arch_cnn_like:
         width = _infer_cnn_width(state_dict, fallback_width=width or args.cnn_width)
         if num_anchors is None:

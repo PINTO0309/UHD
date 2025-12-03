@@ -197,6 +197,38 @@ uv run python train.py \
 --use-batchnorm
 ```
 
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=256
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--use-improved-head \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm
+```
+
 ## Validation-only Example
 
 Example of running only validation on a trained checkpoint:
@@ -228,6 +260,7 @@ uv run python train.py \
 | `--ckpt` | Initialize weights from checkpoint (no optimizer state). | `None` |
 | `--ckpt-non-strict` | Load `--ckpt` with `strict=False` (ignore missing/unexpected keys). | `False` |
 | `--val-only` | Run validation only with `--ckpt` or `--resume` weights and exit. | `False` |
+| `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
@@ -313,10 +346,11 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 - `wh`: L1 loss on width/height (feature-map scale)
 
 ## Loss terms (CNN / Anchor head, `--use-anchor`)
-- `loss`: total anchor loss (`box + obj + cls`)
+- `loss`: total anchor loss (`box + obj + cls` [+ `quality`] when `--use-improved-head`)
 - `obj`: BCE on objectness for each anchor location (positive vs. background)
 - `cls`: BCE on per-class logits for positive anchors (one-hot over target classes)
 - `box`: (1 - IoU/GIoU/CIoU) on decoded boxes for positive anchors; IoU flavor set by `--iou-loss`
+- `quality` (improved head only): BCE on IoU-linked quality logit; obj targetもIoUでスケールされる
 
 ## Loss terms (Transformer)
 - `loss`: total loss (`cls + l1 + iou`)

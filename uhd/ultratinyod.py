@@ -212,12 +212,14 @@ class UltraTinyODConfig:
     - anchors     : [(w, h), ...] のリスト（入力に対する正規化値, e.g., w=0.125 は 8px/64px）
     - stride      : この Head が担当する stride (通常 8、主に情報用途)
     - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
+    - use_improved_head : 追加の品質スコア・WHスケーリング等を有効化
     """
 
     num_classes: int = 1
     stride: int = 8
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     cls_bottleneck_ratio: float = 0.5
+    use_improved_head: bool = False
 
     def __post_init__(self):
         if self.anchors is None:
@@ -248,6 +250,8 @@ class UltraTinyODHead(nn.Module):
         self.in_channels = in_channels
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
         self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
+        self.use_improved_head = bool(getattr(cfg, "use_improved_head", False))
+        self.has_quality = self.use_improved_head
         anchor_tensor = torch.as_tensor(cfg.anchors, dtype=torch.float32)
         if anchor_tensor.numel() == 0:
             anchor_tensor = torch.tensor([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=torch.float32)
@@ -255,11 +259,21 @@ class UltraTinyODHead(nn.Module):
             anchor_tensor = anchor_tensor.reshape(-1, 2)
         self.register_buffer("anchors", anchor_tensor)  # (A,2) normalized w,h
         self.num_anchors = int(anchor_tensor.shape[0])
-        self.no = self.nc + 5  # (x, y, w, h, obj) + cls
+        self.no = self.nc + 5 + (1 if self.has_quality else 0)  # (x, y, w, h, obj[, qual]) + cls
         self.in_channels = in_channels
+        if self.use_improved_head:
+            self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, dtype=torch.float32))
+        else:
+            self.register_buffer("wh_scale", torch.ones(self.num_anchors, 2, dtype=torch.float32))
 
         # 軽い文脈強調
         self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        if self.use_improved_head:
+            self.context_res = nn.Sequential(
+                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                ConvBNAct(in_channels, in_channels, k=1, s=1, p=0),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+            )
 
         # box ブランチ
         self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
@@ -271,6 +285,16 @@ class UltraTinyODHead(nn.Module):
             padding=0,
             bias=True,
         )
+        if self.use_improved_head:
+            self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+            self.quality_out = nn.Conv2d(
+                in_channels,
+                self.num_anchors * 1,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
 
         # obj ブランチ
         self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
@@ -328,6 +352,15 @@ class UltraTinyODHead(nn.Module):
                 padding=0,
                 bias=True,
             ).to(anchor_tensor.device)
+            if self.use_improved_head:
+                self.quality_out = nn.Conv2d(
+                    self.in_channels,
+                    self.num_anchors * 1,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                ).to(anchor_tensor.device)
             self.cls_out = nn.Conv2d(
                 self.cls_mid,
                 self.num_anchors * self.nc,
@@ -338,8 +371,14 @@ class UltraTinyODHead(nn.Module):
             ).to(anchor_tensor.device)
             nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
+            if self.use_improved_head:
+                nn.init.kaiming_normal_(self.quality_out.weight, mode="fan_out", nonlinearity="relu")
+                if isinstance(self.wh_scale, nn.Parameter):
+                    self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, device=anchor_tensor.device))
             nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
             self.reset_output_bias()
+            if not self.use_improved_head:
+                self.wh_scale = torch.ones(self.num_anchors, 2, device=anchor_tensor.device)
         self.grid = None
 
     def reset_output_bias(self, p_obj: float = 0.01, p_cls: float = 0.01) -> None:
@@ -352,6 +391,8 @@ class UltraTinyODHead(nn.Module):
                 bias.zero_()
                 bias[:, 0] = obj_bias
                 self.obj_out.bias.copy_(bias.view(-1))
+        if self.use_improved_head and self.quality_out.bias is not None:
+            nn.init.constant_(self.quality_out.bias, 0.0)
         if self.cls_out.bias is not None:
             nn.init.constant_(self.cls_out.bias, cls_bias)
 
@@ -382,6 +423,8 @@ class UltraTinyODHead(nn.Module):
 
         # 軽い文脈強調
         x = self.context(x).contiguous()
+        if self.use_improved_head:
+            x = x + self.context_res(x)
 
         # box ブランチ
         box = self.box_conv(x)
@@ -389,13 +432,21 @@ class UltraTinyODHead(nn.Module):
         # obj ブランチ
         obj = self.obj_conv(x)
         obj = self.obj_out(obj).view(b, self.num_anchors, 1, h, w)
+        # quality ブランチ
+        quality = None
+        if self.use_improved_head:
+            quality = self.quality_conv(x)
+            quality = self.quality_out(quality).view(b, self.num_anchors, 1, h, w)
         # cls ブランチ
         cls = self.cls_reduce(x)
         cls = self.cls_conv(cls)
         cls = self.cls_out(cls).view(b, self.num_anchors, self.nc, h, w)
 
         # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
-        pred = torch.cat([box, obj, cls], dim=2)
+        if self.use_improved_head and quality is not None:
+            pred = torch.cat([box, obj, quality, cls], dim=2)
+        else:
+            pred = torch.cat([box, obj, cls], dim=2)
         raw_map = pred.view(b, self.num_anchors * self.no, h, w)
 
         if not decode:
@@ -415,6 +466,8 @@ class UltraTinyODHead(nn.Module):
             num_classes=self.nc,
             conf_thresh=conf_thresh,
             nms_thresh=nms_thresh,
+            has_quality=self.has_quality,
+            wh_scale=self.wh_scale if self.use_improved_head else None,
         )
         return raw_map, decoded
 
@@ -443,19 +496,23 @@ class UltraTinyOD(nn.Module):
         config: Optional[UltraTinyODConfig] = None,
         c_stem: int = 16,
         use_residual: bool = False,
+        use_improved_head: bool = False,
     ):
         super().__init__()
 
         if config is None:
-            config = UltraTinyODConfig(num_classes=num_classes)
+            config = UltraTinyODConfig(num_classes=num_classes, use_improved_head=use_improved_head)
         else:
             # config の num_classes を上書き
             config.num_classes = num_classes
+            if not hasattr(config, "use_improved_head"):
+                config.use_improved_head = bool(use_improved_head)
 
         self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual, out_stride=int(config.stride))
         self.head = UltraTinyODHead(self.backbone.out_channels, config)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
+        self.use_improved_head = bool(getattr(config, "use_improved_head", False))
 
         # モデル初期化（簡易版）
         self._init_weights()

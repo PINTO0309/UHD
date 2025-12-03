@@ -1,6 +1,7 @@
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple, Optional
 
 import torch
+import torch.nn.functional as F
 import torch.nn.functional as F
 
 from .losses import box_iou, cxcywh_to_xyxy
@@ -61,10 +62,17 @@ def decode_detr(
 
 
 def decode_anchor(
-    pred: torch.Tensor, anchors: torch.Tensor, num_classes: int, conf_thresh: float = 0.3, nms_thresh: float = 0.5
+    pred: torch.Tensor,
+    anchors: torch.Tensor,
+    num_classes: int,
+    conf_thresh: float = 0.3,
+    nms_thresh: float = 0.5,
+    has_quality: bool = False,
+    wh_scale: Optional[torch.Tensor] = None,
 ) -> List[List[Tuple[float, int, torch.Tensor]]]:
     """
-    YOLO-style decoding: pred shape B x (A*(5+C)) x H x W, anchors A x 2 (normalized w,h).
+    YOLO-style decoding: pred shape B x (A*(5+Q+C)) x H x W, anchors A x 2 (normalized w,h).
+    Q=1 when has_quality=True (obj+quality), otherwise 0.
     """
 
     def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -78,15 +86,19 @@ def decode_anchor(
     device = pred.device
     b, _, h, w = pred.shape
     na = anchors.shape[0]
-    pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    extra = 1 if has_quality else 0
+    pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
     anchors_dev = anchors.to(device)
+    if wh_scale is not None:
+        anchors_dev = anchors_dev * wh_scale.to(device)
 
     tx = pred[..., 0]
     ty = pred[..., 1]
     tw = pred[..., 2]
     th = pred[..., 3]
     obj = pred[..., 4].sigmoid()
-    cls = pred[..., 5:].sigmoid()
+    quality = pred[..., 5].sigmoid() if has_quality else None
+    cls = pred[..., (5 + extra):].sigmoid()
 
     gy, gx = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
     gx = gx.view(1, 1, h, w)
@@ -101,7 +113,10 @@ def decode_anchor(
     pred_h = ph * act_h
 
     preds: List[List[Tuple[float, int, torch.Tensor]]] = []
-    scores = obj.unsqueeze(-1) * cls  # B x A x H x W x C
+    score_base = obj
+    if quality is not None:
+        score_base = score_base * quality
+    scores = score_base.unsqueeze(-1) * cls  # B x A x H x W x C
     for bi in range(b):
         boxes_i: List[Tuple[float, int, torch.Tensor]] = []
         score_map = scores[bi]

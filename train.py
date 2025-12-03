@@ -4,7 +4,7 @@ import os
 import random
 import math
 from copy import deepcopy
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Optional
 
 import numpy as np
 import torch
@@ -122,6 +122,11 @@ def parse_args():
     parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument("--val-only", action="store_true", help="Run validation only using --ckpt or --resume weights and exit.")
+    parser.add_argument(
+        "--use-improved-head",
+        action="store_true",
+        help="Enable enhanced UltraTinyOD head (quality-aware obj, learnable WH scale, extra context, IoU/quality scoring).",
+    )
     parser.add_argument(
         "--classes",
         default="0",
@@ -567,6 +572,7 @@ def train_one_epoch(
     total_anchor_obj = 0.0
     total_anchor_cls = 0.0
     total_anchor_box = 0.0
+    total_anchor_quality = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
@@ -577,27 +583,41 @@ def train_one_epoch(
     distill_scale = 1.0
     if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0):
         distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
+    use_quality_head = bool(getattr(model, "use_improved_head", False))
+    wh_scale_tensor = None
+    if hasattr(model, "head") and hasattr(model.head, "wh_scale"):
+        wh_scale_tensor = model.head.wh_scale
     clip_params = list(model.parameters())
     if feature_adapter is not None:
         clip_params += [p for p in feature_adapter.parameters() if p.requires_grad]
 
-    def _decode_anchor_pred(pred_raw: torch.Tensor, anchor_tensor: torch.Tensor, num_cls: int):
+    def _decode_anchor_pred(
+        pred_raw: torch.Tensor,
+        anchor_tensor: torch.Tensor,
+        num_cls: int,
+        has_quality: bool = False,
+        wh_scale: Optional[torch.Tensor] = None,
+    ):
         b, _, h, w = pred_raw.shape
         na = anchor_tensor.shape[0]
-        pred = pred_raw.view(b, na, 5 + num_cls, h, w)
+        extra = 1 if has_quality else 0
+        pred = pred_raw.view(b, na, 5 + extra + num_cls, h, w)
         tx = pred[:, :, 0]
         ty = pred[:, :, 1]
         tw = pred[:, :, 2]
         th = pred[:, :, 3]
-        cls_logit = pred[:, :, 5:]
+        cls_logit = pred[:, :, (5 + extra):]
         # grid
         gy, gx = torch.meshgrid(torch.arange(h, device=pred_raw.device), torch.arange(w, device=pred_raw.device), indexing="ij")
         gx = gx.view(1, 1, h, w)
         gy = gy.view(1, 1, h, w)
         cx = (tx.sigmoid() + gx) / float(w)
         cy = (ty.sigmoid() + gy) / float(h)
-        pw = anchor_tensor[:, 0].view(1, na, 1, 1)
-        ph = anchor_tensor[:, 1].view(1, na, 1, 1)
+        anchor_use = anchor_tensor
+        if wh_scale is not None:
+            anchor_use = anchor_use * wh_scale.to(pred_raw.device)
+        pw = anchor_use[:, 0].view(1, na, 1, 1)
+        ph = anchor_use[:, 1].view(1, na, 1, 1)
         bw = pw * torch.clamp(torch.nn.functional.softplus(tw), max=4.0)
         bh = ph * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
         boxes = torch.stack([cx, cy, bw, bh], dim=-1)  # B x A x H x W x 4
@@ -669,6 +689,8 @@ def train_one_epoch(
                         assigner=anchor_assigner,
                         cls_loss_type=anchor_cls_loss,
                         simota_topk=simota_topk,
+                        use_quality=use_quality_head,
+                        wh_scale=wh_scale_tensor,
                     )
                 else:
                     loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
@@ -704,8 +726,22 @@ def train_one_epoch(
                                     print(f"Teacher anchors ({t_na}) != student ({s_na}); skipping anchor logit/box distill.")
                                     warn_anchor_mismatch = True
                             else:
-                                t_boxes, t_cls_logits, th, tw = _decode_anchor_pred(teacher_anchor_pred, teacher_anchors.to(device), t_nc)
-                                s_boxes, s_cls_logits, sh, sw = _decode_anchor_pred(outputs, anchors, num_classes)
+                                t_has_quality = bool(getattr(teacher_model, "use_improved_head", False))
+                                s_has_quality = use_quality_head
+                                t_boxes, t_cls_logits, th, tw = _decode_anchor_pred(
+                                    teacher_anchor_pred,
+                                    teacher_anchors.to(device),
+                                    t_nc,
+                                    has_quality=t_has_quality,
+                                    wh_scale=getattr(teacher_model.head, "wh_scale", None) if t_has_quality and hasattr(teacher_model, "head") else None,
+                                )
+                                s_boxes, s_cls_logits, sh, sw = _decode_anchor_pred(
+                                    outputs,
+                                    anchors,
+                                    num_classes,
+                                    has_quality=s_has_quality,
+                                    wh_scale=wh_scale_tensor if s_has_quality else None,
+                                )
                                 if (th, tw) != (sh, sw):
                                     t_boxes = _interp_anchor_map(t_boxes, (sh, sw))
                                     t_cls_logits = _interp_anchor_map(t_cls_logits, (sh, sw))
@@ -794,6 +830,8 @@ def train_one_epoch(
                 total_anchor_obj += float(loss_dict["obj"].item())
                 total_anchor_cls += float(loss_dict["cls"].item())
                 total_anchor_box += float(loss_dict["box"].item())
+                if "quality" in loss_dict:
+                    total_anchor_quality += float(loss_dict["quality"].item())
             else:
                 total_hm += float(loss_dict["hm"].item())
                 total_off += float(loss_dict["off"].item())
@@ -822,6 +860,7 @@ def train_one_epoch(
                         obj=f"{loss_dict['obj'].item():.4f}",
                         cls=f"{loss_dict['cls'].item():.4f}",
                         box=f"{loss_dict['box'].item():.4f}",
+                        quality=f"{loss_dict.get('quality', 0.0):.4f}",
                         step=f"{step+1}/{len(loader)}",
                     )
                 else:
@@ -849,6 +888,7 @@ def train_one_epoch(
                     "obj": total_anchor_obj / steps if steps else 0.0,
                     "cls": total_anchor_cls / steps if steps else 0.0,
                     "box": total_anchor_box / steps if steps else 0.0,
+                    "quality": total_anchor_quality / steps if steps else 0.0,
                 }
             )
         else:
@@ -913,6 +953,7 @@ def validate(
     total_anchor_obj = 0.0
     total_anchor_cls = 0.0
     total_anchor_box = 0.0
+    total_anchor_quality = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
@@ -936,6 +977,10 @@ def validate(
     ]
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     anchor_head = bool(use_anchor or arch == "ultratinyod")
+    use_quality_head = bool(getattr(model, "use_improved_head", False))
+    wh_scale_tensor = None
+    if hasattr(model, "head") and hasattr(model.head, "wh_scale"):
+        wh_scale_tensor = model.head.wh_scale
 
     def render_sample(img_path, pred_list, save_path):
         try:
@@ -989,8 +1034,18 @@ def validate(
                             assigner=anchor_assigner,
                             cls_loss_type=anchor_cls_loss,
                             simota_topk=simota_topk,
+                            use_quality=use_quality_head,
+                            wh_scale=wh_scale_tensor,
                         )
-                        preds = decode_anchor(outputs, anchors=anchors, num_classes=num_classes, conf_thresh=conf_thresh, nms_thresh=0.5)
+                        preds = decode_anchor(
+                            outputs,
+                            anchors=anchors,
+                            num_classes=num_classes,
+                            conf_thresh=conf_thresh,
+                            nms_thresh=0.5,
+                            has_quality=use_quality_head,
+                            wh_scale=wh_scale_tensor,
+                        )
                     else:
                         loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                         preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
@@ -1005,6 +1060,8 @@ def validate(
                     total_anchor_obj += float(loss_dict["obj"].item())
                     total_anchor_cls += float(loss_dict["cls"].item())
                     total_anchor_box += float(loss_dict["box"].item())
+                    if "quality" in loss_dict:
+                        total_anchor_quality += float(loss_dict["quality"].item())
                 else:
                     total_hm += float(loss_dict["hm"].item())
                     total_off += float(loss_dict["off"].item())
@@ -1083,6 +1140,7 @@ def validate(
                 metrics["obj"] = total_anchor_obj / steps
                 metrics["cls"] = total_anchor_cls / steps
                 metrics["box"] = total_anchor_box / steps
+                metrics["quality"] = total_anchor_quality / steps
             else:
                 metrics["hm"] = total_hm / steps
                 metrics["off"] = total_off / steps
@@ -1133,6 +1191,7 @@ def main():
     distill_temperature = float(args.distill_temperature)
     distill_cosine = bool(args.distill_cosine)
     distill_feat = float(args.distill_feat)
+    cnn_width = int(args.cnn_width)
     teacher_backbone = args.teacher_backbone
     teacher_backbone_arch = args.teacher_backbone_arch
     teacher_backbone_norm = args.teacher_backbone_norm
@@ -1164,10 +1223,12 @@ def main():
     last_width_scale = float(args.last_width_scale)
     use_batchnorm = bool(args.use_batchnorm)
     output_stride = int(args.output_stride)
+    use_improved_head = False
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
         output_stride = int(args.output_stride) if int(args.output_stride) in (4, 8) else 8
+        use_improved_head = bool(args.use_improved_head)
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
     if args.arch != "cnn" and backbone not in (None, "none"):
@@ -1195,11 +1256,16 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
         nonlocal last_se, last_width_scale, output_stride
+        if "cnn_width" in meta:
+            ckpt_width = int(meta["cnn_width"])
+            if ckpt_width != cnn_width:
+                print(f"Overriding CLI cnn-width={cnn_width} with {label} cnn-width={ckpt_width}")
+            cnn_width = ckpt_width
         if "classes" in meta:
             ckpt_classes = [int(c) for c in meta["classes"]]
             if set(ckpt_classes) != set(class_ids):
@@ -1376,7 +1442,7 @@ def main():
         backbone = None
     model = build_model(
         args.arch,
-        width=args.cnn_width,
+        width=cnn_width,
         num_queries=args.num_queries,
         d_model=args.d_model,
         heads=args.heads,
@@ -1407,6 +1473,7 @@ def main():
         anchor_cls_loss=anchor_cls_loss,
         simota_topk=simota_topk,
         use_batchnorm=use_batchnorm,
+        use_improved_head=use_improved_head if args.arch == "ultratinyod" else False,
     ).to(device)
     output_stride = getattr(model, "out_stride", output_stride)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
@@ -1685,7 +1752,7 @@ def main():
             writer,
             "val",
             metrics,
-            ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
+            ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou"],
             step=0,
         )
         writer.close()
@@ -1734,7 +1801,7 @@ def main():
             writer,
             "train",
             train_logs,
-            ordered_keys=["loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou", "distill_feat", "distill_kl", "distill_box_l1"],
+            ordered_keys=["loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou", "distill_feat", "distill_kl", "distill_box_l1"],
             step=epoch + 1,
         )
 
@@ -1774,7 +1841,7 @@ def main():
                 writer,
                 "val",
                 metrics,
-                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
+                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou"],
                 step=epoch + 1,
             )
 
@@ -1819,6 +1886,7 @@ def main():
                     "last_width_scale": last_width_scale,
                     "output_stride": output_stride,
                     "grad_clip_norm": grad_clip_norm,
+                    "cnn_width": cnn_width,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
                     "best_map": best_map,
@@ -1890,6 +1958,7 @@ def main():
             "last_width_scale": last_width_scale,
             "output_stride": output_stride,
             "grad_clip_norm": grad_clip_norm,
+            "cnn_width": cnn_width,
             "activation": activation,
             "use_batchnorm": use_batchnorm,
             "best_map": best_map,

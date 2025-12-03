@@ -1,4 +1,4 @@
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, Optional
 
 import torch
 import torch.nn as nn
@@ -226,6 +226,8 @@ def anchor_loss(
     assigner: str = "legacy",
     cls_loss_type: str = "bce",
     simota_topk: int = 10,
+    use_quality: bool = False,
+    wh_scale: Optional[torch.Tensor] = None,
 ) -> Dict[str, torch.Tensor]:
     """
     YOLO-style anchor loss with optional IoU/GIoU/CIoU regression.
@@ -246,18 +248,23 @@ def anchor_loss(
     device = pred.device
     b, _, h, w = pred.shape
     na = anchors.shape[0]
-    pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    extra = 1 if use_quality else 0
+    pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
     tx = pred[..., 0]
     ty = pred[..., 1]
     tw = pred[..., 2]
     th = pred[..., 3]
     obj_logit = pred[..., 4]
-    cls_logit = pred[..., 5:]
+    qual_logit = pred[..., 5] if use_quality else None
+    cls_logit = pred[..., (5 + extra):]
 
     anchors_dev = anchors.to(device)
+    if wh_scale is not None:
+        anchors_dev = anchors_dev * wh_scale.to(device)
     target_obj = torch.zeros_like(obj_logit)
     target_cls = torch.zeros((b, na, h, w, num_classes), device=device)
     target_box = torch.zeros((b, na, h, w, 4), device=device)
+    target_quality = torch.zeros_like(obj_logit) if use_quality else None
 
     # grid for decoding centers
     gy, gx = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
@@ -294,6 +301,9 @@ def anchor_loss(
                 target_obj[bi, a, gj, gi] = 1.0
                 target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
                 target_box[bi, a, gj, gi] = box
+                if use_quality and target_quality is not None:
+                    # placeholder, actual IoU will be filled after pred_box computed
+                    target_quality[bi, a, gj, gi] = 1.0
     elif assigner == "simota":
         n_pos_total = 0
         for bi, tgt in enumerate(targets):
@@ -342,15 +352,18 @@ def anchor_loss(
                     rem = int(idx % (h * w))
                     gj = rem // w
                     gi = rem % w
-                    target_obj[bi, a, gj, gi] = 1.0
-                    target_cls[bi, a, gj, gi, cls_id] = iou_g[idx]
-                    target_box[bi, a, gj, gi] = boxes[gt_idx]
+                target_obj[bi, a, gj, gi] = 1.0
+                target_cls[bi, a, gj, gi, cls_id] = iou_g[idx]
+                target_box[bi, a, gj, gi] = boxes[gt_idx]
+                if use_quality and target_quality is not None:
+                    target_quality[bi, a, gj, gi] = 1.0
     else:
         raise ValueError(f"Unknown assigner: {assigner}")
 
     bce_obj = nn.BCEWithLogitsLoss(reduction="mean")
     bce_cls = nn.BCEWithLogitsLoss(reduction="sum")
     obj_loss = bce_obj(obj_logit, target_obj)
+    quality_loss = torch.tensor(0.0, device=device)
 
     pos_mask = target_obj > 0.5
     num_pos = int(pos_mask.sum().item())
@@ -359,6 +372,13 @@ def anchor_loss(
         p_box = pred_box[pos_mask]
         iou_val = _bbox_iou_single(p_box, t_box, iou_type=iou_loss)
         box_loss = (1.0 - iou_val).mean()
+        if use_quality and qual_logit is not None:
+            if target_quality is None:
+                target_quality = torch.zeros_like(obj_logit)
+            target_quality[pos_mask] = iou_val.detach()
+            quality_loss = bce_obj(qual_logit, target_quality)
+            # also make obj target IoU-aware
+            obj_loss = bce_obj(obj_logit, target_quality)
         if cls_loss_type == "vfl":
             # varifocal: target carries IoU quality; negatives are zero
             t = torch.zeros_like(cls_logit)
@@ -370,8 +390,8 @@ def anchor_loss(
         box_loss = torch.tensor(0.0, device=device)
         cls_loss = torch.tensor(0.0, device=device)
 
-    total = box_loss + obj_loss + cls_loss
-    return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss}
+    total = box_loss + obj_loss + cls_loss + quality_loss
+    return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss, "quality": quality_loss}
 
 
 def varifocal_loss(pred: torch.Tensor, target: torch.Tensor, alpha: float = 0.75, gamma: float = 2.0) -> torch.Tensor:

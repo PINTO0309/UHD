@@ -195,13 +195,17 @@ def _decode_anchor_np(
         return []
     anchors_np = np.asarray(anchors, dtype=np.float32)
     na = anchors_np.shape[0]
-    pred = pred.reshape(b, na, 5 + num_classes, h, w).transpose(0, 1, 3, 4, 2)
+    denom = (pred.shape[1] // na) if na > 0 else (5 + num_classes)
+    extra = max(0, denom - (5 + num_classes))
+    has_quality = extra >= 1
+    pred = pred.reshape(b, na, 5 + extra + num_classes, h, w).transpose(0, 1, 3, 4, 2)
     tx = pred[..., 0]
     ty = pred[..., 1]
     tw = pred[..., 2]
     th = pred[..., 3]
     obj = _sigmoid(pred[..., 4])
-    cls = _sigmoid(pred[..., 5:])
+    quality = _sigmoid(pred[..., 5]) if has_quality else None
+    cls = _sigmoid(pred[..., (5 + extra):])
 
     def _softplus_np(x):
         # stable softplus
@@ -215,7 +219,10 @@ def _decode_anchor_np(
     pred_w = anchors_np[:, 0].reshape(1, na, 1, 1) * np.clip(_softplus_np(tw), None, 4.0)
     pred_h = anchors_np[:, 1].reshape(1, na, 1, 1) * np.clip(_softplus_np(th), None, 4.0)
     decoded: List[List[Tuple[float, int, np.ndarray]]] = []
-    scores = obj[..., None] * cls  # B x A x H x W x C
+    score_base = obj
+    if quality is not None:
+        score_base = score_base * quality
+    scores = score_base[..., None] * cls  # B x A x H x W x C
     for bi in range(b):
         boxes_img: List[Tuple[float, int, np.ndarray]] = []
         score_map = scores[bi]  # A x H x W x C
