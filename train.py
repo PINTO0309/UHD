@@ -1256,7 +1256,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1335,6 +1335,8 @@ def main():
             anchor_cls_loss = meta["anchor_cls_loss"]
         if "simota_topk" in meta and meta["simota_topk"]:
             simota_topk = int(meta["simota_topk"])
+        if "use_improved_head" in meta:
+            use_improved_head = bool(meta["use_improved_head"])
         if "last_se" in meta and meta["last_se"]:
             last_se = meta["last_se"]
         if "last_width_scale" in meta and meta["last_width_scale"]:
@@ -1887,6 +1889,7 @@ def main():
                     "output_stride": output_stride,
                     "grad_clip_norm": grad_clip_norm,
                     "cnn_width": cnn_width,
+                    "use_improved_head": use_improved_head,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
                     "best_map": best_map,
@@ -1959,6 +1962,7 @@ def main():
             "output_stride": output_stride,
             "grad_clip_norm": grad_clip_norm,
             "cnn_width": cnn_width,
+            "use_improved_head": use_improved_head,
             "activation": activation,
             "use_batchnorm": use_batchnorm,
             "best_map": best_map,
