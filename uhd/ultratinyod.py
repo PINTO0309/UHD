@@ -211,11 +211,13 @@ class UltraTinyODConfig:
     - num_classes : クラス数
     - anchors     : [(w, h), ...] のリスト（入力に対する正規化値, e.g., w=0.125 は 8px/64px）
     - stride      : この Head が担当する stride (通常 8、主に情報用途)
+    - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
     """
 
     num_classes: int = 1
     stride: int = 8
     anchors: Optional[Sequence[Tuple[float, float]]] = None
+    cls_bottleneck_ratio: float = 0.5
 
     def __post_init__(self):
         if self.anchors is None:
@@ -227,6 +229,7 @@ class UltraTinyODConfig:
             ]
         # ensure float tuples
         self.anchors = [(float(w), float(h)) for w, h in self.anchors]
+        self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
 
 
 class UltraTinyODHead(nn.Module):
@@ -243,6 +246,8 @@ class UltraTinyODHead(nn.Module):
         self.nc = cfg.num_classes
         self.stride = cfg.stride
         self.in_channels = in_channels
+        self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
+        self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
         anchor_tensor = torch.as_tensor(cfg.anchors, dtype=torch.float32)
         if anchor_tensor.numel() == 0:
             anchor_tensor = torch.tensor([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=torch.float32)
@@ -256,11 +261,22 @@ class UltraTinyODHead(nn.Module):
         # 軽い文脈強調
         self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True)
 
-        # box+obj ブランチ
-        self.box_obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
-        self.box_obj_out = nn.Conv2d(
+        # box ブランチ
+        self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        self.box_out = nn.Conv2d(
             in_channels,
-            self.num_anchors * 5,
+            self.num_anchors * 4,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=True,
+        )
+
+        # obj ブランチ
+        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        self.obj_out = nn.Conv2d(
+            in_channels,
+            self.num_anchors * 1,
             kernel_size=1,
             stride=1,
             padding=0,
@@ -268,9 +284,10 @@ class UltraTinyODHead(nn.Module):
         )
 
         # cls ブランチ
-        self.cls_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0)
+        self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True)
         self.cls_out = nn.Conv2d(
-            in_channels,
+            self.cls_mid,
             self.num_anchors * self.nc,
             kernel_size=1,
             stride=1,
@@ -286,7 +303,7 @@ class UltraTinyODHead(nn.Module):
         """
         if anchors is None:
             return
-        anchor_tensor = anchors.detach().to(self.box_obj_out.weight.device)
+        anchor_tensor = anchors.detach().to(self.box_out.weight.device)
         if anchor_tensor.ndim == 1:
             anchor_tensor = anchor_tensor.view(-1, 2)
         if anchor_tensor.ndim != 2 or anchor_tensor.shape[1] != 2:
@@ -295,23 +312,32 @@ class UltraTinyODHead(nn.Module):
         if anchor_tensor.shape[0] != self.num_anchors:
             self.num_anchors = int(anchor_tensor.shape[0])
             # 再初期化（Anchor 数依存の出力 Conv）
-            self.box_obj_out = nn.Conv2d(
+            self.box_out = nn.Conv2d(
                 self.in_channels,
-                self.num_anchors * 5,
+                self.num_anchors * 4,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            ).to(anchor_tensor.device)
+            self.obj_out = nn.Conv2d(
+                self.in_channels,
+                self.num_anchors * 1,
                 kernel_size=1,
                 stride=1,
                 padding=0,
                 bias=True,
             ).to(anchor_tensor.device)
             self.cls_out = nn.Conv2d(
-                self.in_channels,
+                self.cls_mid,
                 self.num_anchors * self.nc,
                 kernel_size=1,
                 stride=1,
                 padding=0,
                 bias=True,
             ).to(anchor_tensor.device)
-            nn.init.kaiming_normal_(self.box_obj_out.weight, mode="fan_out", nonlinearity="relu")
+            nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
+            nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
             self.reset_output_bias()
         self.grid = None
@@ -320,12 +346,12 @@ class UltraTinyODHead(nn.Module):
         """Set conservative initial biases to reduce early false positives."""
         obj_bias = float(math.log(p_obj / (1.0 - p_obj)))
         cls_bias = float(math.log(p_cls / (1.0 - p_cls)))
-        if self.box_obj_out.bias is not None:
+        if self.obj_out.bias is not None:
             with torch.no_grad():
-                bias = self.box_obj_out.bias.view(self.num_anchors, 5)
+                bias = self.obj_out.bias.view(self.num_anchors, 1)
                 bias.zero_()
-                bias[:, 4] = obj_bias
-                self.box_obj_out.bias.copy_(bias.view(-1))
+                bias[:, 0] = obj_bias
+                self.obj_out.bias.copy_(bias.view(-1))
         if self.cls_out.bias is not None:
             nn.init.constant_(self.cls_out.bias, cls_bias)
 
@@ -357,15 +383,19 @@ class UltraTinyODHead(nn.Module):
         # 軽い文脈強調
         x = self.context(x).contiguous()
 
-        # box+obj ブランチ
-        box_obj = self.box_obj_conv(x)
-        box_obj = self.box_obj_out(box_obj).view(b, self.num_anchors, 5, h, w)
+        # box ブランチ
+        box = self.box_conv(x)
+        box = self.box_out(box).view(b, self.num_anchors, 4, h, w)
+        # obj ブランチ
+        obj = self.obj_conv(x)
+        obj = self.obj_out(obj).view(b, self.num_anchors, 1, h, w)
         # cls ブランチ
-        cls = self.cls_conv(x)
+        cls = self.cls_reduce(x)
+        cls = self.cls_conv(cls)
         cls = self.cls_out(cls).view(b, self.num_anchors, self.nc, h, w)
 
-        # merge to [B, na, (5+nc), H, W]
-        pred = torch.cat([box_obj, cls], dim=2)
+        # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
+        pred = torch.cat([box, obj, cls], dim=2)
         raw_map = pred.view(b, self.num_anchors * self.no, h, w)
 
         if not decode:
