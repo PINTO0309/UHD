@@ -162,7 +162,8 @@ uv run python train.py \
 --utod-residual \
 --use-ema \
 --ema-decay 0.9999 \
---grad-clip-norm 10.0
+--grad-clip-norm 10.0 \
+--use-batchnorm
 ```
 
 ## CLI parameters
