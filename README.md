@@ -220,13 +220,13 @@ uv run python train.py \
 --auto-anchors \
 --num-anchors ${ANCHOR} \
 --iou-loss ciou \
---use-improved-head \
 --conf-thresh 0.15 \
 --utod-residual \
 --use-ema \
 --ema-decay 0.9999 \
 --grad-clip-norm 10.0 \
---use-batchnorm
+--use-batchnorm \
+--use-improved-head
 ```
 
 ## Validation-only Example
