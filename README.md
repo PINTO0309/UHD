@@ -139,7 +139,7 @@ uv run python train.py \
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
-LR=0.0004
+LR=0.001
 IMPHEAD=imph
 uv run python train.py \
 --arch ultratinyod \
