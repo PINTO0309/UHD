@@ -135,25 +135,24 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --grad-clip-norm 10.0
 ```
-
 ```bash
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
-STRIDE=4
-LR=0.0008
+LR=0.0003
+IMPHEAD=imph
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---output-stride ${STRIDE} \
---exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_s${STRIDE}_${SIZE}_lr${LR} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR} \
 --batch-size 64 \
---epochs 300 \
+--epochs 600 \
 --lr ${LR} \
 --weight-decay 0.0001 \
 --num-workers 12 \
 --device cuda \
+--use-amp \
 --classes 0 \
 --cnn-width ${CNNWIDTH} \
 --auto-anchors \
@@ -163,8 +162,7 @@ uv run python train.py \
 --utod-residual \
 --use-ema \
 --ema-decay 0.9999 \
---grad-clip-norm 5.0 \
---use-batchnorm
+--grad-clip-norm 10.0
 ```
 
 ## CLI parameters
