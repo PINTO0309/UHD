@@ -197,6 +197,21 @@ uv run python train.py \
 --use-batchnorm
 ```
 
+## Validation-only Example
+
+Example of running only validation on a trained checkpoint:
+
+```bash
+uv run python train.py \
+--arch ultratinyod \
+--img-size 64x64 \
+--classes 0 \
+--conf-thresh 0.30 \
+--ckpt runs/ultratinyod_res_anc8_w256_64x64_lr0.0003/best_utod_0297_map_0.44299.pt \
+--val-only \
+--use-ema
+```
+
 ## CLI parameters
 
 | Parameter | Description | Default |
@@ -212,6 +227,7 @@ uv run python train.py \
 | `--resume` | Checkpoint to resume training (loads optimizer/scheduler). | `None` |
 | `--ckpt` | Initialize weights from checkpoint (no optimizer state). | `None` |
 | `--ckpt-non-strict` | Load `--ckpt` with `strict=False` (ignore missing/unexpected keys). | `False` |
+| `--val-only` | Run validation only with `--ckpt` or `--resume` weights and exit. | `False` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
