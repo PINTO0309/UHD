@@ -202,13 +202,18 @@ def _decode_anchor_np(
     th = pred[..., 3]
     obj = _sigmoid(pred[..., 4])
     cls = _sigmoid(pred[..., 5:])
+
+    def _softplus_np(x):
+        # stable softplus
+        return np.log1p(np.exp(-np.abs(x))) + np.maximum(x, 0)
+
     gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32), indexing="xy")
     gx = gx.reshape(1, 1, h, w)
     gy = gy.reshape(1, 1, h, w)
     pred_cx = (_sigmoid(tx) + gx) / float(w)
     pred_cy = (_sigmoid(ty) + gy) / float(h)
-    pred_w = anchors_np[:, 0].reshape(1, na, 1, 1) * np.exp(tw)
-    pred_h = anchors_np[:, 1].reshape(1, na, 1, 1) * np.exp(th)
+    pred_w = anchors_np[:, 0].reshape(1, na, 1, 1) * np.clip(_softplus_np(tw), None, 4.0)
+    pred_h = anchors_np[:, 1].reshape(1, na, 1, 1) * np.clip(_softplus_np(th), None, 4.0)
     decoded: List[List[Tuple[float, int, np.ndarray]]] = []
     scores = obj[..., None] * cls  # B x A x H x W x C
     for bi in range(b):

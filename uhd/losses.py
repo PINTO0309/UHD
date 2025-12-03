@@ -234,6 +234,15 @@ def anchor_loss(
     """
     if anchors is None:
         raise ValueError("anchors must be provided for anchor_loss")
+
+    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = 4.0) -> Tuple[torch.Tensor, torch.Tensor]:
+        w = F.softplus(tw)
+        h = F.softplus(th)
+        if max_scale is not None:
+            w = torch.clamp(w, max=max_scale)
+            h = torch.clamp(h, max=max_scale)
+        return w, h
+
     device = pred.device
     b, _, h, w = pred.shape
     na = anchors.shape[0]
@@ -257,8 +266,9 @@ def anchor_loss(
 
     pred_cx = (tx.sigmoid() + gx) / w
     pred_cy = (ty.sigmoid() + gy) / h
-    pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * tw.exp()
-    pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * th.exp()
+    act_w, act_h = _activate_wh(tw, th)
+    pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * act_w
+    pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * act_h
     pred_box = torch.stack([pred_cx, pred_cy, pred_w, pred_h], dim=-1)
 
     if assigner == "legacy":

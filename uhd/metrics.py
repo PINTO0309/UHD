@@ -1,6 +1,7 @@
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 import torch
+import torch.nn.functional as F
 
 from .losses import box_iou, cxcywh_to_xyxy
 
@@ -65,6 +66,15 @@ def decode_anchor(
     """
     YOLO-style decoding: pred shape B x (A*(5+C)) x H x W, anchors A x 2 (normalized w,h).
     """
+
+    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = 4.0) -> Tuple[torch.Tensor, torch.Tensor]:
+        w = F.softplus(tw)
+        h = F.softplus(th)
+        if max_scale is not None:
+            w = torch.clamp(w, max=max_scale)
+            h = torch.clamp(h, max=max_scale)
+        return w, h
+
     device = pred.device
     b, _, h, w = pred.shape
     na = anchors.shape[0]
@@ -84,8 +94,11 @@ def decode_anchor(
 
     pred_cx = (tx.sigmoid() + gx) / w
     pred_cy = (ty.sigmoid() + gy) / h
-    pred_w = anchors_dev[:, 0].view(1, na, 1, 1) * tw.exp()
-    pred_h = anchors_dev[:, 1].view(1, na, 1, 1) * th.exp()
+    pw = anchors_dev[:, 0].view(1, na, 1, 1)
+    ph = anchors_dev[:, 1].view(1, na, 1, 1)
+    act_w, act_h = _activate_wh(tw, th)
+    pred_w = pw * act_w
+    pred_h = ph * act_h
 
     preds: List[List[Tuple[float, int, torch.Tensor]]] = []
     scores = obj.unsqueeze(-1) * cls  # B x A x H x W x C

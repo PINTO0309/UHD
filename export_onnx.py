@@ -367,8 +367,8 @@ def main():
                         gy = gy.view(1, 1, h, w)
                         pred_cx = (tx.sigmoid() + gx) / float(w)
                         pred_cy = (ty.sigmoid() + gy) / float(h)
-                        pred_w = self.anchors[:, 0].view(1, na, 1, 1) * tw.exp()
-                        pred_h = self.anchors[:, 1].view(1, na, 1, 1) * th.exp()
+                        pred_w = self.anchors[:, 0].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(tw), max=4.0)
+                        pred_h = self.anchors[:, 1].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
 
                         scores_all = obj * cls  # B x A x H x W x C
                         max_scores, max_cls = scores_all.max(dim=-1)  # B x A x H x W

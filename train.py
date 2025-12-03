@@ -597,8 +597,8 @@ def train_one_epoch(
         cy = (ty.sigmoid() + gy) / float(h)
         pw = anchor_tensor[:, 0].view(1, na, 1, 1)
         ph = anchor_tensor[:, 1].view(1, na, 1, 1)
-        bw = pw * tw.exp()
-        bh = ph * th.exp()
+        bw = pw * torch.clamp(torch.nn.functional.softplus(tw), max=4.0)
+        bh = ph * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
         boxes = torch.stack([cx, cy, bw, bh], dim=-1)  # B x A x H x W x 4
         cls_logits = cls_logit.permute(0, 1, 3, 4, 2)  # B x A x H x W x C
         return boxes, cls_logits, h, w
