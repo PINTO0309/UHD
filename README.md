@@ -205,8 +205,9 @@ Example of running only validation on a trained checkpoint:
 uv run python train.py \
 --arch ultratinyod \
 --img-size 64x64 \
+--cnn-width 256 \
 --classes 0 \
---conf-thresh 0.30 \
+--conf-thresh 0.15 \
 --ckpt runs/ultratinyod_res_anc8_w256_64x64_lr0.0003/best_utod_0297_map_0.44299.pt \
 --val-only \
 --use-ema
