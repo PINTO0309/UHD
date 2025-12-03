@@ -131,6 +131,15 @@ def _infer_num_anchors(state_dict, num_classes: int, fallback: int) -> int:
             return int(out_ch // denom)
     return int(fallback)
 
+def _infer_use_improved_head(state_dict) -> bool:
+    """Detect UltraTinyOD improved head (quality/context/wh_scale) from state_dict keys."""
+    if not isinstance(state_dict, dict):
+        return False
+    for k in state_dict.keys():
+        if "quality_out" in k or "quality_conv" in k or "context_res" in k or "wh_scale" in k:
+            return True
+    return False
+
 
 def main():
     parser = argparse.ArgumentParser(description="Export checkpoint to ONNX (auto-detect arch).")
@@ -291,6 +300,11 @@ def main():
         state_dict = ckpt["ema"]
     else:
         state_dict = ckpt["model"]
+    use_improved_head = bool(ckpt.get("use_improved_head", False))
+    if arch == "ultratinyod" and not use_improved_head:
+        if _infer_use_improved_head(state_dict):
+            use_improved_head = True
+            print("Detected improved UltraTinyOD head from checkpoint; enabling use_improved_head for export.")
     width = ckpt.get("width", ckpt.get("cnn_width", None))
     if arch_cnn_like:
         width = _infer_cnn_width(state_dict, fallback_width=width or args.cnn_width)
@@ -337,6 +351,7 @@ def main():
         backbone_skip_s2d_cat=backbone_skip_s2d_cat,
         backbone_fpn=backbone_fpn,
         backbone_out_stride=backbone_out_stride,
+        use_improved_head=use_improved_head if arch == "ultratinyod" else False,
     )
     output_stride = getattr(model, "out_stride", output_stride)
     model.load_state_dict(state_dict)
@@ -347,32 +362,48 @@ def main():
             wrapper = AnchorWrapper(model)
             if args.merge_postprocess:
                 class PostAnchor(torch.nn.Module):
-                    def __init__(self, net, anchors, k):
+                    def __init__(self, net, anchors, k, has_quality: bool = False, wh_scale: torch.Tensor = None, num_classes: int = None):
                         super().__init__()
                         self.net = net
-                        self.register_buffer("anchors", anchors if isinstance(anchors, torch.Tensor) else torch.tensor(anchors, dtype=torch.float32))
+                        anchors_t = anchors if isinstance(anchors, torch.Tensor) else torch.tensor(anchors, dtype=torch.float32)
+                        self.register_buffer("anchors", anchors_t)
                         self.anchors: torch.Tensor
                         self.k = k
+                        self.has_quality = bool(has_quality)
+                        self.num_classes = int(num_classes) if num_classes is not None else None
+                        if wh_scale is not None:
+                            if not isinstance(wh_scale, torch.Tensor):
+                                wh_scale = torch.tensor(wh_scale, dtype=torch.float32)
+                            self.register_buffer("wh_scale", wh_scale)
+                        else:
+                            self.wh_scale = None
 
                     def forward(self, x):
-                        pred: torch.Tensor = self.net(x)  # B x (A*(5+C)) x H x W
+                        pred = self.net(x)  # B x (A*(5+extra+C)) x H x W
+                        if isinstance(pred, (tuple, list)):
+                            pred = pred[0]
                         b, _, h, w = pred.shape
                         na = self.anchors.shape[0]
-                        # reshape to B x A x H x W x (5+C)
-                        num_classes = pred.shape[1] // na - 5
-                        pred = pred.view(b, na, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2)
+                        per_anchor = pred.shape[1] // na
+                        extra = 1 if self.has_quality else 0
+                        num_classes = self.num_classes if self.num_classes is not None else max(per_anchor - (5 + extra), 0)
+                        pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
                         tx, ty, tw, th = pred[..., 0], pred[..., 1], pred[..., 2], pred[..., 3]
                         obj = pred[..., 4:5].sigmoid()
-                        cls = pred[..., 5:6].sigmoid()
+                        qual = pred[..., 5:6].sigmoid() if self.has_quality else None
+                        cls = pred[..., (5 + extra):].sigmoid()
                         gy, gx = torch.meshgrid(torch.arange(h, device=pred.device), torch.arange(w, device=pred.device), indexing="ij")
                         gx = gx.view(1, 1, h, w)
                         gy = gy.view(1, 1, h, w)
                         pred_cx = (tx.sigmoid() + gx) / float(w)
                         pred_cy = (ty.sigmoid() + gy) / float(h)
-                        pred_w = self.anchors[:, 0].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(tw), max=4.0)
-                        pred_h = self.anchors[:, 1].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
+                        anchors_use = self.anchors
+                        if self.wh_scale is not None:
+                            anchors_use = anchors_use * self.wh_scale
+                        pred_w = anchors_use[:, 0].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(tw), max=4.0)
+                        pred_h = anchors_use[:, 1].view(1, na, 1, 1) * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
 
-                        scores_all = obj * cls  # B x A x H x W x C
+                        scores_all = obj * cls if qual is None else obj * qual * cls  # B x A x H x W x C
                         max_scores, max_cls = scores_all.max(dim=-1)  # B x A x H x W
                         n, c, h, w = max_scores.shape
                         flat_scores = max_scores.reshape(n, c*h*w)
@@ -398,7 +429,8 @@ def main():
                         return dets
 
                 anchors_tensor = model.anchors if hasattr(model, "anchors") else torch.tensor(anchors if anchors else [[0.1, 0.1]], dtype=torch.float32)
-                wrapper = PostAnchor(wrapper, anchors_tensor, args.topk)
+                wh_scale_tensor = getattr(model.head, "wh_scale", None) if hasattr(model, "head") else None
+                wrapper = PostAnchor(wrapper, anchors_tensor, args.topk, has_quality=use_improved_head, wh_scale=wh_scale_tensor, num_classes=num_classes)
                 output_names = ["detections"]
             else:
                 output_names = ["pred"]

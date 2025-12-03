@@ -375,7 +375,9 @@ def anchor_loss(
         if use_quality and qual_logit is not None:
             if target_quality is None:
                 target_quality = torch.zeros_like(obj_logit)
-            target_quality[pos_mask] = iou_val.detach()
+            # clamp IoU to [0, 1] and match dtype to avoid negative BCE loss under CIoU
+            tq = iou_val.detach().clamp(min=0.0, max=1.0).to(target_quality.dtype)
+            target_quality[pos_mask] = tq
             quality_loss = bce_obj(qual_logit, target_quality)
             # also make obj target IoU-aware
             obj_loss = bce_obj(obj_logit, target_quality)
