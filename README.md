@@ -141,7 +141,7 @@ SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
 STRIDE=4
-LR=0.001
+LR=0.0008
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
