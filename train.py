@@ -121,6 +121,7 @@ def parse_args():
     parser.add_argument("--ema-decay", type=float, default=0.9998, help="EMA decay factor (ignored if EMA disabled).")
     parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
+    parser.add_argument("--val-only", action="store_true", help="Run validation only using --ckpt or --resume weights and exit.")
     parser.add_argument(
         "--classes",
         default="0",
@@ -1186,6 +1187,8 @@ def main():
         backbone_out_stride = None
     if args.resume and args.ckpt:
         raise ValueError("--resume and --ckpt cannot be used together.")
+    if args.val_only and not (args.resume or args.ckpt):
+        raise ValueError("--val-only requires either --resume or --ckpt to load weights.")
 
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
@@ -1526,7 +1529,7 @@ def main():
         persistent_workers=True,
     )
     teacher_model = None
-    if teacher_ckpt:
+    if teacher_ckpt and not args.val_only:
         t_meta = torch.load(teacher_ckpt, map_location="cpu")
         t_arch = (teacher_arch or t_meta.get("arch", args.arch)).lower()
         teacher_model_arch = t_arch
@@ -1646,6 +1649,47 @@ def main():
             print(f"Teacher arch {t_arch} not supported for distillation (only transformer/cnn/ultratinyod). Skipping teacher.")
     if teacher_model_arch:
         teacher_arch = teacher_model_arch
+
+    if args.val_only:
+        sample_dir = os.path.join(run_dir, "val_only")
+        ensure_dir(sample_dir)
+        eval_model = ema_helper.ema if (use_ema and ema_helper is not None) else model
+        metrics = validate(
+            eval_model,
+            val_loader,
+            device=device,
+            arch=args.arch,
+            conf_thresh=args.conf_thresh,
+            topk=args.topk,
+            iou_thresh=0.5,
+            use_amp=use_amp,
+            num_classes=num_classes,
+            sample_dir=sample_dir,
+            class_ids=class_ids,
+            sample_limit=10,
+            coco_eval=args.coco_eval,
+            coco_per_class=args.coco_per_class,
+            use_anchor=use_anchor,
+            anchors=anchors_tensor,
+            iou_loss_type=iou_loss_type,
+            anchor_assigner=anchor_assigner,
+            anchor_cls_loss=anchor_cls_loss,
+            simota_topk=simota_topk,
+        )
+        fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
+        val_msg = f"val-only: {fmt_val}"
+        print(val_msg)
+        with open(log_path, "a") as f:
+            f.write(val_msg + "\n")
+        log_scalars(
+            writer,
+            "val",
+            metrics,
+            ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "hm", "off", "wh", "l1", "iou"],
+            step=0,
+        )
+        writer.close()
+        return
 
     for epoch in range(start_epoch, args.epochs):
         train_logs = train_one_epoch(
