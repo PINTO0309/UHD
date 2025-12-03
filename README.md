@@ -139,7 +139,7 @@ uv run python train.py \
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
-LR=0.0003
+LR=0.0004
 IMPHEAD=imph
 uv run python train.py \
 --arch ultratinyod \
@@ -147,7 +147,7 @@ uv run python train.py \
 --img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR} \
 --batch-size 64 \
---epochs 600 \
+--epochs 300 \
 --lr ${LR} \
 --weight-decay 0.0001 \
 --num-workers 12 \
