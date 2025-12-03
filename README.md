@@ -141,7 +141,7 @@ SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
 STRIDE=4
-LR=0.0007
+LR=0.001
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
@@ -154,7 +154,6 @@ uv run python train.py \
 --weight-decay 0.0001 \
 --num-workers 12 \
 --device cuda \
---use-amp \
 --classes 0 \
 --cnn-width ${CNNWIDTH} \
 --auto-anchors \
