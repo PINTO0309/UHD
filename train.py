@@ -1038,42 +1038,41 @@ def validate(
                         h, w = orig
                     else:
                         h, w = imgs.shape[2], imgs.shape[3]
-                    for b_idx in range(bsz):
-                        img_id = global_img_idx
-                        coco_images.append({"id": img_id, "width": w, "height": h})
-                        gt_boxes = targets_cpu[b_idx]["boxes"]
-                        gt_labels = targets_cpu[b_idx]["labels"]
-                        for j, (cx, cy, bw, bh) in enumerate(gt_boxes):
-                            x = (cx - bw / 2) * w
-                            y = (cy - bh / 2) * h
-                            bw_abs = bw * w
-                            bh_abs = bh * h
-                            coco_annos.append(
-                                {
-                                    "id": anno_id,
-                                    "image_id": img_id,
-                                    "category_id": int(class_ids[int(gt_labels[j].item())]) if class_ids else int(gt_labels[j].item()),
-                                    "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
-                                    "area": float(max(bw_abs, 0) * max(bh_abs, 0)),
-                                    "iscrowd": 0,
-                                }
-                            )
-                            anno_id += 1
-                        for score, cls, box in preds[b_idx]:
-                            cx, cy, bw, bh = box.tolist()
-                            x = (cx - bw / 2) * w
-                            y = (cy - bh / 2) * h
-                            bw_abs = bw * w
-                            bh_abs = bh * h
-                            coco_dets.append(
-                                {
-                                    "image_id": img_id,
-                                    "category_id": int(class_ids[cls]) if class_ids else int(cls),
-                                    "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
-                                    "score": float(score),
-                                }
-                            )
-                        global_img_idx += 1
+                    img_id = global_img_idx
+                    coco_images.append({"id": img_id, "width": w, "height": h})
+                    gt_boxes = targets_cpu[b_idx]["boxes"]
+                    gt_labels = targets_cpu[b_idx]["labels"]
+                    for j, (cx, cy, bw, bh) in enumerate(gt_boxes):
+                        x = (cx - bw / 2) * w
+                        y = (cy - bh / 2) * h
+                        bw_abs = bw * w
+                        bh_abs = bh * h
+                        coco_annos.append(
+                            {
+                                "id": anno_id,
+                                "image_id": img_id,
+                                "category_id": int(class_ids[int(gt_labels[j].item())]) if class_ids else int(gt_labels[j].item()),
+                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                "area": float(max(bw_abs, 0) * max(bh_abs, 0)),
+                                "iscrowd": 0,
+                            }
+                        )
+                        anno_id += 1
+                    for score, cls, box in preds[b_idx]:
+                        cx, cy, bw, bh = box.tolist()
+                        x = (cx - bw / 2) * w
+                        y = (cy - bh / 2) * h
+                        bw_abs = bw * w
+                        bh_abs = bh * h
+                        coco_dets.append(
+                            {
+                                "image_id": img_id,
+                                "category_id": int(class_ids[cls]) if class_ids else int(cls),
+                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                "score": float(score),
+                            }
+                        )
+                    global_img_idx += 1
 
     metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=iou_thresh)
     if steps > 0:

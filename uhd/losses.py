@@ -235,7 +235,7 @@ def anchor_loss(
     if anchors is None:
         raise ValueError("anchors must be provided for anchor_loss")
 
-    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = 4.0) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = None) -> Tuple[torch.Tensor, torch.Tensor]:
         w = F.softplus(tw)
         h = F.softplus(th)
         if max_scale is not None:

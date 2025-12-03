@@ -67,7 +67,7 @@ def decode_anchor(
     YOLO-style decoding: pred shape B x (A*(5+C)) x H x W, anchors A x 2 (normalized w,h).
     """
 
-    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = 4.0) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _activate_wh(tw: torch.Tensor, th: torch.Tensor, max_scale: float = None) -> Tuple[torch.Tensor, torch.Tensor]:
         w = F.softplus(tw)
         h = F.softplus(th)
         if max_scale is not None:
