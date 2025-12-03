@@ -141,7 +141,7 @@ SIZE=64x64
 ANCHOR=8
 CNNWIDTH=256
 STRIDE=4
-LR=0.0003
+LR=0.0007
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
@@ -164,7 +164,8 @@ uv run python train.py \
 --utod-residual \
 --use-ema \
 --ema-decay 0.9999 \
---grad-clip-norm 10.0
+--grad-clip-norm 10.0 \
+--use-batchnorm
 ```
 
 ## CLI parameters
