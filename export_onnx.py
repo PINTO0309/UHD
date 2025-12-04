@@ -99,11 +99,11 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         or meta.get("use_improved_head")
         or any(k.startswith("head.quality") for k in state.keys())
     )
-    use_head_ese = bool(
-        args.use_head_ese
-        or meta.get("utod_head_ese")
-        or ("head.head_se.fc.weight" in state)
-    )
+    has_ese_weights = ("head.head_se.fc.weight" in state) and ("head.head_se.fc.bias" in state)
+    requested_ese = bool(args.use_head_ese or meta.get("utod_head_ese"))
+    if requested_ese and not has_ese_weights:
+        print("[WARN] eSE requested (CLI/meta) but head.head_se weights missing; disabling eSE for export.")
+    use_head_ese = bool(has_ese_weights and requested_ese) or bool(has_ese_weights)
     use_residual = bool(args.utod_residual or meta.get("utod_residual") or "backbone.block3_skip.conv.weight" in state)
 
     cfg = UltraTinyODConfig(
@@ -315,7 +315,14 @@ def main():
         use_improved_head=inferred["use_improved_head"],
         use_head_ese=inferred["use_head_ese"],
     )
-    model.load_state_dict(state, strict=not args.non_strict)
+    try:
+        model.load_state_dict(state, strict=not args.non_strict)
+    except RuntimeError as e:
+        if "head.head_se" in str(e):
+            print("[WARN] head_se weights missing in checkpoint; loading non-strict for eSE and keeping initializer.")
+            model.load_state_dict(state, strict=False)
+        else:
+            raise
     model.eval()
 
     if not args.merge_postprocess:

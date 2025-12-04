@@ -163,7 +163,12 @@ def parse_args():
     parser.add_argument("--backbone-fpn", action="store_true", help="Enable a tiny FPN fusion inside custom backbones (ultratinyresnet).")
     parser.add_argument("--backbone-out-stride", type=int, default=None, help="Override custom backbone output stride (e.g., 8 or 16).")
     parser.add_argument("--use-anchor", action="store_true", help="Use anchor-based head for CNN (YOLO-style).")
-    parser.add_argument("--output-stride", type=int, default=16, help="Final feature stride for CNN (4, 8, or 16).")
+    parser.add_argument(
+        "--output-stride",
+        type=int,
+        default=None,
+        help="Final feature stride for CNN (4, 8, or 16). Defaults: CNN/Transformer=16, UltraTinyOD=8.",
+    )
     parser.add_argument(
         "--anchors",
         default="",
@@ -1232,13 +1237,13 @@ def main():
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
     use_batchnorm = bool(args.use_batchnorm)
-    output_stride = int(args.output_stride)
+    output_stride = int(args.output_stride) if args.output_stride else 16
     use_improved_head = False
     utod_head_ese = bool(args.utod_head_ese)
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
-        output_stride = int(args.output_stride) if int(args.output_stride) in (4, 8, 16) else 8
+        output_stride = int(args.output_stride) if args.output_stride and int(args.output_stride) in (4, 8, 16) else 8
         use_improved_head = bool(args.use_improved_head)
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
@@ -1469,7 +1474,7 @@ def main():
         use_fpn=use_fpn,
         use_anchor=use_anchor,
         utod_use_residual=utod_residual,
-        utod_head_ese=utod_head_ese,
+        use_head_ese=utod_head_ese,
         num_anchors=num_anchors,
         anchors=anchor_list,
         last_se=last_se,

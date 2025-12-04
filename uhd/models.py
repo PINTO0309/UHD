@@ -805,12 +805,13 @@ def build_model(arch: str, **kwargs) -> nn.Module:
                 backbone_out_channels=backbone_out_channels,
             )
     elif arch == "ultratinyod":
+        use_head_ese = bool(kwargs.get("use_head_ese", kwargs.get("utod_head_ese", False)))
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
             anchors=kwargs.get("anchors") or None,
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
-            use_head_ese=bool(kwargs.get("use_head_ese", False)),
+            use_head_ese=use_head_ese,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(
@@ -819,7 +820,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             c_stem=int(stem_width),
             use_residual=kwargs.get("utod_use_residual", False),
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
-            use_head_ese=bool(kwargs.get("use_head_ese", False)),
+            use_head_ese=use_head_ese,
         )
     elif arch == "transformer":
         model = TinyDETR(
