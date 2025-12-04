@@ -138,6 +138,7 @@ def parse_args():
     parser.add_argument("--cnn-width", type=int, default=32)
     parser.add_argument("--use-skip", action="store_true", help="Enable skip connections in the CNN model.")
     parser.add_argument("--utod-residual", action="store_true", help="Enable residual skips inside the UltraTinyOD backbone.")
+    parser.add_argument("--utod-head-ese", action="store_true", help="UltraTinyOD head: apply lightweight eSE on shared features.")
     parser.add_argument(
         "--backbone",
         default=None,
@@ -1233,6 +1234,7 @@ def main():
     use_batchnorm = bool(args.use_batchnorm)
     output_stride = int(args.output_stride)
     use_improved_head = False
+    utod_head_ese = bool(args.utod_head_ese)
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
@@ -1265,7 +1267,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1346,6 +1348,8 @@ def main():
             simota_topk = int(meta["simota_topk"])
         if "use_improved_head" in meta:
             use_improved_head = bool(meta["use_improved_head"])
+        if "utod_head_ese" in meta:
+            utod_head_ese = bool(meta["utod_head_ese"])
         if "last_se" in meta and meta["last_se"]:
             last_se = meta["last_se"]
         if "last_width_scale" in meta and meta["last_width_scale"]:
@@ -1465,6 +1469,7 @@ def main():
         use_fpn=use_fpn,
         use_anchor=use_anchor,
         utod_use_residual=utod_residual,
+        utod_head_ese=utod_head_ese,
         num_anchors=num_anchors,
         anchors=anchor_list,
         last_se=last_se,
@@ -1900,6 +1905,7 @@ def main():
                     "grad_clip_norm": grad_clip_norm,
                     "cnn_width": cnn_width,
                     "use_improved_head": use_improved_head,
+                    "utod_head_ese": utod_head_ese,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
                     "best_map": best_map,
@@ -1970,11 +1976,12 @@ def main():
             "last_se": last_se,
             "last_width_scale": last_width_scale,
             "output_stride": output_stride,
-            "grad_clip_norm": grad_clip_norm,
-            "cnn_width": cnn_width,
-            "use_improved_head": use_improved_head,
-            "activation": activation,
-            "use_batchnorm": use_batchnorm,
+                    "grad_clip_norm": grad_clip_norm,
+                    "cnn_width": cnn_width,
+                    "use_improved_head": use_improved_head,
+                    "utod_head_ese": utod_head_ese,
+                    "activation": activation,
+                    "use_batchnorm": use_batchnorm,
             "best_map": best_map,
             "use_ema": use_ema,
             "ema_decay": ema_decay,

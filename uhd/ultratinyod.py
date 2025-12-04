@@ -115,6 +115,19 @@ class DWConv(nn.Module):
         return x
 
 
+class EfficientSE(nn.Module):
+    """軽量eSE (squeeze + 1x1 conv)。"""
+
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        self.fc = nn.Conv2d(channels, channels, kernel_size=1, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = x.mean(dim=(2, 3), keepdim=True)
+        w = torch.sigmoid(self.fc(w))
+        return x * w
+
+
 class SPPFmin(nn.Module):
     """
     かなり軽量化した SPPF (Spatial Pyramid Pooling - Fast) 風ブロック
@@ -214,6 +227,7 @@ class UltraTinyODConfig:
     - stride      : この Head が担当する stride (通常 8、主に情報用途)
     - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
     - use_improved_head : 追加の品質スコア・WHスケーリング等を有効化
+    - use_head_ese : Head入口にeSEを挿入して軽量に文脈強調
     """
 
     num_classes: int = 1
@@ -221,6 +235,7 @@ class UltraTinyODConfig:
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     cls_bottleneck_ratio: float = 0.5
     use_improved_head: bool = False
+    use_head_ese: bool = False
 
     def __post_init__(self):
         if self.anchors is None:
@@ -252,6 +267,7 @@ class UltraTinyODHead(nn.Module):
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
         self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
         self.use_improved_head = bool(getattr(cfg, "use_improved_head", False))
+        self.use_head_ese = bool(getattr(cfg, "use_head_ese", False))
         self.has_quality = self.use_improved_head
         anchor_tensor = torch.as_tensor(cfg.anchors, dtype=torch.float32)
         if anchor_tensor.numel() == 0:
@@ -275,6 +291,8 @@ class UltraTinyODHead(nn.Module):
                 ConvBNAct(in_channels, in_channels, k=1, s=1, p=0),
                 DWConv(in_channels, in_channels, k=3, s=1, act=True),
             )
+        if self.use_head_ese:
+            self.head_se = EfficientSE(in_channels)
 
         # box ブランチ
         self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
@@ -426,6 +444,8 @@ class UltraTinyODHead(nn.Module):
         x = self.context(x).contiguous()
         if self.use_improved_head:
             x = x + self.context_res(x)
+        if self.use_head_ese:
+            x = self.head_se(x)
 
         # box ブランチ
         box = self.box_conv(x)
@@ -498,16 +518,19 @@ class UltraTinyOD(nn.Module):
         c_stem: int = 16,
         use_residual: bool = False,
         use_improved_head: bool = False,
+        use_head_ese: bool = False,
     ):
         super().__init__()
 
         if config is None:
-            config = UltraTinyODConfig(num_classes=num_classes, use_improved_head=use_improved_head)
+            config = UltraTinyODConfig(num_classes=num_classes, use_improved_head=use_improved_head, use_head_ese=use_head_ese)
         else:
             # config の num_classes を上書き
             config.num_classes = num_classes
             if not hasattr(config, "use_improved_head"):
                 config.use_improved_head = bool(use_improved_head)
+            if not hasattr(config, "use_head_ese"):
+                config.use_head_ese = bool(use_head_ese)
 
         self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual, out_stride=int(config.stride))
         self.head = UltraTinyODHead(self.backbone.out_channels, config)
