@@ -12,10 +12,12 @@ This model is an experimental implementation and is not suitable for real-time i
 
 |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-|S|3.36 M|0.45 G|0.36728|1.21 ms|13.5 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64.onnx)|
-|C|5.23 M|0.70 G|0.44307|1.63 ms|21.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64.onnx)|
-|M|7.52 M|1.00 G|0.40016|2.22 ms|30.1 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64.onnx)|
-|L|13.34 M|1.77 G|0.45684|3.67 ms|53.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64.onnx)|
+|N|1.38 M|0.18 G||0.93 ms|5.6 MB|[Download]()|
+|T|3.1 M|0.41 G|0.44529|1.50 ms|12.3 MB|[Download]()|
+|S|5.43 M|0.71 G|0.44945|2.23 ms|21.8 MB|[Download]()|
+|C|8.46 M|1.11 G|0.45005|2.66 ms|33.9 MB|[Download]()|
+|M|12.15 M|1.60 G|0.44875|4.07 ms|48.7 MB|[Download]()|
+|L|21.54 M|2.83 G|0.44686|6.23 ms|86.2 MB|[Download]()|
 
 ## Training Examples (full CLI)
 
