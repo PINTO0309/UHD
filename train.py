@@ -122,6 +122,7 @@ def parse_args():
     parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument("--val-only", action="store_true", help="Run validation only using --ckpt or --resume weights and exit.")
+    parser.add_argument("--val-count", type=int, default=None, help="Limit number of validation images when using --val-only.")
     parser.add_argument(
         "--use-improved-head",
         action="store_true",
@@ -414,6 +415,14 @@ def make_datasets(args, class_ids, aug_cfg):
     val_items = items[n_train : n_train + n_val]
     if not val_items:
         raise ValueError("Validation split produced no samples; adjust train-split/val-split.")
+    # When running val-only, optionally cap validation set size for quick checks.
+    if getattr(args, "val_only", False) and getattr(args, "val_count", None):
+        val_cap = max(0, int(args.val_count))
+        if val_cap > 0:
+            val_items = val_items[:val_cap]
+            if not val_items:
+                raise ValueError("val-count reduced validation set to zero samples.")
+            print(f"val-only: restricting validation set to {len(val_items)} samples (val-count={val_cap}).")
 
     train_ds = YoloDataset(
         image_dir=args.image_dir,
@@ -1722,6 +1731,7 @@ def main():
     if args.val_only:
         sample_dir = os.path.join(run_dir, "val_only")
         ensure_dir(sample_dir)
+        val_sample_limit = max(0, int(args.val_count)) if args.val_count is not None else 10
         eval_model = ema_helper.ema if (use_ema and ema_helper is not None) else model
         metrics = validate(
             eval_model,
@@ -1735,7 +1745,7 @@ def main():
             num_classes=num_classes,
             sample_dir=sample_dir,
             class_ids=class_ids,
-            sample_limit=10,
+            sample_limit=val_sample_limit,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
