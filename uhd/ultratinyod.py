@@ -150,7 +150,7 @@ class UltraTinyODBackbone(nn.Module):
     UltraTinyOD 用バックボーン
 
     入力:  [B, 3, 64, 64]
-    出力:  [B, C, H', W'] (H', W' は 8x8 を想定, stride = 8)
+    出力:  [B, C, H', W'] (H', W' は stride に依存: 4/8/16 のいずれか)
 
     構成:
         stem: Conv 3->16, stride 2 (64 -> 32)
@@ -163,8 +163,8 @@ class UltraTinyODBackbone(nn.Module):
 
     def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8):
         super().__init__()
-        if out_stride not in (4, 8):
-            raise ValueError(f"UltraTinyODBackbone only supports out_stride 4 or 8, got {out_stride}")
+        if out_stride not in (4, 8, 16):
+            raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
         self.use_residual = bool(use_residual)
         self.out_stride = int(out_stride)
         # 64 -> 32
@@ -173,14 +173,15 @@ class UltraTinyODBackbone(nn.Module):
         # 32 -> 16
         self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2)   # 16 -> 32
         # 16 -> 8 (stride 8) or keep 16 (stride 4)
-        stride_block2 = 2 if self.out_stride == 8 else 1
+        stride_block2 = 2 if self.out_stride >= 8 else 1
         self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2)  # 32 -> 64
-        # 8 -> 8
-        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=1)  # 64 -> 128
+        # 8 -> 8 or 8 -> 4 (stride16 case)
+        stride_block3 = 2 if self.out_stride == 16 else 1
+        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3)  # 64 -> 128
         self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1)  # 128 -> 128
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
-            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=1, p=0, act=False)
+            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=stride_block3, p=0, act=False)
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64

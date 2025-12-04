@@ -1236,7 +1236,7 @@ def main():
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
-        output_stride = int(args.output_stride) if int(args.output_stride) in (4, 8) else 8
+        output_stride = int(args.output_stride) if int(args.output_stride) in (4, 8, 16) else 8
         use_improved_head = bool(args.use_improved_head)
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
