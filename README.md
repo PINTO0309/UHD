@@ -397,8 +397,7 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 
 ## Arch
 
-<img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality" src="https://github.com/user-attachments/assets/bdd6f3ca-1327-4c87-9e6c-e559477fd689" />
-
+<img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality" src="https://github.com/user-attachments/assets/e0302a17-1311-4fb0-be8d-4525a8228042" />
 
 ## Ultra-lightweight classification model series
 1. [VSDLM: Visual-only speech detection driven by lip movements](https://github.com/PINTO0309/VSDLM) - MIT License
