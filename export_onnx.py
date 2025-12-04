@@ -99,6 +99,11 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         or meta.get("use_improved_head")
         or any(k.startswith("head.quality") for k in state.keys())
     )
+    use_head_ese = bool(
+        args.use_head_ese
+        or meta.get("utod_head_ese")
+        or ("head.head_se.fc.weight" in state)
+    )
     use_residual = bool(args.utod_residual or meta.get("utod_residual") or "backbone.block3_skip.conv.weight" in state)
 
     cfg = UltraTinyODConfig(
@@ -106,6 +111,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         anchors=anchors,
         stride=stride,
         use_improved_head=use_improved_head,
+        use_head_ese=use_head_ese,
     )
     overrides = {
         "num_classes": num_classes,
@@ -113,6 +119,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "stride": stride,
         "c_stem": c_stem,
         "use_improved_head": use_improved_head,
+        "use_head_ese": use_head_ese,
         "use_residual": use_residual,
     }
     return cfg, overrides
@@ -279,6 +286,7 @@ def build_argparser():
     parser.add_argument("--stride", type=int, default=None, help="Override output stride (4 or 8).")
     parser.add_argument("--anchors", default=None, help='Anchor list "w,h w,h ..." to override checkpoint anchors.')
     parser.add_argument("--use-improved-head", action="store_true", help="Force improved head on when building model.")
+    parser.add_argument("--use-head-ese", action="store_true", help="Force UltraTinyOD head eSE on when building model.")
     parser.add_argument("--utod-residual", action="store_true", help="Force residual inside UTOD backbone.")
     parser.add_argument("--use-ema", dest="use_ema", action="store_true", help="Use EMA weights when available.")
     parser.add_argument("--no-ema", dest="use_ema", action="store_false", help="Use raw model weights instead of EMA.")
@@ -305,6 +313,7 @@ def main():
         c_stem=inferred["c_stem"],
         use_residual=inferred["use_residual"],
         use_improved_head=inferred["use_improved_head"],
+        use_head_ese=inferred["use_head_ese"],
     )
     model.load_state_dict(state, strict=not args.non_strict)
     model.eval()
