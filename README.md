@@ -348,50 +348,52 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ```bash
   SIZE=64x64
   ANCHOR=8
+  CNNWIDTH=64
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w64_64x64_quality_lr0.007/best_utod_0299_map_0.40343.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
+
+  SIZE=64x64
+  ANCHOR=8
+  CNNWIDTH=96
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w96_64x64_quality_lr0.004/best_utod_0296_map_0.44529.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
+
+  SIZE=64x64
+  ANCHOR=8
   CNNWIDTH=128
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_64x64/best_utod_0001_map_0.00000.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}.onnx \
-  --img-size ${SIZE} \
-  --opset 17 \
-  --merge-postprocess
-  ```
-- Add `--no-simp` to skip onnx-simplifier and disable constant folding (keeps explicit BatchNorm nodes).
-  ```bash
+  --checkpoint runs/ultratinyod_res_anc8_w128_64x64_quality_lr0.003/best_utod_0300_map_0.44945.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
+
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=160
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_64x64/best_utod_0001_map_0.00000.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}.onnx \
-  --img-size ${SIZE} \
-  --opset 17 \
-  --merge-postprocess
-  ```
-  ```bash
+  --checkpoint runs/ultratinyod_res_anc8_w160_64x64_quality_lr0.001/best_utod_0300_map_0.45005.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
+
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=192
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_64x64/best_utod_0001_map_0.00000.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}.onnx \
-  --img-size ${SIZE} \
-  --opset 17 \
-  --merge-postprocess
-  ```
-  ```bash
+  --checkpoint runs/ultratinyod_res_anc8_w192_64x64_quality_lr0.001/best_utod_0300_map_0.44875.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
+
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=256
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_64x64/best_utod_0001_map_0.00000.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}.onnx \
-  --img-size ${SIZE} \
-  --opset 17 \
-  --merge-postprocess
+  --checkpoint runs/ultratinyod_res_anc8_w256_64x64_quality_lr0.001/best_utod_0300_map_0.44686.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --opset 17
   ```
-- `--arch` can force `cnn`/`transformer`/`ultratinyod`; other model hyperparameters (`cnn-width`, `num-queries`, etc.) are available if needed. Opset defaults to 17.
-- `--dynamic` exports with dynamic H/W axes (inputs and CNN outputs). Unknown axes remain fixed.
 
 ## Arch
 
