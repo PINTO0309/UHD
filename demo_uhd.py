@@ -40,8 +40,6 @@ def draw_boxes(img_bgr: np.ndarray, boxes: List[Tuple[float, int, float, float, 
     for score, cls_id, x1, y1, x2, y2 in boxes:
         x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])
         cv2.rectangle(out, (x1i, y1i), (x2i, y2i), color, 2)
-        label = f"{score:.2f}"
-        cv2.putText(out, label, (x1i, max(0, y1i - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     return out
 
 
@@ -49,7 +47,7 @@ def load_session(onnx_path: str) -> ort.InferenceSession:
     return ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
 
 
-def run_images(session: ort.InferenceSession, img_dir: Path, out_dir: Path, img_size: Tuple[int, int], conf_thresh: float) -> None:
+def run_images(session: ort.InferenceSession, img_dir: Path, out_dir: Path, img_size: Tuple[int, int], conf_thresh: float, actual_size: bool) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
@@ -66,12 +64,14 @@ def run_images(session: ort.InferenceSession, img_dir: Path, out_dir: Path, img_
             print(f"Skip unreadable file: {img_path}")
             continue
         h, w = img_bgr.shape[:2]
+        target_h, target_w = img_size if actual_size else (h, w)
         inp = preprocess(img_bgr, img_size)
         dets = session.run([output_name], {input_name: inp})[0][0]
-        boxes = postprocess(dets, (h, w), conf_thresh)
-        vis = draw_boxes(img_bgr, boxes, (0, 0, 255))
+        boxes = postprocess(dets, (target_h, target_w), conf_thresh)
+        base = cv2.resize(img_bgr, (target_w, target_h)) if actual_size else img_bgr
+        vis_out = draw_boxes(base, boxes, (0, 0, 255))
         save_path = out_dir / img_path.name
-        cv2.imwrite(str(save_path), vis)
+        cv2.imwrite(str(save_path), vis_out)
         print(f"Saved {save_path} (detections: {len(boxes)})")
 
 
@@ -81,6 +81,7 @@ def run_camera(
     img_size: Tuple[int, int],
     conf_thresh: float,
     record_path: Optional[Path] = None,
+    actual_size: bool = False,
 ) -> None:
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
@@ -96,51 +97,56 @@ def run_camera(
             break
         t0 = time.perf_counter()
         h, w = frame.shape[:2]
+        target_h, target_w = img_size if actual_size else (h, w)
         inp = preprocess(frame, img_size)
         dets = session.run([output_name], {input_name: inp})[0][0]
-        boxes = postprocess(dets, (h, w), conf_thresh)
-        vis = draw_boxes(frame, boxes, (255, 0, 0))
+        boxes = postprocess(dets, (target_h, target_w), conf_thresh)
+        base = cv2.resize(frame, (target_w, target_h)) if actual_size else frame
+        vis = draw_boxes(base, boxes, (255, 0, 0))
 
         t1 = time.perf_counter()
         ms = (t1 - t0) * 1000.0
         last_time = t1
-        label = f"{ms:.2f} ms"
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8
-        thickness = 2
-        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-        pad = 6
-        x, y = 10, 30
-        cv2.rectangle(
-            vis,
-            (x - pad, y - th - pad),
-            (x + tw + pad, y + baseline + pad),
-            (0, 0, 0),
-            thickness=-1,
-        )
-        cv2.putText(
-            vis,
-            label,
-            (x, y),
-            font,
-            font_scale,
-            (0, 0, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
+        if not actual_size:
+            label = f"{ms:.2f} ms"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            thickness = 2
+            (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+            pad = 6
+            x, y = 10, 30
+            cv2.rectangle(
+                vis,
+                (x - pad, y - th - pad),
+                (x + tw + pad, y + baseline + pad),
+                (0, 0, 0),
+                thickness=-1,
+            )
+            cv2.putText(
+                vis,
+                label,
+                (x, y),
+                font,
+                font_scale,
+                (0, 0, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+
+        vis_out = cv2.resize(vis, img_size) if actual_size else vis
 
         if record_path:
             if writer is None:
-                h, w = vis.shape[:2]
+                h, w = vis_out.shape[:2]
                 fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
                 if fps <= 0:
                     fps = 30.0
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                 record_path.parent.mkdir(parents=True, exist_ok=True)
                 writer = cv2.VideoWriter(str(record_path), fourcc, fps, (w, h))
-            writer.write(vis)
+            writer.write(vis_out)
 
-        cv2.imshow("UHD ONNX (press q to quit)", vis)
+        cv2.imshow("UHD ONNX (press q to quit)", vis_out)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
     if writer is not None:
@@ -174,6 +180,11 @@ def build_args():
         default="camera_record.mp4",
         help="MP4 path for automatic recording when --camera is used.",
     )
+    parser.add_argument(
+        "--actual-size",
+        action="store_true",
+        help="Display and recording use the model input resolution instead of the original frame size.",
+    )
     return parser
 
 
@@ -183,10 +194,10 @@ def main():
     session = load_session(args.onnx)
 
     if args.images:
-        run_images(session, Path(args.images), Path(args.output), img_size, args.conf_thresh)
+        run_images(session, Path(args.images), Path(args.output), img_size, args.conf_thresh, args.actual_size)
     else:
         record_path = Path(args.record) if args.record else None
-        run_camera(session, int(args.camera), img_size, args.conf_thresh, record_path)
+        run_camera(session, int(args.camera), img_size, args.conf_thresh, record_path, args.actual_size)
 
 
 if __name__ == "__main__":
