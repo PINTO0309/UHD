@@ -107,6 +107,7 @@ def parse_args():
     parser.add_argument("--distill-feat", type=float, default=0.0, help="Weight for feature-map distillation from teacher backbone (CNN only).")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--optimizer", choices=["adamw", "sgd"], default="adamw", help="Optimizer to use (UltraTinyOD can benefit from SGD).")
     parser.add_argument("--grad-clip-norm", type=float, default=5.0, help="Global gradient norm clip value (0 to disable).")
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--device", default=None, help="cuda or cpu. Defaults to cuda if available.")
@@ -1550,7 +1551,16 @@ def main():
     params = list(model.parameters())
     if feature_adapter is not None and len(list(feature_adapter.parameters())) > 0:
         params += list(feature_adapter.parameters())
-    optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
+    if args.optimizer == "sgd":
+        optimizer = torch.optim.SGD(
+            params,
+            lr=args.lr,
+            momentum=0.9,
+            weight_decay=args.weight_decay,
+            nesterov=True,
+        )
+    else:
+        optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
     try:
         scaler = torch.amp.GradScaler(enabled=bool(use_amp and device.type == "cuda"))
     except TypeError:
