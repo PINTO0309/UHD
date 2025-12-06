@@ -4,6 +4,7 @@ import os
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -61,15 +62,21 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
     anchors_override = parse_anchors(args.anchors)
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     num_anchors = anchors_tensor.shape[0] if anchors_tensor is not None else None
+    anchors_source = "default"
     if anchors_override:
         anchors = anchors_override
         num_anchors = len(anchors_override)
-    elif anchors_tensor is not None:
-        anchors = anchors_tensor.cpu().numpy().tolist()
-        num_anchors = anchors_tensor.shape[0]
-    elif anchors_from_meta:
-        anchors = anchors_from_meta
-        num_anchors = len(anchors_from_meta)
+        anchors_source = "override"
+    else:
+        anchors_np = anchors_tensor.cpu().numpy() if anchors_tensor is not None else None
+        if anchors_np is not None:
+            anchors = anchors_np.tolist()
+            num_anchors = anchors_tensor.shape[0]
+            anchors_source = "state"
+        elif anchors_from_meta:
+            anchors = anchors_from_meta
+            num_anchors = len(anchors_from_meta)
+            anchors_source = "meta"
 
     # num_classes: meta > CLI > derive from cls_out shape
     if args.num_classes is not None:
@@ -121,6 +128,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_improved_head": use_improved_head,
         "use_head_ese": use_head_ese,
         "use_residual": use_residual,
+        "anchors_source": anchors_source,
     }
     return cfg, overrides
 
@@ -201,6 +209,23 @@ class UltraTinyODWithPost(nn.Module):
             dim=-1,
         )
         return detections
+
+
+class UltraTinyODRawWithAnchors(nn.Module):
+    """
+    Wrap UltraTinyOD to export raw logits together with anchors/wh_scale so post-process can be done externally.
+    """
+
+    def __init__(self, model: UltraTinyOD) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor):
+        out = self.model(x, decode=False)
+        raw = out[0] if isinstance(out, (tuple, list)) else out
+        anchors = self.model.head.anchors
+        wh_scale = self.model.head.wh_scale
+        return raw, anchors, wh_scale
 
 
 def export_onnx(
@@ -325,9 +350,17 @@ def main():
             raise
     model.eval()
 
+    # Ensure anchors in the model match the chosen source (state/override/meta)
+    if inferred.get("anchors") is not None:
+        anchors_tensor = torch.as_tensor(inferred["anchors"], dtype=torch.float32)
+        if anchors_tensor.ndim == 1:
+            anchors_tensor = anchors_tensor.view(-1, 2)
+        if anchors_tensor.ndim == 2 and anchors_tensor.shape[1] == 2:
+            model.head.set_anchors(anchors_tensor)
+
     if not args.merge_postprocess:
-        export_module = model  # type: nn.Module
-        output_names = ["pred"]
+        export_module = UltraTinyODRawWithAnchors(model)
+        output_names = ["pred", "anchors", "wh_scale"]
     else:
         export_module = UltraTinyODWithPost(model, topk=args.topk, conf_thresh=args.conf_thresh)
         output_names = ["detections"]
