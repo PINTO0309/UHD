@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 
 UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 
-- If you want to include the residual in the backbone with UltraTinyOD, add `--utod-residual` (insert skip with projection in block3/4).
+<details><summary>use-improved-head</summary>
 
 ```bash
 SIZE=64x64
@@ -228,6 +228,245 @@ uv run python train.py \
 --use-batchnorm \
 --use-improved-head
 ```
+
+</details>
+
+<details><summary>use-improved-head + utod-head-ese</summary>
+
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=64
+LR=0.005
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=96
+LR=0.004
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=128
+LR=0.003
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=160
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=192
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=256
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--utod-residual \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--use-improved-head \
+--utod-head-ese
+```
+
+</details>
+
+<details><summary>use-improved-head + use-iou-aware-head + utod-head-ese</summary>
+
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=256
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_iou_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--anchor-cls-loss vfl \
+--anchor-assigner simota \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese
+```
+
+</details>
 
 ## Validation-only Example
 
