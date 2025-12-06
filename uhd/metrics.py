@@ -69,6 +69,8 @@ def decode_anchor(
     nms_thresh: float = 0.5,
     has_quality: bool = False,
     wh_scale: Optional[torch.Tensor] = None,
+    score_mode: str = "obj_quality_cls",
+    quality_power: float = 1.0,
 ) -> List[List[Tuple[float, int, torch.Tensor]]]:
     """
     YOLO-style decoding: pred shape B x (A*(5+Q+C)) x H x W, anchors A x 2 (normalized w,h).
@@ -113,9 +115,20 @@ def decode_anchor(
     pred_h = ph * act_h
 
     preds: List[List[Tuple[float, int, torch.Tensor]]] = []
-    score_base = obj
-    if quality is not None:
-        score_base = score_base * quality
+    score_mode = (score_mode or "obj_quality_cls").lower()
+    qp = float(quality_power)
+    if quality is not None and qp != 1.0:
+        quality = torch.pow(quality.clamp(min=0.0), qp)
+
+    if score_mode == "quality_cls" and quality is not None:
+        score_base = quality
+    elif score_mode == "obj_cls":
+        score_base = obj
+    else:
+        score_base = obj
+        if quality is not None:
+            score_base = score_base * quality
+    # Fallback to obj when no quality is present to avoid zero scores
     scores = score_base.unsqueeze(-1) * cls  # B x A x H x W x C
     for bi in range(b):
         boxes_i: List[Tuple[float, int, torch.Tensor]] = []

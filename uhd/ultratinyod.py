@@ -228,6 +228,8 @@ class UltraTinyODConfig:
     - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
     - use_improved_head : 追加の品質スコア・WHスケーリング等を有効化
     - use_head_ese : Head入口にeSEを挿入して軽量に文脈強調
+    - use_iou_aware_head : IoU/quality をクラス信頼度に直結させるタスクアラインドヘッド
+    - quality_power : quality スコアの指数。IoU-aware スコアリングの鋭さを調整
     """
 
     num_classes: int = 1
@@ -236,6 +238,8 @@ class UltraTinyODConfig:
     cls_bottleneck_ratio: float = 0.5
     use_improved_head: bool = False
     use_head_ese: bool = False
+    use_iou_aware_head: bool = False
+    quality_power: float = 1.0
 
     def __post_init__(self):
         if self.anchors is None:
@@ -248,6 +252,8 @@ class UltraTinyODConfig:
         # ensure float tuples
         self.anchors = [(float(w), float(h)) for w, h in self.anchors]
         self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
+        self.use_iou_aware_head = bool(self.use_iou_aware_head)
+        self.quality_power = float(max(0.0, self.quality_power))
 
 
 class UltraTinyODHead(nn.Module):
@@ -268,7 +274,9 @@ class UltraTinyODHead(nn.Module):
         self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
         self.use_improved_head = bool(getattr(cfg, "use_improved_head", False))
         self.use_head_ese = bool(getattr(cfg, "use_head_ese", False))
-        self.has_quality = self.use_improved_head
+        self.use_iou_aware_head = bool(getattr(cfg, "use_iou_aware_head", False))
+        self.has_quality = self.use_improved_head or self.use_iou_aware_head
+        self.quality_power = float(getattr(cfg, "quality_power", 1.0))
         anchor_tensor = torch.as_tensor(cfg.anchors, dtype=torch.float32)
         if anchor_tensor.numel() == 0:
             anchor_tensor = torch.tensor([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=torch.float32)
@@ -282,6 +290,10 @@ class UltraTinyODHead(nn.Module):
             self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, dtype=torch.float32))
         else:
             self.register_buffer("wh_scale", torch.ones(self.num_anchors, 2, dtype=torch.float32))
+        # task-aligned score uses quality*cls (no obj) when enabled
+        self.score_mode = "quality_cls" if self.use_iou_aware_head else "obj_quality_cls"
+        self.quality_power = float(max(0.0, self.quality_power))
+        self.has_quality_head = self.has_quality
 
         # 軽い文脈強調
         self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True)
@@ -295,7 +307,13 @@ class UltraTinyODHead(nn.Module):
             self.head_se = EfficientSE(in_channels)
 
         # box ブランチ
-        self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        if self.use_iou_aware_head:
+            self.box_tower = nn.Sequential(
+                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+            )
+        else:
+            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
         self.box_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 4,
@@ -304,8 +322,14 @@ class UltraTinyODHead(nn.Module):
             padding=0,
             bias=True,
         )
-        if self.use_improved_head:
-            self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        if self.has_quality:
+            if self.use_iou_aware_head:
+                self.quality_tower = nn.Sequential(
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                )
+            else:
+                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
             self.quality_out = nn.Conv2d(
                 in_channels,
                 self.num_anchors * 1,
@@ -327,8 +351,15 @@ class UltraTinyODHead(nn.Module):
         )
 
         # cls ブランチ
-        self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0)
-        self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True)
+        if self.use_iou_aware_head:
+            self.cls_tower = nn.Sequential(
+                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True),
+            )
+        else:
+            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0)
+            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True)
         self.cls_out = nn.Conv2d(
             self.cls_mid,
             self.num_anchors * self.nc,
@@ -371,7 +402,7 @@ class UltraTinyODHead(nn.Module):
                 padding=0,
                 bias=True,
             ).to(anchor_tensor.device)
-            if self.use_improved_head:
+            if self.has_quality:
                 self.quality_out = nn.Conv2d(
                     self.in_channels,
                     self.num_anchors * 1,
@@ -390,9 +421,9 @@ class UltraTinyODHead(nn.Module):
             ).to(anchor_tensor.device)
             nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
-            if self.use_improved_head:
+            if self.has_quality:
                 nn.init.kaiming_normal_(self.quality_out.weight, mode="fan_out", nonlinearity="relu")
-                if isinstance(self.wh_scale, nn.Parameter):
+                if self.use_improved_head and isinstance(self.wh_scale, nn.Parameter):
                     self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, device=anchor_tensor.device))
             nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
             self.reset_output_bias()
@@ -410,7 +441,7 @@ class UltraTinyODHead(nn.Module):
                 bias.zero_()
                 bias[:, 0] = obj_bias
                 self.obj_out.bias.copy_(bias.view(-1))
-        if self.use_improved_head and self.quality_out.bias is not None:
+        if self.has_quality and self.quality_out.bias is not None:
             nn.init.constant_(self.quality_out.bias, 0.0)
         if self.cls_out.bias is not None:
             nn.init.constant_(self.cls_out.bias, cls_bias)
@@ -448,23 +479,32 @@ class UltraTinyODHead(nn.Module):
             x = self.head_se(x)
 
         # box ブランチ
-        box = self.box_conv(x)
-        box = self.box_out(box).view(b, self.num_anchors, 4, h, w)
+        if self.use_iou_aware_head:
+            box_feat = self.box_tower(x)
+        else:
+            box_feat = self.box_conv(x)
+        box = self.box_out(box_feat).view(b, self.num_anchors, 4, h, w)
         # obj ブランチ
         obj = self.obj_conv(x)
         obj = self.obj_out(obj).view(b, self.num_anchors, 1, h, w)
         # quality ブランチ
         quality = None
-        if self.use_improved_head:
-            quality = self.quality_conv(x)
-            quality = self.quality_out(quality).view(b, self.num_anchors, 1, h, w)
+        if self.has_quality:
+            if self.use_iou_aware_head:
+                quality_feat = self.quality_tower(x)
+            else:
+                quality_feat = self.quality_conv(x)
+            quality = self.quality_out(quality_feat).view(b, self.num_anchors, 1, h, w)
         # cls ブランチ
-        cls = self.cls_reduce(x)
-        cls = self.cls_conv(cls)
-        cls = self.cls_out(cls).view(b, self.num_anchors, self.nc, h, w)
+        if self.use_iou_aware_head:
+            cls_feat = self.cls_tower(x)
+        else:
+            cls_feat = self.cls_reduce(x)
+            cls_feat = self.cls_conv(cls_feat)
+        cls = self.cls_out(cls_feat).view(b, self.num_anchors, self.nc, h, w)
 
         # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
-        if self.use_improved_head and quality is not None:
+        if self.has_quality and quality is not None:
             pred = torch.cat([box, obj, quality, cls], dim=2)
         else:
             pred = torch.cat([box, obj, cls], dim=2)
@@ -489,6 +529,8 @@ class UltraTinyODHead(nn.Module):
             nms_thresh=nms_thresh,
             has_quality=self.has_quality,
             wh_scale=self.wh_scale if self.use_improved_head else None,
+            score_mode=self.score_mode,
+            quality_power=self.quality_power,
         )
         return raw_map, decoded
 
@@ -519,11 +561,19 @@ class UltraTinyOD(nn.Module):
         use_residual: bool = False,
         use_improved_head: bool = False,
         use_head_ese: bool = False,
+        use_iou_aware_head: bool = False,
+        quality_power: float = 1.0,
     ):
         super().__init__()
 
         if config is None:
-            config = UltraTinyODConfig(num_classes=num_classes, use_improved_head=use_improved_head, use_head_ese=use_head_ese)
+            config = UltraTinyODConfig(
+                num_classes=num_classes,
+                use_improved_head=use_improved_head,
+                use_head_ese=use_head_ese,
+                use_iou_aware_head=use_iou_aware_head,
+                quality_power=quality_power,
+            )
         else:
             # config の num_classes を上書き
             config.num_classes = num_classes
@@ -531,12 +581,20 @@ class UltraTinyOD(nn.Module):
                 config.use_improved_head = bool(use_improved_head)
             if not hasattr(config, "use_head_ese"):
                 config.use_head_ese = bool(use_head_ese)
+            if not hasattr(config, "use_iou_aware_head"):
+                config.use_iou_aware_head = bool(use_iou_aware_head)
+            if not hasattr(config, "quality_power"):
+                config.quality_power = float(quality_power)
 
         self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual, out_stride=int(config.stride))
         self.head = UltraTinyODHead(self.backbone.out_channels, config)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
         self.use_improved_head = bool(getattr(config, "use_improved_head", False))
+        self.use_iou_aware_head = bool(getattr(config, "use_iou_aware_head", False))
+        self.has_quality_head = bool(self.head.has_quality)
+        self.score_mode = getattr(self.head, "score_mode", "obj_quality_cls")
+        self.quality_power = getattr(self.head, "quality_power", 1.0)
 
         # モデル初期化（簡易版）
         self._init_weights()

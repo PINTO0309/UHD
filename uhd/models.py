@@ -812,6 +812,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             anchors=kwargs.get("anchors") or None,
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
             use_head_ese=use_head_ese,
+            use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
+            quality_power=float(kwargs.get("quality_power", 1.0)),
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(
@@ -821,6 +823,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_residual=kwargs.get("utod_use_residual", False),
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
             use_head_ese=use_head_ese,
+            use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
+            quality_power=float(kwargs.get("quality_power", 1.0)),
         )
     elif arch == "transformer":
         model = TinyDETR(

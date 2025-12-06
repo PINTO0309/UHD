@@ -20,21 +20,6 @@ def parse_img_size(arg: str) -> Tuple[int, int]:
     return v, v
 
 
-def parse_anchors(arg: Optional[str]) -> List[Tuple[float, float]]:
-    if not arg:
-        return []
-    anchors: List[Tuple[float, float]] = []
-    for part in str(arg).split():
-        nums = part.split(",")
-        if len(nums) != 2:
-            continue
-        try:
-            anchors.append((float(nums[0]), float(nums[1])))
-        except ValueError:
-            continue
-    return anchors
-
-
 def _is_state_dict(obj) -> bool:
     return isinstance(obj, dict) and obj and all(isinstance(v, torch.Tensor) for v in obj.values())
 
@@ -59,29 +44,21 @@ def load_checkpoint(path: str, use_ema: bool) -> Tuple[Dict[str, torch.Tensor], 
 def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple[UltraTinyODConfig, Dict]:
     anchors_tensor = state.get("head.anchors", None)
     anchors_from_meta = meta.get("anchors") if isinstance(meta, dict) else None
-    anchors_override = parse_anchors(args.anchors)
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     num_anchors = anchors_tensor.shape[0] if anchors_tensor is not None else None
     anchors_source = "default"
-    if anchors_override:
-        anchors = anchors_override
-        num_anchors = len(anchors_override)
-        anchors_source = "override"
-    else:
-        anchors_np = anchors_tensor.cpu().numpy() if anchors_tensor is not None else None
-        if anchors_np is not None:
-            anchors = anchors_np.tolist()
-            num_anchors = anchors_tensor.shape[0]
-            anchors_source = "state"
-        elif anchors_from_meta:
-            anchors = anchors_from_meta
-            num_anchors = len(anchors_from_meta)
-            anchors_source = "meta"
+    anchors_np = anchors_tensor.cpu().numpy() if anchors_tensor is not None else None
+    if anchors_np is not None:
+        anchors = anchors_np.tolist()
+        num_anchors = anchors_tensor.shape[0]
+        anchors_source = "state"
+    elif anchors_from_meta:
+        anchors = anchors_from_meta
+        num_anchors = len(anchors_from_meta)
+        anchors_source = "meta"
 
     # num_classes: meta > CLI > derive from cls_out shape
-    if args.num_classes is not None:
-        num_classes = int(args.num_classes)
-    elif "classes" in meta and meta["classes"]:
+    if "classes" in meta and meta["classes"]:
         num_classes = len(meta["classes"])
     else:
         cls_weight = state.get("head.cls_out.weight")
@@ -90,28 +67,29 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         else:
             num_classes = 1
 
-    # backbone width from meta > CLI > weight shape
-    if args.cnn_width is not None:
-        c_stem = int(args.cnn_width)
-    elif "cnn_width" in meta:
+    # backbone width from meta > weight shape
+    if "cnn_width" in meta:
         c_stem = int(meta["cnn_width"])
     else:
         stem_w = state.get("backbone.stem.conv.weight")
         c_stem = int(stem_w.shape[0]) if stem_w is not None else 16
 
-    stride = int(args.stride or meta.get("output_stride") or 8)
+    stride = int(meta.get("output_stride") or 8)
 
     use_improved_head = bool(
-        args.use_improved_head
-        or meta.get("use_improved_head")
+        meta.get("use_improved_head")
         or any(k.startswith("head.quality") for k in state.keys())
     )
+    use_iou_aware_head = bool(
+        meta.get("use_iou_aware_head")
+        or any(k.startswith("head.box_tower") or k.startswith("head.quality_tower") or k.startswith("head.cls_tower") for k in state.keys())
+    )
+    quality_power = max(0.0, float(meta.get("quality_power", 1.0)))
     has_ese_weights = ("head.head_se.fc.weight" in state) and ("head.head_se.fc.bias" in state)
-    requested_ese = bool(args.use_head_ese or meta.get("utod_head_ese"))
-    if requested_ese and not has_ese_weights:
-        print("[WARN] eSE requested (CLI/meta) but head.head_se weights missing; disabling eSE for export.")
-    use_head_ese = bool(has_ese_weights and requested_ese) or bool(has_ese_weights)
-    use_residual = bool(args.utod_residual or meta.get("utod_residual") or "backbone.block3_skip.conv.weight" in state)
+    if meta.get("utod_head_ese") and not has_ese_weights:
+        print("[WARN] eSE requested in checkpoint meta but head.head_se weights missing; disabling eSE for export.")
+    use_head_ese = bool(has_ese_weights)
+    use_residual = bool(meta.get("utod_residual") or "backbone.block3_skip.conv.weight" in state)
 
     cfg = UltraTinyODConfig(
         num_classes=num_classes,
@@ -119,6 +97,8 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         stride=stride,
         use_improved_head=use_improved_head,
         use_head_ese=use_head_ese,
+        use_iou_aware_head=use_iou_aware_head,
+        quality_power=quality_power,
     )
     overrides = {
         "num_classes": num_classes,
@@ -128,6 +108,8 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_improved_head": use_improved_head,
         "use_head_ese": use_head_ese,
         "use_residual": use_residual,
+        "use_iou_aware_head": use_iou_aware_head,
+        "quality_power": quality_power,
         "anchors_source": anchors_source,
     }
     return cfg, overrides
@@ -139,7 +121,9 @@ class UltraTinyODWithPost(nn.Module):
         self.model = model
         self.topk = int(topk)
         self.conf_thresh = float(conf_thresh)
-        self.has_quality = bool(model.head.has_quality)
+        self.has_quality = bool(getattr(model.head, "has_quality", False))
+        self.score_mode = getattr(model, "score_mode", getattr(model.head, "score_mode", "obj_quality_cls"))
+        self.quality_power = float(getattr(model, "quality_power", getattr(model.head, "quality_power", 1.0)))
 
     def forward(self, x: torch.Tensor):
         raw = self.model(x, decode=False)  # [B, na*no, H, W]
@@ -160,9 +144,18 @@ class UltraTinyODWithPost(nn.Module):
         cls_logits = pred[..., cls_start:]
         cls_scores = cls_logits.sigmoid()
 
-        score_base = obj
-        if quality is not None:
-            score_base = score_base * quality
+        quality_use = quality
+        if quality_use is not None and self.quality_power != 1.0:
+            quality_use = torch.pow(quality_use, self.quality_power)
+        smode = (self.score_mode or "obj_quality_cls").lower()
+        if smode == "quality_cls" and quality_use is not None:
+            score_base = quality_use
+        elif smode == "obj_cls":
+            score_base = obj
+        else:
+            score_base = obj
+            if quality_use is not None:
+                score_base = score_base * quality_use
 
         # grid
         gy, gx = torch.meshgrid(
@@ -306,15 +299,7 @@ def build_argparser():
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--topk", type=int, default=100, help="Number of detections to keep (Top-K).")
     parser.add_argument("--conf-thresh", type=float, default=0.0, help="Optional confidence threshold before Top-K.")
-    parser.add_argument("--num-classes", type=int, default=None, help="Override number of classes if checkpoint lacks it.")
-    parser.add_argument("--cnn-width", type=int, default=None, help="Override UTOD width (stem channels).")
-    parser.add_argument("--stride", type=int, default=None, help="Override output stride (4 or 8).")
-    parser.add_argument("--anchors", default=None, help='Anchor list "w,h w,h ..." to override checkpoint anchors.')
-    parser.add_argument("--use-improved-head", action="store_true", help="Force improved head on when building model.")
-    parser.add_argument("--use-head-ese", action="store_true", help="Force UltraTinyOD head eSE on when building model.")
-    parser.add_argument("--utod-residual", action="store_true", help="Force residual inside UTOD backbone.")
-    parser.add_argument("--use-ema", dest="use_ema", action="store_true", help="Use EMA weights when available.")
-    parser.add_argument("--no-ema", dest="use_ema", action="store_false", help="Use raw model weights instead of EMA.")
+    parser.add_argument("--no-ema", dest="use_ema", action="store_false", help="Use raw model weights instead of EMA (defaults to EMA when available).")
     parser.set_defaults(use_ema=True)
     parser.add_argument("--no-merge-postprocess", dest="merge_postprocess", action="store_false", help="Export raw model only.")
     parser.set_defaults(merge_postprocess=True)
@@ -339,6 +324,8 @@ def main():
         use_residual=inferred["use_residual"],
         use_improved_head=inferred["use_improved_head"],
         use_head_ese=inferred["use_head_ese"],
+        use_iou_aware_head=inferred.get("use_iou_aware_head", False),
+        quality_power=inferred.get("quality_power", 1.0),
     )
     try:
         model.load_state_dict(state, strict=not args.non_strict)

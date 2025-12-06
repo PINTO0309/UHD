@@ -130,6 +130,11 @@ def parse_args():
         help="Enable enhanced UltraTinyOD head (quality-aware obj, learnable WH scale, extra context, IoU/quality scoring).",
     )
     parser.add_argument(
+        "--use-iou-aware-head",
+        action="store_true",
+        help="UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers; keeps legacy path when off.",
+    )
+    parser.add_argument(
         "--classes",
         default="0",
         help="Comma-separated list of target class ids to train on (e.g., '0,1,3').",
@@ -184,6 +189,7 @@ def parse_args():
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
     parser.add_argument("--use-batchnorm", action="store_true", help="Enable BatchNorm layers (default: off).")
     parser.add_argument("--last-width-scale", type=float, default=1.0, help="Channel scale for last CNN block (e.g., 1.25).")
+    parser.add_argument("--quality-power", type=float, default=1.0, help="Exponent for quality score when using IoU-aware head scoring.")
     # Transformer params
     parser.add_argument("--num-queries", type=int, default=10)
     parser.add_argument("--d-model", type=int, default=64)
@@ -599,10 +605,16 @@ def train_one_epoch(
     distill_scale = 1.0
     if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0):
         distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
-    use_quality_head = bool(getattr(model, "use_improved_head", False))
+    use_quality_head = bool(getattr(model, "has_quality_head", getattr(model, "use_improved_head", False)))
+    score_mode = getattr(model, "score_mode", None)
+    quality_power = getattr(model, "quality_power", 1.0)
     wh_scale_tensor = None
-    if hasattr(model, "head") and hasattr(model.head, "wh_scale"):
-        wh_scale_tensor = model.head.wh_scale
+    if hasattr(model, "head"):
+        if hasattr(model.head, "wh_scale"):
+            wh_scale_tensor = model.head.wh_scale
+        if score_mode is None and hasattr(model.head, "score_mode"):
+            score_mode = model.head.score_mode
+        quality_power = getattr(model.head, "quality_power", quality_power)
     clip_params = list(model.parameters())
     if feature_adapter is not None:
         clip_params += [p for p in feature_adapter.parameters() if p.requires_grad]
@@ -742,7 +754,9 @@ def train_one_epoch(
                                     print(f"Teacher anchors ({t_na}) != student ({s_na}); skipping anchor logit/box distill.")
                                     warn_anchor_mismatch = True
                             else:
-                                t_has_quality = bool(getattr(teacher_model, "use_improved_head", False))
+                                t_has_quality = bool(
+                                    getattr(teacher_model, "has_quality_head", getattr(teacher_model, "use_improved_head", False))
+                                )
                                 s_has_quality = use_quality_head
                                 t_boxes, t_cls_logits, th, tw = _decode_anchor_pred(
                                     teacher_anchor_pred,
@@ -993,10 +1007,16 @@ def validate(
     ]
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     anchor_head = bool(use_anchor or arch == "ultratinyod")
-    use_quality_head = bool(getattr(model, "use_improved_head", False))
+    use_quality_head = bool(getattr(model, "has_quality_head", getattr(model, "use_improved_head", False)))
+    score_mode = getattr(model, "score_mode", None)
+    quality_power = getattr(model, "quality_power", 1.0)
     wh_scale_tensor = None
-    if hasattr(model, "head") and hasattr(model.head, "wh_scale"):
-        wh_scale_tensor = model.head.wh_scale
+    if hasattr(model, "head"):
+        if hasattr(model.head, "wh_scale"):
+            wh_scale_tensor = model.head.wh_scale
+        if score_mode is None and hasattr(model.head, "score_mode"):
+            score_mode = model.head.score_mode
+        quality_power = getattr(model.head, "quality_power", quality_power)
 
     def render_sample(img_path, pred_list, save_path):
         try:
@@ -1061,6 +1081,8 @@ def validate(
                             nms_thresh=0.5,
                             has_quality=use_quality_head,
                             wh_scale=wh_scale_tensor,
+                            score_mode=score_mode or "obj_quality_cls",
+                            quality_power=quality_power,
                         )
                     else:
                         loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
@@ -1240,6 +1262,8 @@ def main():
     use_batchnorm = bool(args.use_batchnorm)
     output_stride = int(args.output_stride) if args.output_stride else 16
     use_improved_head = False
+    use_iou_aware_head = bool(args.use_iou_aware_head)
+    quality_power = float(args.quality_power)
     utod_head_ese = bool(args.utod_head_ese)
     if args.arch == "ultratinyod":
         use_anchor = True
@@ -1273,7 +1297,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1354,6 +1378,10 @@ def main():
             simota_topk = int(meta["simota_topk"])
         if "use_improved_head" in meta:
             use_improved_head = bool(meta["use_improved_head"])
+        if "use_iou_aware_head" in meta:
+            use_iou_aware_head = bool(meta["use_iou_aware_head"])
+        if "quality_power" in meta:
+            quality_power = float(meta["quality_power"])
         if "utod_head_ese" in meta:
             utod_head_ese = bool(meta["utod_head_ese"])
         if "last_se" in meta and meta["last_se"]:
@@ -1478,6 +1506,8 @@ def main():
         use_head_ese=utod_head_ese,
         num_anchors=num_anchors,
         anchors=anchor_list,
+        use_iou_aware_head=use_iou_aware_head,
+        quality_power=quality_power,
         last_se=last_se,
         last_width_scale=last_width_scale,
         output_stride=output_stride,
@@ -1920,6 +1950,8 @@ def main():
                     "grad_clip_norm": grad_clip_norm,
                     "cnn_width": cnn_width,
                     "use_improved_head": use_improved_head,
+                    "use_iou_aware_head": use_iou_aware_head,
+                    "quality_power": quality_power,
                     "utod_head_ese": utod_head_ese,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
@@ -1991,12 +2023,14 @@ def main():
             "last_se": last_se,
             "last_width_scale": last_width_scale,
             "output_stride": output_stride,
-                    "grad_clip_norm": grad_clip_norm,
-                    "cnn_width": cnn_width,
-                    "use_improved_head": use_improved_head,
-                    "utod_head_ese": utod_head_ese,
-                    "activation": activation,
-                    "use_batchnorm": use_batchnorm,
+            "grad_clip_norm": grad_clip_norm,
+            "cnn_width": cnn_width,
+            "use_improved_head": use_improved_head,
+            "use_iou_aware_head": use_iou_aware_head,
+            "quality_power": quality_power,
+            "utod_head_ese": utod_head_ese,
+            "activation": activation,
+            "use_batchnorm": use_batchnorm,
             "best_map": best_map,
             "use_ema": use_ema,
             "ema_decay": ema_decay,
