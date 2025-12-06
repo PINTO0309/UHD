@@ -40,8 +40,6 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 
 UltraTinyOD (anchor-only, stride 8; `--cnn-width` controls stem width):
 
-- If you want to include the residual in the backbone with UltraTinyOD, add `--utod-residual` (insert skip with projection in block3/4).
-
 <details><summary>use-improved-head</summary>
 
 ```bash
