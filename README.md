@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 |M|12.15 M|1.60 G|0.44875|4.07 ms|48.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality_nopost.onnx)|
 |L|21.54 M|2.83 G|0.44686|6.23 ms|86.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_nopost.onnx)|
 
-## Inference 
+## Inference
 - ONNX with post-processing
   ```bash
   uv run demo_uhd.py \
@@ -433,14 +433,14 @@ uv run python train.py \
 ```bash
 SIZE=64x64
 ANCHOR=8
-CNNWIDTH=256
-LR=0.001
+CNNWIDTH=128
+LR=0.003
 IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
 --img-size ${SIZE} \
---exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_iou_${SIZE}_${IMPHEAD}_lr${LR} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR} \
 --batch-size 64 \
 --epochs 300 \
 --lr ${LR} \
@@ -458,8 +458,39 @@ uv run python train.py \
 --ema-decay 0.9999 \
 --grad-clip-norm 10.0 \
 --use-batchnorm \
---anchor-cls-loss vfl \
---anchor-assigner simota \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=256
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
 --utod-residual \
 --use-improved-head \
 --use-iou-aware-head \
