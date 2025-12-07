@@ -28,6 +28,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# ------------------------------------------------------------
+# helpers
+# ------------------------------------------------------------
+
+def _make_activation(name: str) -> nn.Module:
+    act = (name or "silu").lower()
+    if act in ("silu", "swish"):
+        return nn.SiLU(inplace=True)
+    if act == "relu":
+        return nn.ReLU(inplace=True)
+    raise ValueError(f"Unsupported activation: {name}")
+
+
 # ============================================================
 # 基本ブロック
 # ============================================================
@@ -49,6 +62,7 @@ class ConvBNAct(nn.Module):
         g: int = 1,
         bias: bool = False,
         act: bool = True,
+        act_name: str = "silu",
     ):
         super().__init__()
         if p is None:
@@ -64,7 +78,7 @@ class ConvBNAct(nn.Module):
             bias=bias,
         )
         self.bn = nn.BatchNorm2d(c_out, eps=1e-3, momentum=0.03)
-        self.act = nn.SiLU(inplace=True) if act else nn.Identity()
+        self.act = _make_activation(act_name) if act else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.conv(x)))
@@ -84,6 +98,7 @@ class DWConv(nn.Module):
         k: int = 3,
         s: int = 1,
         act: bool = True,
+        act_name: str = "silu",
     ):
         super().__init__()
         # depthwise
@@ -96,6 +111,7 @@ class DWConv(nn.Module):
             g=c_in,
             bias=False,
             act=act,
+            act_name=act_name,
         )
         # pointwise
         self.pw = ConvBNAct(
@@ -107,6 +123,7 @@ class DWConv(nn.Module):
             g=1,
             bias=False,
             act=act,
+            act_name=act_name,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -136,15 +153,15 @@ class SPPFmin(nn.Module):
     UltraTinyOD 用に最小限構成にしている。
     """
 
-    def __init__(self, c_in: int, c_out: int, pool_k: int = 5):
+    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu"):
         super().__init__()
         # まずチャネルを半減
         c_hidden = c_in // 2
-        self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0)
+        self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name)
         # 1 回だけの MaxPool（pool_k×pool_k）
         self.pool = nn.MaxPool2d(kernel_size=pool_k, stride=1, padding=pool_k // 2)
         # 出力チャネルを c_out に整える
-        self.cv2 = ConvBNAct(c_hidden * 2, c_out, k=1, s=1, p=0)
+        self.cv2 = ConvBNAct(c_hidden * 2, c_out, k=1, s=1, p=0, act_name=act_name)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.cv1(x)
@@ -174,31 +191,32 @@ class UltraTinyODBackbone(nn.Module):
         sppf: SPPFmin 128->64 (8 -> 8)
     """
 
-    def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8):
+    def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8, activation: str = "silu"):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
         self.use_residual = bool(use_residual)
         self.out_stride = int(out_stride)
+        act_name = activation
         # 64 -> 32
-        self.stem = ConvBNAct(3, c_stem, k=3, s=2)
+        self.stem = ConvBNAct(3, c_stem, k=3, s=2, act_name=act_name)
 
         # 32 -> 16
-        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2)   # 16 -> 32
+        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name)   # 16 -> 32
         # 16 -> 8 (stride 8) or keep 16 (stride 4)
         stride_block2 = 2 if self.out_stride >= 8 else 1
-        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2)  # 32 -> 64
+        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2, act_name=act_name)  # 32 -> 64
         # 8 -> 8 or 8 -> 4 (stride16 case)
         stride_block3 = 2 if self.out_stride == 16 else 1
-        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3)  # 64 -> 128
-        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1)  # 128 -> 128
+        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3, act_name=act_name)  # 64 -> 128
+        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1, act_name=act_name)  # 128 -> 128
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
-            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=stride_block3, p=0, act=False)
+            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=stride_block3, p=0, act=False, act_name=act_name)
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64
-        self.sppf = SPPFmin(c_stem * 8, c_stem * 4)
+        self.sppf = SPPFmin(c_stem * 8, c_stem * 4, act_name=act_name)
 
         self.out_channels = c_stem * 4  # 64
 
@@ -240,6 +258,10 @@ class UltraTinyODConfig:
     use_head_ese: bool = False
     use_iou_aware_head: bool = False
     quality_power: float = 1.0
+    use_fpn: bool = False
+    fpn_strides: Optional[Sequence[int]] = None
+    use_fpn_strict: bool = False
+    activation: str = "silu"
 
     def __post_init__(self):
         if self.anchors is None:
@@ -254,6 +276,13 @@ class UltraTinyODConfig:
         self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
         self.use_iou_aware_head = bool(self.use_iou_aware_head)
         self.quality_power = float(max(0.0, self.quality_power))
+        self.use_fpn = bool(self.use_fpn)
+        self.use_fpn_strict = bool(self.use_fpn_strict)
+        if self.fpn_strides is None:
+            self.fpn_strides = [self.stride]
+        self.fpn_strides = [int(s) for s in self.fpn_strides]
+        act = (self.activation or "silu").lower()
+        self.activation = "silu" if act == "swish" else act
 
 
 class UltraTinyODHead(nn.Module):
@@ -265,13 +294,14 @@ class UltraTinyODHead(nn.Module):
         decode=True 時には decode 結果も返す
     """
 
-    def __init__(self, in_channels: int, cfg: UltraTinyODConfig):
+    def __init__(self, in_channels: int, cfg: UltraTinyODConfig, activation: str = "silu"):
         super().__init__()
         self.nc = cfg.num_classes
         self.stride = cfg.stride
         self.in_channels = in_channels
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
         self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
+        act_name = activation
         self.use_improved_head = bool(getattr(cfg, "use_improved_head", False))
         self.use_head_ese = bool(getattr(cfg, "use_head_ese", False))
         self.use_iou_aware_head = bool(getattr(cfg, "use_iou_aware_head", False))
@@ -296,12 +326,12 @@ class UltraTinyODHead(nn.Module):
         self.has_quality_head = self.has_quality
 
         # 軽い文脈強調
-        self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
         if self.use_improved_head:
             self.context_res = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True),
-                ConvBNAct(in_channels, in_channels, k=1, s=1, p=0),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                ConvBNAct(in_channels, in_channels, k=1, s=1, p=0, act_name=act_name),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
             )
         if self.use_head_ese:
             self.head_se = EfficientSE(in_channels)
@@ -309,11 +339,11 @@ class UltraTinyODHead(nn.Module):
         # box ブランチ
         if self.use_iou_aware_head:
             self.box_tower = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
             )
         else:
-            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
         self.box_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 4,
@@ -325,11 +355,11 @@ class UltraTinyODHead(nn.Module):
         if self.has_quality:
             if self.use_iou_aware_head:
                 self.quality_tower = nn.Sequential(
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True),
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True),
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
                 )
             else:
-                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
             self.quality_out = nn.Conv2d(
                 in_channels,
                 self.num_anchors * 1,
@@ -340,7 +370,7 @@ class UltraTinyODHead(nn.Module):
             )
 
         # obj ブランチ
-        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True)
+        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
         self.obj_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 1,
@@ -353,13 +383,13 @@ class UltraTinyODHead(nn.Module):
         # cls ブランチ
         if self.use_iou_aware_head:
             self.cls_tower = nn.Sequential(
-                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True),
+                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name),
             )
         else:
-            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0)
-            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True)
+            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name)
+            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name)
         self.cls_out = nn.Conv2d(
             self.cls_mid,
             self.num_anchors * self.nc,
@@ -563,6 +593,7 @@ class UltraTinyOD(nn.Module):
         use_head_ese: bool = False,
         use_iou_aware_head: bool = False,
         quality_power: float = 1.0,
+        activation: str = "silu",
     ):
         super().__init__()
 
@@ -573,10 +604,13 @@ class UltraTinyOD(nn.Module):
                 use_head_ese=use_head_ese,
                 use_iou_aware_head=use_iou_aware_head,
                 quality_power=quality_power,
+                activation=activation,
             )
         else:
             # config の num_classes を上書き
             config.num_classes = num_classes
+            if not hasattr(config, "activation"):
+                config.activation = activation
             if not hasattr(config, "use_improved_head"):
                 config.use_improved_head = bool(use_improved_head)
             if not hasattr(config, "use_head_ese"):
@@ -586,8 +620,15 @@ class UltraTinyOD(nn.Module):
             if not hasattr(config, "quality_power"):
                 config.quality_power = float(quality_power)
 
-        self.backbone = UltraTinyODBackbone(c_stem=c_stem, use_residual=use_residual, out_stride=int(config.stride))
-        self.head = UltraTinyODHead(self.backbone.out_channels, config)
+        act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
+
+        self.backbone = UltraTinyODBackbone(
+            c_stem=c_stem,
+            use_residual=use_residual,
+            out_stride=int(config.stride),
+            activation=act_name,
+        )
+        self.head = UltraTinyODHead(self.backbone.out_channels, config, activation=act_name)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
         self.use_improved_head = bool(getattr(config, "use_improved_head", False))
@@ -595,6 +636,7 @@ class UltraTinyOD(nn.Module):
         self.has_quality_head = bool(self.head.has_quality)
         self.score_mode = getattr(self.head, "score_mode", "obj_quality_cls")
         self.quality_power = getattr(self.head, "quality_power", 1.0)
+        self.activation = act_name
 
         # モデル初期化（簡易版）
         self._init_weights()

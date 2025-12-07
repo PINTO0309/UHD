@@ -85,6 +85,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         or any(k.startswith("head.box_tower") or k.startswith("head.quality_tower") or k.startswith("head.cls_tower") for k in state.keys())
     )
     quality_power = max(0.0, float(meta.get("quality_power", 1.0)))
+    activation = str(meta.get("activation", "swish") or "swish")
     has_ese_weights = ("head.head_se.fc.weight" in state) and ("head.head_se.fc.bias" in state)
     if meta.get("utod_head_ese") and not has_ese_weights:
         print("[WARN] eSE requested in checkpoint meta but head.head_se weights missing; disabling eSE for export.")
@@ -99,6 +100,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         use_head_ese=use_head_ese,
         use_iou_aware_head=use_iou_aware_head,
         quality_power=quality_power,
+        activation=activation,
     )
     overrides = {
         "num_classes": num_classes,
@@ -111,6 +113,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_iou_aware_head": use_iou_aware_head,
         "quality_power": quality_power,
         "anchors_source": anchors_source,
+        "activation": activation,
     }
     return cfg, overrides
 
@@ -326,6 +329,7 @@ def main():
         use_head_ese=inferred["use_head_ese"],
         use_iou_aware_head=inferred.get("use_iou_aware_head", False),
         quality_power=inferred.get("quality_power", 1.0),
+        activation=inferred.get("activation", "swish"),
     )
     try:
         model.load_state_dict(state, strict=not args.non_strict)

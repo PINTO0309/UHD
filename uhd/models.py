@@ -46,15 +46,16 @@ class DWConvBlock(nn.Module):
 class SEModule(nn.Module):
     """Standard SE block with reduction."""
 
-    def __init__(self, channels: int, reduction: int = 4) -> None:
+    def __init__(self, channels: int, reduction: int = 4, activation: str = "swish") -> None:
         super().__init__()
         mid = max(1, channels // reduction)
         self.fc1 = nn.Conv2d(channels, mid, kernel_size=1)
         self.fc2 = nn.Conv2d(mid, channels, kernel_size=1)
+        self.act = _make_activation(activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w = x.mean(dim=(2, 3), keepdim=True)
-        w = self.fc2(F.silu(self.fc1(w)))
+        w = self.fc2(self.act(self.fc1(w)))
         return x * torch.sigmoid(w)
 
 
@@ -426,7 +427,7 @@ class MiniCenterNet(nn.Module):
             self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
             self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
-            self.se = SEModule(out_c)
+            self.se = SEModule(out_c, activation=activation)
         elif last_se == "ese":
             self.se = EfficientSEModule(out_c)
         else:
@@ -517,7 +518,7 @@ class AnchorCNN(nn.Module):
             self.stage2 = DWConvBlock(width, width, stride=s2, activation=activation)
             self.stage3 = DWConvBlock(width, out_c, stride=s3, activation=activation)
         if last_se == "se":
-            self.se = SEModule(out_c)
+            self.se = SEModule(out_c, activation=activation)
         elif last_se == "ese":
             self.se = EfficientSEModule(out_c)
         else:
@@ -667,12 +668,12 @@ class TinyDETR(nn.Module):
 class _BackboneWithSE(nn.Module):
     """Wrapper to apply SE/eSE on backbone output."""
 
-    def __init__(self, backbone: nn.Module, mode: str = "none"):
+    def __init__(self, backbone: nn.Module, mode: str = "none", activation: str = "swish"):
         super().__init__()
         self.backbone = backbone
         out_c = getattr(backbone, "out_channels", None)
         if mode == "se":
-            self.se = SEModule(out_c)
+            self.se = SEModule(out_c, activation=activation)
         elif mode == "ese":
             self.se = EfficientSEModule(out_c)
         else:
@@ -734,7 +735,7 @@ def _build_backbone(
     if se_mode not in ("none", "se", "ese"):
         raise ValueError(f"Unknown backbone_se: {backbone_se}")
     if se_mode != "none":
-        bb = _BackboneWithSE(bb, mode=se_mode)
+        bb = _BackboneWithSE(bb, mode=se_mode, activation=activation)
     return bb, getattr(bb, "out_channels", None)
 
 
@@ -806,6 +807,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             )
     elif arch == "ultratinyod":
         use_head_ese = bool(kwargs.get("use_head_ese", kwargs.get("utod_head_ese", False)))
+        utod_activation = kwargs.get("activation", "swish")
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
@@ -814,6 +816,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_head_ese=use_head_ese,
             use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
             quality_power=float(kwargs.get("quality_power", 1.0)),
+            activation=utod_activation,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(
@@ -825,6 +828,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_head_ese=use_head_ese,
             use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
             quality_power=float(kwargs.get("quality_power", 1.0)),
+            activation=utod_activation,
         )
     elif arch == "transformer":
         model = TinyDETR(
