@@ -352,11 +352,13 @@ def anchor_loss(
                     rem = int(idx % (h * w))
                     gj = rem // w
                     gi = rem % w
-                target_obj[bi, a, gj, gi] = 1.0
-                target_cls[bi, a, gj, gi, cls_id] = iou_g[idx]
-                target_box[bi, a, gj, gi] = boxes[gt_idx]
-                if use_quality and target_quality is not None:
-                    target_quality[bi, a, gj, gi] = 1.0
+                    target_obj[bi, a, gj, gi] = 1.0
+                    # For IoU-aware heads, keep cls target high (1.0) and let quality carry IoU.
+                    cls_target_val = 1.0 if use_quality else iou_g[idx]
+                    target_cls[bi, a, gj, gi, cls_id] = cls_target_val
+                    target_box[bi, a, gj, gi] = boxes[gt_idx]
+                    if use_quality and target_quality is not None:
+                        target_quality[bi, a, gj, gi] = 1.0
     else:
         raise ValueError(f"Unknown assigner: {assigner}")
 
