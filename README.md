@@ -35,6 +35,17 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   |M|12.74 M|1.60 G|0.46502|3.95 ms|51.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_se_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_se_64x64_quality_nopost.onnx)|
   |L|22.59 M|2.83 G|0.45787|6.52 ms|90.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_64x64_quality_nopost.onnx)|
 
+- w ESE + IoU-aware
+
+  |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
+  |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+  |N| M| G|| ms| MB|[Download]()|[Download]()|
+  |T| M| G|| ms| MB|[Download]()|[Download]()|
+  |S| M| G|| ms| MB|[Download]()|[Download]()|
+  |C| M| G|| ms| MB|[Download]()|[Download]()|
+  |M|14.09 M|1.77 G|0.46562|5.05 ms|56.4 MB|[Download]()|[Download]()|
+  |L|24.98 M|3.13 G|0.47774|7.46 ms|100 MB|[Download]()|[Download]()|
+
 ## Inference
 - ONNX with post-processing
   ```bash
