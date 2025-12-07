@@ -39,10 +39,10 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-  |N| M| G|| ms| MB|[Download]()|[Download]()|
-  |T| M| G|| ms| MB|[Download]()|[Download]()|
-  |S| M| G|| ms| MB|[Download]()|[Download]()|
-  |C| M| G|| ms| MB|[Download]()|[Download]()|
+  |N|1.60 M|0.20 G|0.42806|1.25 ms|6.5 MB|[Download]()|[Download]()|
+  |T|3.56 M|0.45 G|0.46502|1.82 ms|14.3 MB|[Download]()|[Download]()|
+  |S|6.30 M|0.79 G|0.47473|2.78 ms|25.2 MB|[Download]()|[Download]()|
+  |C|9.81 M|1.23 G|0.46235|3.58 ms|39.3 MB|[Download]()|[Download]()|
   |M|14.09 M|1.77 G|0.46562|5.05 ms|56.4 MB|[Download]()|[Download]()|
   |L|24.98 M|3.13 G|0.47774|7.46 ms|100 MB|[Download]()|[Download]()|
 
