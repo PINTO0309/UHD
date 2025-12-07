@@ -457,6 +457,72 @@ uv run python train.py \
 ```bash
 SIZE=64x64
 ANCHOR=8
+CNNWIDTH=64
+LR=0.005
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_iou_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=96
+LR=0.004
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_se_iou_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese
+```
+```bash
+SIZE=64x64
+ANCHOR=8
 CNNWIDTH=128
 LR=0.003
 IMPHEAD=quality
