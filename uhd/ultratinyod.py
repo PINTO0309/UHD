@@ -145,6 +145,30 @@ class EfficientSE(nn.Module):
         return x * w
 
 
+class ReceptiveFieldEnhancer(nn.Module):
+    """Lightweight receptive-field block mixing dilated and wide depthwise convs."""
+
+    def __init__(self, channels: int, dilation: int = 2, act_name: str = "silu") -> None:
+        super().__init__()
+        d = max(1, int(dilation))
+        self.branch_dilated = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=d, dilation=d, groups=channels, bias=False),
+            nn.BatchNorm2d(channels, eps=1e-3, momentum=0.03),
+            _make_activation(act_name),
+        )
+        self.branch_wide = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=5, stride=1, padding=2, groups=channels, bias=False),
+            nn.BatchNorm2d(channels, eps=1e-3, momentum=0.03),
+            _make_activation(act_name),
+        )
+        self.fuse = ConvBNAct(channels * 2, channels, k=1, s=1, p=0, act_name=act_name)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b1 = self.branch_dilated(x)
+        b2 = self.branch_wide(x)
+        return x + self.fuse(torch.cat([b1, b2], dim=1))
+
+
 class SPPFmin(nn.Module):
     """
     かなり軽量化した SPPF (Spatial Pyramid Pooling - Fast) 風ブロック
@@ -262,6 +286,11 @@ class UltraTinyODConfig:
     fpn_strides: Optional[Sequence[int]] = None
     use_fpn_strict: bool = False
     activation: str = "silu"
+    use_context_rfb: bool = False
+    context_dilation: int = 2
+    use_large_obj_branch: bool = False
+    large_obj_branch_depth: int = 1
+    large_obj_branch_expansion: float = 1.0
 
     def __post_init__(self):
         if self.anchors is None:
@@ -283,6 +312,11 @@ class UltraTinyODConfig:
         self.fpn_strides = [int(s) for s in self.fpn_strides]
         act = (self.activation or "silu").lower()
         self.activation = "silu" if act == "swish" else act
+        self.use_context_rfb = bool(self.use_context_rfb)
+        self.context_dilation = max(1, int(self.context_dilation))
+        self.use_large_obj_branch = bool(self.use_large_obj_branch)
+        self.large_obj_branch_depth = max(1, int(self.large_obj_branch_depth))
+        self.large_obj_branch_expansion = float(max(0.25, self.large_obj_branch_expansion))
 
 
 class UltraTinyODHead(nn.Module):
@@ -305,6 +339,11 @@ class UltraTinyODHead(nn.Module):
         self.use_improved_head = bool(getattr(cfg, "use_improved_head", False))
         self.use_head_ese = bool(getattr(cfg, "use_head_ese", False))
         self.use_iou_aware_head = bool(getattr(cfg, "use_iou_aware_head", False))
+        self.use_context_rfb = bool(getattr(cfg, "use_context_rfb", False))
+        self.context_dilation = max(1, int(getattr(cfg, "context_dilation", 2)))
+        self.use_large_obj_branch = bool(getattr(cfg, "use_large_obj_branch", False))
+        self.large_obj_branch_depth = max(1, int(getattr(cfg, "large_obj_branch_depth", 1)))
+        self.large_obj_branch_expansion = float(max(0.25, getattr(cfg, "large_obj_branch_expansion", 1.0)))
         self.has_quality = self.use_improved_head or self.use_iou_aware_head
         self.quality_power = float(getattr(cfg, "quality_power", 1.0))
         anchor_tensor = torch.as_tensor(cfg.anchors, dtype=torch.float32)
@@ -335,6 +374,25 @@ class UltraTinyODHead(nn.Module):
             )
         if self.use_head_ese:
             self.head_se = EfficientSE(in_channels)
+        self.head_rfb = (
+            ReceptiveFieldEnhancer(in_channels, dilation=self.context_dilation, act_name=act_name)
+            if self.use_context_rfb
+            else None
+        )
+        if self.use_large_obj_branch:
+            lob_ch = int(round(in_channels * self.large_obj_branch_expansion))
+            self.large_obj_down = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, groups=in_channels, bias=False),
+                nn.BatchNorm2d(in_channels, eps=1e-3, momentum=0.03),
+                _make_activation(act_name),
+                ConvBNAct(in_channels, lob_ch, k=1, s=1, p=0, act_name=act_name),
+            )
+            self.large_obj_blocks = nn.Sequential(
+                *[DWConv(lob_ch, lob_ch, k=3, s=1, act=True, act_name=act_name) for _ in range(self.large_obj_branch_depth)]
+            )
+            self.large_obj_fuse = ConvBNAct(lob_ch, in_channels, k=1, s=1, p=0, act_name=act_name)
+        else:
+            self.large_obj_down = None
 
         # box ブランチ
         if self.use_iou_aware_head:
@@ -507,6 +565,13 @@ class UltraTinyODHead(nn.Module):
             x = x + self.context_res(x)
         if self.use_head_ese:
             x = self.head_se(x)
+        if self.head_rfb is not None:
+            x = self.head_rfb(x)
+        if self.large_obj_down is not None:
+            lob = self.large_obj_down(x)
+            lob = self.large_obj_blocks(lob)
+            lob = F.interpolate(lob, size=(h, w), mode="nearest")
+            x = x + self.large_obj_fuse(lob)
 
         # box ブランチ
         if self.use_iou_aware_head:

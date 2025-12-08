@@ -817,6 +817,11 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
             quality_power=float(kwargs.get("quality_power", 1.0)),
             activation=utod_activation,
+            use_context_rfb=bool(kwargs.get("utod_context_rfb", False)),
+            context_dilation=int(kwargs.get("utod_context_dilation", 2)),
+            use_large_obj_branch=bool(kwargs.get("utod_large_obj_branch", False)),
+            large_obj_branch_depth=int(kwargs.get("utod_large_obj_depth", 1)),
+            large_obj_branch_expansion=float(kwargs.get("utod_large_obj_ch_scale", 1.0)),
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(
