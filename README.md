@@ -7,7 +7,7 @@ This model is an experimental implementation and is not suitable for real-time i
 
 https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 
-- S / w ESE + IoU-aware + ReLU
+- Variant-S / `w ESE + IoU-aware + ReLU`
 
 |Input<br>64x64|Output|Input<br>64x64|Output|
 |:-:|:-:|:-:|:-:|
