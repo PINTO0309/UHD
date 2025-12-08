@@ -58,7 +58,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   |S|6.30 M|0.79 G|0.45776|1.71 ms|25.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_quality_relu_nopost.onnx)|
   |C|9.81 M|1.23 G|0.45385|2.51 ms|39.3 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_quality_relu_nopost.onnx)|
   |M|14.09 M|1.77 G|0.47468|3.54 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality_relu_nopost.onnx)|
-  |L|24.98 M|3.13 G|0.47774|6.14 ms|100 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu_nopost.onnx)|
+  |L|24.98 M|3.13 G|0.46965|6.14 ms|100 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu_nopost.onnx)|
 
 
 ## Inference
