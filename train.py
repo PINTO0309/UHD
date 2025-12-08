@@ -492,6 +492,26 @@ def collect_box_wh(dataset) -> np.ndarray:
 
 def _infer_cnn_feat_channels(model: torch.nn.Module, use_anchor: bool, num_classes: int) -> int:
     """Best-effort inference of CNN feature channels (pre-head)."""
+    # UltraTinyOD / anchor-style heads expose in_channels or backbone.out_channels; prefer those.
+    if use_anchor:
+        head = getattr(model, "head", None)
+        if head is not None:
+            if hasattr(head, "in_channels"):
+                try:
+                    return int(head.in_channels)
+                except Exception:
+                    pass
+            if hasattr(head, "backbone") and hasattr(head.backbone, "out_channels"):
+                try:
+                    return int(head.backbone.out_channels)
+                except Exception:
+                    pass
+    backbone = getattr(model, "backbone", None)
+    if backbone is not None and hasattr(backbone, "out_channels"):
+        try:
+            return int(backbone.out_channels)
+        except Exception:
+            pass
     if use_anchor and hasattr(model, "head"):
         head = getattr(model, "head", None)
         if isinstance(head, torch.nn.Conv2d):
@@ -662,6 +682,8 @@ def train_one_epoch(
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     warn_anchor_mismatch = False
     warn_class_mismatch = False
+    warn_nonfinite_kl = False
+    warn_nonfinite_loss = False
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
         targets_dev = move_targets(targets, device)
@@ -777,15 +799,23 @@ def train_one_epoch(
                                     t_cls_logits = _interp_anchor_map(t_cls_logits, (sh, sw))
                                 if distill_kl > 0:
                                     temp = max(distill_temperature, 1e-6)
-                                    t_prob = (t_cls_logits.detach() / temp).softmax(dim=-1)
-                                    s_logprob = (s_cls_logits / temp).log_softmax(dim=-1)
+                                    t_prob = torch.nan_to_num(
+                                        (t_cls_logits.detach() / temp).softmax(dim=-1), nan=0.0, posinf=1.0, neginf=0.0
+                                    )
+                                    s_logprob = torch.nan_to_num(
+                                        (s_cls_logits / temp).log_softmax(dim=-1), nan=0.0, posinf=0.0, neginf=0.0
+                                    )
                                     kl = torch.nn.functional.kl_div(
                                         s_logprob.reshape(-1, num_classes),
                                         t_prob.reshape(-1, num_classes),
                                         reduction="batchmean",
                                     ) * (temp * temp)
-                                    loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
-                                    loss_dict["distill_kl"] = kl
+                                    if torch.isfinite(kl):
+                                        loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                                        loss_dict["distill_kl"] = kl
+                                    elif not warn_nonfinite_kl:
+                                        print("Non-finite anchor KL distill value; skipping this term for stability.")
+                                        warn_nonfinite_kl = True
                                 if distill_box_l1 > 0:
                                     l1d = torch.nn.functional.l1_loss(
                                         torch.nan_to_num(s_boxes),
@@ -829,16 +859,25 @@ def train_one_epoch(
                     # KL distillation on logits (Q,B,C+1)
                     if distill_kl > 0:
                         temp = max(distill_temperature, 1e-6)
-                        t_prob = (teacher_logits.detach() / temp).softmax(-1)
-                        s_logprob = (logits / temp).log_softmax(-1)
+                        t_prob = torch.nan_to_num((teacher_logits.detach() / temp).softmax(-1), nan=0.0, posinf=1.0, neginf=0.0)
+                        s_logprob = torch.nan_to_num((logits / temp).log_softmax(-1), nan=0.0, posinf=0.0, neginf=0.0)
                         kl = torch.nn.functional.kl_div(s_logprob, t_prob, reduction="batchmean") * (temp * temp)
-                        loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
-                        loss_dict["distill_kl"] = kl
+                        if torch.isfinite(kl):
+                            loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                            loss_dict["distill_kl"] = kl
+                        elif not warn_nonfinite_kl:
+                            print("Non-finite transformer KL distill value; skipping this term for stability.")
+                            warn_nonfinite_kl = True
                     if distill_box_l1 > 0:
                         l1d = torch.nn.functional.l1_loss(box_pred.detach(), teacher_boxes.detach(), reduction="mean")
                         loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
                         loss_dict["distill_box_l1"] = l1d
             loss = loss_dict["loss"]
+        if not torch.isfinite(loss):
+            if not warn_nonfinite_loss:
+                print(f"Non-finite loss detected at step {step}; skipping backward/optimizer step.")
+                warn_nonfinite_loss = True
+            continue
         if scaler.is_enabled():
             scaler.scale(loss).backward()
             if grad_clip_norm and grad_clip_norm > 0:
@@ -1667,7 +1706,7 @@ def main():
             t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
             teacher_model = build_model(
                 t_arch,
-                width=args.cnn_width,
+                width=int(t_meta.get("cnn_width", args.cnn_width)),
                 num_queries=teacher_num_queries or args.num_queries,
                 d_model=teacher_d_model or args.d_model,
                 heads=teacher_heads or args.heads,
@@ -1697,6 +1736,11 @@ def main():
             t_last_width_scale = t_meta.get("last_width_scale", last_width_scale)
             t_output_stride = int(t_meta.get("output_stride", output_stride))
             t_utod_residual = bool(t_meta.get("utod_residual", utod_residual))
+            t_cnn_width = int(t_meta.get("cnn_width", args.cnn_width))
+            t_use_improved_head = bool(t_meta.get("use_improved_head", use_improved_head))
+            t_utod_head_ese = bool(t_meta.get("utod_head_ese", utod_head_ese))
+            t_use_iou_aware_head = bool(t_meta.get("use_iou_aware_head", use_iou_aware_head))
+            t_quality_power = float(t_meta.get("quality_power", quality_power))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
@@ -1724,7 +1768,7 @@ def main():
             t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
-                width=args.cnn_width,
+                width=t_cnn_width,
                 num_classes=t_num_classes,
                 use_skip=t_use_skip,
                 activation=t_activation,
@@ -1735,6 +1779,10 @@ def main():
                 last_se=t_last_se,
                 last_width_scale=t_last_width_scale,
                 output_stride=t_output_stride,
+                use_improved_head=t_use_improved_head,
+                use_iou_aware_head=t_use_iou_aware_head,
+                quality_power=t_quality_power,
+                utod_head_ese=t_utod_head_ese,
                 backbone=t_backbone,
                 backbone_channels=t_backbone_channels,
                 backbone_blocks=t_backbone_blocks,
