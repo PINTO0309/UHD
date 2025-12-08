@@ -492,6 +492,26 @@ def collect_box_wh(dataset) -> np.ndarray:
 
 def _infer_cnn_feat_channels(model: torch.nn.Module, use_anchor: bool, num_classes: int) -> int:
     """Best-effort inference of CNN feature channels (pre-head)."""
+    # UltraTinyOD / anchor-style heads expose in_channels or backbone.out_channels; prefer those.
+    if use_anchor:
+        head = getattr(model, "head", None)
+        if head is not None:
+            if hasattr(head, "in_channels"):
+                try:
+                    return int(head.in_channels)
+                except Exception:
+                    pass
+            if hasattr(head, "backbone") and hasattr(head.backbone, "out_channels"):
+                try:
+                    return int(head.backbone.out_channels)
+                except Exception:
+                    pass
+    backbone = getattr(model, "backbone", None)
+    if backbone is not None and hasattr(backbone, "out_channels"):
+        try:
+            return int(backbone.out_channels)
+        except Exception:
+            pass
     if use_anchor and hasattr(model, "head"):
         head = getattr(model, "head", None)
         if isinstance(head, torch.nn.Conv2d):
