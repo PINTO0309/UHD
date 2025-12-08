@@ -688,6 +688,8 @@ uv run python train.py \
 
 ## CLI parameters
 
+<details><summary>Click to expand</summary>
+
 | Parameter | Description | Default |
 | --- | --- | --- |
 | `--arch` | Model architecture: `cnn`, `transformer`, or anchor-only `ultratinyod`. | `cnn` |
@@ -776,6 +778,8 @@ Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in 
 - `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with progressive widening and doubled refinements, ending at ~128ch, stride 8.
 All custom backbones can optionally apply SE/eSE on the backbone output via `--backbone-se {none,se,ese}`.
 
+</details>
+
 ## Augmentation via YAML
 - Specify a YAML file with `--aug-config` to run the `data_augment:` entries in the listed order (e.g., `--aug-config uhd/aug.yaml`).
 - Supported ops (examples): Mosaic / MixUp / CopyPaste / HorizontalFlip (class_swap_map supported) / VerticalFlip / RandomScale / Translation / RandomCrop / RandomResizedCrop / RandomBrightness / RandomContrast / RandomSaturation / RandomHSV / RandomPhotometricDistort / Blur / MedianBlur / MotionBlur / GaussianBlur / GaussNoise / ImageCompression / ISONoise / RandomRain / RandomFog / RandomSunFlare / CLAHE / ToGray / RemoveOutliers.
@@ -801,6 +805,9 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 - `iou`: 1 - IoU for matched predictions
 
 ## ONNX export
+
+<details><summary>Click to expand</summary>
+
 - Export a checkpoint to ONNX (auto-detects arch from checkpoint unless overridden):
   ```bash
   SIZE=64x64
@@ -852,6 +859,8 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --opset 17
   ```
 
+</details>
+
 ## INT8 quantization
 
 ```bash
@@ -863,7 +872,7 @@ uv run onnx2tf \
 
 ## Arch
 
-<img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality" src="https://github.com/user-attachments/assets/e0302a17-1311-4fb0-be8d-4525a8228042" />
+<img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality_relu" src="https://github.com/user-attachments/assets/5d48c745-a830-4d9f-bcae-64c25cbeb560" />
 
 ## Ultra-lightweight classification model series
 1. [VSDLM: Visual-only speech detection driven by lip movements](https://github.com/PINTO0309/VSDLM) - MIT License
