@@ -1667,7 +1667,7 @@ def main():
             t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
             teacher_model = build_model(
                 t_arch,
-                width=args.cnn_width,
+                width=int(t_meta.get("cnn_width", args.cnn_width)),
                 num_queries=teacher_num_queries or args.num_queries,
                 d_model=teacher_d_model or args.d_model,
                 heads=teacher_heads or args.heads,
@@ -1697,6 +1697,11 @@ def main():
             t_last_width_scale = t_meta.get("last_width_scale", last_width_scale)
             t_output_stride = int(t_meta.get("output_stride", output_stride))
             t_utod_residual = bool(t_meta.get("utod_residual", utod_residual))
+            t_cnn_width = int(t_meta.get("cnn_width", args.cnn_width))
+            t_use_improved_head = bool(t_meta.get("use_improved_head", use_improved_head))
+            t_utod_head_ese = bool(t_meta.get("utod_head_ese", utod_head_ese))
+            t_use_iou_aware_head = bool(t_meta.get("use_iou_aware_head", use_iou_aware_head))
+            t_quality_power = float(t_meta.get("quality_power", quality_power))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
@@ -1724,7 +1729,7 @@ def main():
             t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
-                width=args.cnn_width,
+                width=t_cnn_width,
                 num_classes=t_num_classes,
                 use_skip=t_use_skip,
                 activation=t_activation,
@@ -1735,6 +1740,10 @@ def main():
                 last_se=t_last_se,
                 last_width_scale=t_last_width_scale,
                 output_stride=t_output_stride,
+                use_improved_head=t_use_improved_head,
+                use_iou_aware_head=t_use_iou_aware_head,
+                quality_power=t_quality_power,
+                utod_head_ese=t_utod_head_ese,
                 backbone=t_backbone,
                 backbone_channels=t_backbone_channels,
                 backbone_blocks=t_backbone_blocks,
