@@ -682,6 +682,8 @@ def train_one_epoch(
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     warn_anchor_mismatch = False
     warn_class_mismatch = False
+    warn_nonfinite_kl = False
+    warn_nonfinite_loss = False
     for step, (imgs, targets) in enumerate(pbar):
         imgs = imgs.to(device)
         targets_dev = move_targets(targets, device)
@@ -797,15 +799,23 @@ def train_one_epoch(
                                     t_cls_logits = _interp_anchor_map(t_cls_logits, (sh, sw))
                                 if distill_kl > 0:
                                     temp = max(distill_temperature, 1e-6)
-                                    t_prob = (t_cls_logits.detach() / temp).softmax(dim=-1)
-                                    s_logprob = (s_cls_logits / temp).log_softmax(dim=-1)
+                                    t_prob = torch.nan_to_num(
+                                        (t_cls_logits.detach() / temp).softmax(dim=-1), nan=0.0, posinf=1.0, neginf=0.0
+                                    )
+                                    s_logprob = torch.nan_to_num(
+                                        (s_cls_logits / temp).log_softmax(dim=-1), nan=0.0, posinf=0.0, neginf=0.0
+                                    )
                                     kl = torch.nn.functional.kl_div(
                                         s_logprob.reshape(-1, num_classes),
                                         t_prob.reshape(-1, num_classes),
                                         reduction="batchmean",
                                     ) * (temp * temp)
-                                    loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
-                                    loss_dict["distill_kl"] = kl
+                                    if torch.isfinite(kl):
+                                        loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                                        loss_dict["distill_kl"] = kl
+                                    elif not warn_nonfinite_kl:
+                                        print("Non-finite anchor KL distill value; skipping this term for stability.")
+                                        warn_nonfinite_kl = True
                                 if distill_box_l1 > 0:
                                     l1d = torch.nn.functional.l1_loss(
                                         torch.nan_to_num(s_boxes),
@@ -849,16 +859,25 @@ def train_one_epoch(
                     # KL distillation on logits (Q,B,C+1)
                     if distill_kl > 0:
                         temp = max(distill_temperature, 1e-6)
-                        t_prob = (teacher_logits.detach() / temp).softmax(-1)
-                        s_logprob = (logits / temp).log_softmax(-1)
+                        t_prob = torch.nan_to_num((teacher_logits.detach() / temp).softmax(-1), nan=0.0, posinf=1.0, neginf=0.0)
+                        s_logprob = torch.nan_to_num((logits / temp).log_softmax(-1), nan=0.0, posinf=0.0, neginf=0.0)
                         kl = torch.nn.functional.kl_div(s_logprob, t_prob, reduction="batchmean") * (temp * temp)
-                        loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
-                        loss_dict["distill_kl"] = kl
+                        if torch.isfinite(kl):
+                            loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
+                            loss_dict["distill_kl"] = kl
+                        elif not warn_nonfinite_kl:
+                            print("Non-finite transformer KL distill value; skipping this term for stability.")
+                            warn_nonfinite_kl = True
                     if distill_box_l1 > 0:
                         l1d = torch.nn.functional.l1_loss(box_pred.detach(), teacher_boxes.detach(), reduction="mean")
                         loss_dict["loss"] = loss_dict["loss"] + (distill_box_l1 * distill_scale) * l1d
                         loss_dict["distill_box_l1"] = l1d
             loss = loss_dict["loss"]
+        if not torch.isfinite(loss):
+            if not warn_nonfinite_loss:
+                print(f"Non-finite loss detected at step {step}; skipping backward/optimizer step.")
+                warn_nonfinite_loss = True
+            continue
         if scaler.is_enabled():
             scaler.scale(loss).backward()
             if grad_clip_norm and grad_clip_norm > 0:
