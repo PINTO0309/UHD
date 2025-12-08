@@ -852,6 +852,15 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   --opset 17
   ```
 
+## INT8 quantization
+
+```bash
+uv run onnx2tf \
+-i ultratinyod_res_anc8_w64_64x64_quality_relu_nopost.onnx \
+-cotof \
+-oiqt
+```
+
 ## Arch
 
 <img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality" src="https://github.com/user-attachments/assets/e0302a17-1311-4fb0-be8d-4525a8228042" />
