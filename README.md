@@ -898,6 +898,227 @@ uv run python train.py \
 
 </details>
 
+<details><summary>use-improved-head + use-iou-aware-head + utod-head-ese + utod-large-obj-branch</summary>
+
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=64
+LR=0.005
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=96
+LR=0.004
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=128
+LR=0.003
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=160
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+
+ANCHOR=8
+CNNWIDTH=192
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=256
+LR=0.001
+IMPHEAD=quality
+uv run python train.py \
+--arch ultratinyod \
+--image-dir data/wholebody34/obj_train_data \
+--img-size ${SIZE} \
+--exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_loese_${SIZE}_${IMPHEAD}_lr${LR} \
+--batch-size 64 \
+--epochs 300 \
+--lr ${LR} \
+--weight-decay 0.0001 \
+--num-workers 12 \
+--device cuda \
+--use-amp \
+--classes 0 \
+--cnn-width ${CNNWIDTH} \
+--auto-anchors \
+--num-anchors ${ANCHOR} \
+--iou-loss ciou \
+--conf-thresh 0.15 \
+--use-ema \
+--ema-decay 0.9999 \
+--grad-clip-norm 10.0 \
+--use-batchnorm \
+--utod-residual \
+--use-improved-head \
+--use-iou-aware-head \
+--utod-head-ese \
+--activation relu \
+--utod-large-obj-branch \
+--utod-large-obj-depth 2 \
+--utod-large-obj-ch-scale 1.25
+```
+
+</details>
+
 ## Validation-only Example
 
 Example of running only validation on a trained checkpoint:
