@@ -89,7 +89,7 @@ gh release download onnx -R PINTO0309/UHD
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-  |N|1.98 M|0.22 G|0.40903|0.77 ms|8 MB|[Download]()|[Download]()|
+  |N|1.98 M|0.22 G|0.40903|0.77 ms|8.0 MB|[Download]()|[Download]()|
   |T|4.40 M|0.49 G|0.46170|1.40 ms|17.7 MB|[Download]()|[Download]()|
   |S|7.79 M|0.87 G|0.45860|2.30 ms|31.2 MB|[Download]()|[Download]()|
   |C|12.13 M|1.35 G|0.47518|2.83 ms|48.6 MB|[Download]()|[Download]()|
