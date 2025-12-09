@@ -563,8 +563,6 @@ class UltraTinyODHead(nn.Module):
         x = self.context(x).contiguous()
         if self.use_improved_head:
             x = x + self.context_res(x)
-        if self.use_head_ese:
-            x = self.head_se(x)
         if self.head_rfb is not None:
             x = self.head_rfb(x)
         if self.large_obj_down is not None:
@@ -572,6 +570,8 @@ class UltraTinyODHead(nn.Module):
             lob = self.large_obj_blocks(lob)
             lob = F.interpolate(lob, size=(h, w), mode="nearest")
             x = x + self.large_obj_fuse(lob)
+        if self.use_head_ese:
+            x = self.head_se(x)
 
         # box ブランチ
         if self.use_iou_aware_head:
