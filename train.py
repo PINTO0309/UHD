@@ -146,6 +146,34 @@ def parse_args():
     parser.add_argument("--utod-residual", action="store_true", help="Enable residual skips inside the UltraTinyOD backbone.")
     parser.add_argument("--utod-head-ese", action="store_true", help="UltraTinyOD head: apply lightweight eSE on shared features.")
     parser.add_argument(
+        "--utod-context-rfb",
+        action="store_true",
+        help="UltraTinyOD head: add a receptive-field block (dilated + wide depthwise) before prediction layers.",
+    )
+    parser.add_argument(
+        "--utod-context-dilation",
+        type=int,
+        default=2,
+        help="Dilation used in UltraTinyOD receptive-field block (only when --utod-context-rfb).",
+    )
+    parser.add_argument(
+        "--utod-large-obj-branch",
+        action="store_true",
+        help="UltraTinyOD head: add a downsampled large-object refinement branch (no FPN).",
+    )
+    parser.add_argument(
+        "--utod-large-obj-depth",
+        type=int,
+        default=2,
+        help="Number of depthwise blocks in the large-object branch (only when --utod-large-obj-branch).",
+    )
+    parser.add_argument(
+        "--utod-large-obj-ch-scale",
+        type=float,
+        default=1.0,
+        help="Channel scale for the large-object branch (relative to head channels).",
+    )
+    parser.add_argument(
         "--backbone",
         default=None,
         choices=["microcspnet", "ultratinyresnet", "enhanced-shufflenet", "none", None],
@@ -1304,6 +1332,11 @@ def main():
     use_iou_aware_head = bool(args.use_iou_aware_head)
     quality_power = float(args.quality_power)
     utod_head_ese = bool(args.utod_head_ese)
+    utod_context_rfb = bool(args.utod_context_rfb)
+    utod_context_dilation = int(args.utod_context_dilation)
+    utod_large_obj_branch = bool(args.utod_large_obj_branch)
+    utod_large_obj_depth = int(args.utod_large_obj_depth)
+    utod_large_obj_ch_scale = float(args.utod_large_obj_ch_scale)
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
@@ -1336,7 +1369,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power
+        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1363,6 +1396,16 @@ def main():
         if "utod_residual" in meta and bool(meta["utod_residual"]) != utod_residual:
             print(f"Overriding CLI utod-residual={utod_residual} with {label} utod-residual={bool(meta['utod_residual'])}")
             utod_residual = bool(meta["utod_residual"])
+        if "utod_context_rfb" in meta:
+            utod_context_rfb = bool(meta["utod_context_rfb"])
+        if "utod_context_dilation" in meta and meta["utod_context_dilation"]:
+            utod_context_dilation = int(meta["utod_context_dilation"])
+        if "utod_large_obj_branch" in meta:
+            utod_large_obj_branch = bool(meta["utod_large_obj_branch"])
+        if "utod_large_obj_depth" in meta and meta["utod_large_obj_depth"]:
+            utod_large_obj_depth = int(meta["utod_large_obj_depth"])
+        if "utod_large_obj_ch_scale" in meta and meta["utod_large_obj_ch_scale"]:
+            utod_large_obj_ch_scale = float(meta["utod_large_obj_ch_scale"])
         if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
             print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
             use_fpn = bool(meta["use_fpn"])
@@ -1550,6 +1593,11 @@ def main():
         last_se=last_se,
         last_width_scale=last_width_scale,
         output_stride=output_stride,
+        utod_context_rfb=utod_context_rfb,
+        utod_context_dilation=utod_context_dilation,
+        utod_large_obj_branch=utod_large_obj_branch,
+        utod_large_obj_depth=utod_large_obj_depth,
+        utod_large_obj_ch_scale=utod_large_obj_ch_scale,
         backbone=backbone,
         backbone_channels=backbone_channels,
         backbone_blocks=backbone_blocks,
@@ -1741,6 +1789,11 @@ def main():
             t_utod_head_ese = bool(t_meta.get("utod_head_ese", utod_head_ese))
             t_use_iou_aware_head = bool(t_meta.get("use_iou_aware_head", use_iou_aware_head))
             t_quality_power = float(t_meta.get("quality_power", quality_power))
+            t_utod_context_rfb = bool(t_meta.get("utod_context_rfb", utod_context_rfb))
+            t_utod_context_dilation = int(t_meta.get("utod_context_dilation", utod_context_dilation))
+            t_utod_large_obj_branch = bool(t_meta.get("utod_large_obj_branch", utod_large_obj_branch))
+            t_utod_large_obj_depth = int(t_meta.get("utod_large_obj_depth", utod_large_obj_depth))
+            t_utod_large_obj_ch_scale = float(t_meta.get("utod_large_obj_ch_scale", utod_large_obj_ch_scale))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
@@ -1783,6 +1836,11 @@ def main():
                 use_iou_aware_head=t_use_iou_aware_head,
                 quality_power=t_quality_power,
                 utod_head_ese=t_utod_head_ese,
+                utod_context_rfb=t_utod_context_rfb,
+                utod_context_dilation=t_utod_context_dilation,
+                utod_large_obj_branch=t_utod_large_obj_branch,
+                utod_large_obj_depth=t_utod_large_obj_depth,
+                utod_large_obj_ch_scale=t_utod_large_obj_ch_scale,
                 backbone=t_backbone,
                 backbone_channels=t_backbone_channels,
                 backbone_blocks=t_backbone_blocks,
@@ -2001,6 +2059,11 @@ def main():
                     "use_iou_aware_head": use_iou_aware_head,
                     "quality_power": quality_power,
                     "utod_head_ese": utod_head_ese,
+                    "utod_context_rfb": utod_context_rfb,
+                    "utod_context_dilation": utod_context_dilation,
+                    "utod_large_obj_branch": utod_large_obj_branch,
+                    "utod_large_obj_depth": utod_large_obj_depth,
+                    "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
                     "best_map": best_map,
@@ -2077,6 +2140,11 @@ def main():
             "use_iou_aware_head": use_iou_aware_head,
             "quality_power": quality_power,
             "utod_head_ese": utod_head_ese,
+            "utod_context_rfb": utod_context_rfb,
+            "utod_context_dilation": utod_context_dilation,
+            "utod_large_obj_branch": utod_large_obj_branch,
+            "utod_large_obj_depth": utod_large_obj_depth,
+            "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
             "activation": activation,
             "use_batchnorm": use_batchnorm,
             "best_map": best_map,

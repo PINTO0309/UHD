@@ -91,6 +91,11 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         print("[WARN] eSE requested in checkpoint meta but head.head_se weights missing; disabling eSE for export.")
     use_head_ese = bool(has_ese_weights)
     use_residual = bool(meta.get("utod_residual") or "backbone.block3_skip.conv.weight" in state)
+    use_context_rfb = bool(meta.get("utod_context_rfb") or any(k.startswith("head.head_rfb") for k in state.keys()))
+    context_dilation = int(meta.get("utod_context_dilation", 2))
+    use_large_obj_branch = bool(meta.get("utod_large_obj_branch") or any(k.startswith("head.large_obj_") for k in state.keys()))
+    large_obj_depth = int(meta.get("utod_large_obj_depth", 1))
+    large_obj_ch_scale = float(meta.get("utod_large_obj_ch_scale", 1.0))
 
     cfg = UltraTinyODConfig(
         num_classes=num_classes,
@@ -101,6 +106,11 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         use_iou_aware_head=use_iou_aware_head,
         quality_power=quality_power,
         activation=activation,
+        use_context_rfb=use_context_rfb,
+        context_dilation=context_dilation,
+        use_large_obj_branch=use_large_obj_branch,
+        large_obj_branch_depth=large_obj_depth,
+        large_obj_branch_expansion=large_obj_ch_scale,
     )
     overrides = {
         "num_classes": num_classes,
@@ -114,6 +124,11 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "quality_power": quality_power,
         "anchors_source": anchors_source,
         "activation": activation,
+        "use_context_rfb": use_context_rfb,
+        "context_dilation": context_dilation,
+        "use_large_obj_branch": use_large_obj_branch,
+        "large_obj_branch_depth": large_obj_depth,
+        "large_obj_branch_expansion": large_obj_ch_scale,
     }
     return cfg, overrides
 
