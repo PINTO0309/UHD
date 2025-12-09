@@ -100,12 +100,11 @@ gh release download onnx -R PINTO0309/UHD
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-  |N|1.98 M|0.22 G||0.77 ms|8.0 MB|[Download]()|[Download]()|
-  |T|4.40 M|0.49 G||1.40 ms|17.7 MB|[Download]()|[Download]()|
-  |S|7.79 M|0.87 G||2.30 ms|31.2 MB|[Download]()|[Download]()|
-  |C|12.13 M|1.35 G||2.83 ms|48.6 MB|[Download]()|[Download]()|
+  |N|1.98 M|0.22 G|0.54883|0.77 ms|8.0 MB|[Download]()|[Download]()|
+  |T|4.40 M|0.49 G|0.55663|1.40 ms|17.7 MB|[Download]()|[Download]()|
+  |S|7.79 M|0.87 G|0.57397|2.30 ms|31.2 MB|[Download]()|[Download]()|
+  |C|12.13 M|1.35 G|0.56768|2.83 ms|48.6 MB|[Download]()|[Download]()|
   |M|17.44 M|1.94 G||4.37 ms|69.8 MB|[Download]()|[Download]()|
-  |L|30.92 M|3.44 G||7.40 ms|123.7 MB|[Download]()|[Download]()|
 
 ## Inference
 - ONNX with post-processing
