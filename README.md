@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 ## Download all ONNX files at once
 
 ```bash
-sudo apt update && sudo apt install gh
+sudo apt update && sudo apt install -y gh
 gh release download onnx -R PINTO0309/UHD
 ```
 
