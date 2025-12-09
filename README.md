@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   
   </details>
 
-- w ESE + IoU-aware + Swish
+- ESE + IoU-aware + Swish
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -55,7 +55,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   |M|14.09 M|1.77 G|0.46562|5.05 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_se_iou_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_se_iou_64x64_quality_nopost.onnx)|
   |L|24.98 M|3.13 G|0.47774|7.46 ms|100 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_iou_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_iou_64x64_quality_nopost.onnx)|
 
-- w ESE + IoU-aware + ReLU
+- ESE + IoU-aware + ReLU
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -75,6 +75,17 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   |S|6.30 M|0.79 G|0.57361|1.71 ms|25.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill_nopost.onnx)|
   |C|9.81 M|1.23 G|0.56183|2.51 ms|39.3 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill_nopost.onnx)|
   |M|14.09 M|1.77 G|0.57666|3.54 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill_nopost.onnx)|
+
+- ESE + IoU-aware + large-object-branch + ReLU
+
+  |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
+  |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+  |N|1.98 M|0.22 G|0.40903|0.77 ms|8 MB|[Download]()|[Download]()|
+  |T|4.40 M|0.49 G|0.46170|1.40 ms|17.7 MB|[Download]()|[Download]()|
+  |S| M| G|| ms| MB|[Download]()|[Download]()|
+  |C| M| G|| ms| MB|[Download]()|[Download]()|
+  |M| M| G|| ms|123.7 MB|[Download]()|[Download]()|
+  |L|30.92 M|3.44 G|0.48243|7.40 ms|123.7 MB|[Download]()|[Download]()|
 
 ## Inference
 - ONNX with post-processing
