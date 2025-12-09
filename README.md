@@ -16,6 +16,15 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
 |<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/d4b5fc1c-324b-4ed3-9ab7-35c1d022b2d0" />|<img width="480" height="360" alt="28_000000044437" src="https://github.com/user-attachments/assets/499469d3-41a3-406b-a075-8b055297bf6e" />|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/9be24b81-0c6e-48c7-bda1-1372b6ae391f" />|<img width="480" height="360" alt="42_000000006864" src="https://github.com/user-attachments/assets/fed81463-3cd6-4d69-8fc3-5bf114d92ab8" />|
 |<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/05280dce-4faf-46e1-817c-98e4df4a9d4c" />|<img width="383" height="640" alt="09_dist_000000074177" src="https://github.com/user-attachments/assets/628540af-6407-4e93-b41e-9057671f49ca" />|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/23d932d4-ce48-421e-9d1f-0dd8386852a3" />|<img width="500" height="500" alt="08_dist_000000039322" src="https://github.com/user-attachments/assets/64c744c4-4425-46da-a53b-ffab2fd52060" />|
 
+## Download all ONNX files at once
+
+```bash
+sudo apt update && sudo apt install gh
+gh release download onnx -R PINTO0309/UHD
+```
+
+## Models
+
 - Legacy models
 
   <details><summary>Click to expand</summary>
