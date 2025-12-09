@@ -84,7 +84,7 @@ https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
   |T|4.40 M|0.49 G|0.46170|1.40 ms|17.7 MB|[Download]()|[Download]()|
   |S| M| G|| ms| MB|[Download]()|[Download]()|
   |C| M| G|| ms| MB|[Download]()|[Download]()|
-  |M| M| G|| ms|123.7 MB|[Download]()|[Download]()|
+  |M| M| G|| ms| MB|[Download]()|[Download]()|
   |L|30.92 M|3.44 G|0.48243|7.40 ms|123.7 MB|[Download]()|[Download]()|
 
 ## Inference
