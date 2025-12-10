@@ -107,6 +107,42 @@ gh release download onnx -R PINTO0309/UHD
   |M|17.44 M|1.94 G||4.37 ms|69.8 MB|[Download]()|[Download]()|
 
 ## Inference
+
+```bash
+usage: demo_uhd.py
+[-h]
+(--images IMAGES | --camera CAMERA)
+--onnx ONNX
+[--output OUTPUT]
+[--img-size IMG_SIZE]
+[--conf-thresh CONF_THRESH]
+[--record RECORD]
+[--actual-size]
+
+UltraTinyOD ONNX demo (CPU).
+
+options:
+  -h, --help
+   show this help message and exit
+  --images IMAGES
+   Directory with images to run batch inference.
+  --camera CAMERA
+   USB camera id for realtime inference.
+  --onnx ONNX
+   Path to ONNX model (CPU).
+  --output OUTPUT
+   Output directory for image mode.
+  --img-size IMG_SIZE
+   Input size HxW, e.g., 64x64.
+  --conf-thresh CONF_THRESH
+   Confidence threshold.
+  --record RECORD
+   MP4 path for automatic recording when --camera is used.
+  --actual-size
+   Display and recording use the model input resolution instead of
+   the original frame size.
+```
+
 - ONNX with post-processing
   ```bash
   uv run demo_uhd.py \
