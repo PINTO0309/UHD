@@ -146,14 +146,16 @@ options:
 - ONNX with post-processing
   ```bash
   uv run demo_uhd.py \
-  --onnx ultratinyod_res_anc8_w256_64x64_quality.onnx \
-  --camera 0
+  --onnx ultratinyod_res_anc8_w192_64x64_loese_distill.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
   ```
 - ONNX without post-processing
   ```bash
   uv run demo_uhd.py \
-  --onnx ultratinyod_res_anc8_w256_64x64_quality_nopost.onnx \
-  --camera 0
+  --onnx ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
   ```
 
 ## Training Examples (full CLI)
