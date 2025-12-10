@@ -501,7 +501,7 @@ def build_args():
     parser.add_argument("--onnx", required=True, help="Path to ONNX model (CPU).")
     parser.add_argument("--output", type=str, default="demo_output", help="Output directory for image mode.")
     parser.add_argument("--img-size", type=str, default="64x64", help="Input size HxW, e.g., 64x64.")
-    parser.add_argument("--conf-thresh", type=float, default=0.30, help="Confidence threshold.")
+    parser.add_argument("--conf-thresh", type=float, default=0.90, help="Confidence threshold.")
     parser.add_argument(
         "--record",
         type=str,
