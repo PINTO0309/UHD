@@ -1580,7 +1580,9 @@ uv run onnx2tf \
 
 ## Arch
 
-<img width="350" alt="ultratinyod_res_anc8_w64_64x64_quality_relu" src="https://github.com/user-attachments/assets/5d48c745-a830-4d9f-bcae-64c25cbeb560" />
+|ONNX|LiteRT(TFLite)|
+|:-:|:-:|
+|<img width="350" alt="ultratinyod_res_anc8_w64_64x64_loese_distill" src="https://github.com/user-attachments/assets/ae5d3c70-8c5e-41f0-ad79-98f4024519a0" />|<img width="350" alt="ultratinyod_res_anc8_w64_64x64_loese_distill_float32" src="https://github.com/user-attachments/assets/c1e909b8-b029-4f0a-acf9-0f8259763ec3" />|
 
 ## Ultra-lightweight classification model series
 1. [VSDLM: Visual-only speech detection driven by lip movements](https://github.com/PINTO0309/VSDLM) - MIT License
