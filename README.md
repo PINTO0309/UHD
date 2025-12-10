@@ -86,7 +86,7 @@ gh release download onnx -R PINTO0309/UHD
 
   </details>
 
-- ESE + IoU-aware + ReLU + Distillation
+- **[For long distances and extremely small objects]** ESE + IoU-aware + ReLU + Distillation
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -96,7 +96,7 @@ gh release download onnx -R PINTO0309/UHD
   |C|9.81 M|1.23 G|0.56183|2.51 ms|39.3 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill_nopost.onnx)|
   |M|14.09 M|1.77 G|0.57666|3.54 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill_nopost.onnx)|
 
-- ESE + IoU-aware + large-object-branch + ReLU + Distillation
+- **[For short/medium distance]** ESE + IoU-aware + large-object-branch + ReLU + Distillation
 
   |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
