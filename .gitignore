@@ -213,6 +213,7 @@ output*/
 runs/
 feature_heatmaps/
 ablation_heatmaps/
+saved_model/
 *.onnx
 *.pt
 *.pth
