@@ -104,7 +104,7 @@ gh release download onnx -R PINTO0309/UHD
   |T|4.40 M|0.49 G|0.55663|1.40 ms|17.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w96_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w96_64x64_loese_distill_nopost.onnx)|
   |S|7.79 M|0.87 G|0.57397|2.30 ms|31.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_loese_distill_nopost.onnx)|
   |C|12.13 M|1.35 G|0.56768|2.83 ms|48.6 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_loese_distill_nopost.onnx)|
-  |M|17.44 M|1.94 G|0.57815|4.37 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w196_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w196_64x64_loese_distill_nopost.onnx)|
+  |M|17.44 M|1.94 G|0.57815|4.37 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx)|
 
 ## Inference
 
