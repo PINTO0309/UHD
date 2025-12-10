@@ -104,7 +104,7 @@ gh release download onnx -R PINTO0309/UHD
   |T|4.40 M|0.49 G|0.55663|1.40 ms|17.7 MB|[Download]()|[Download]()|
   |S|7.79 M|0.87 G|0.57397|2.30 ms|31.2 MB|[Download]()|[Download]()|
   |C|12.13 M|1.35 G|0.56768|2.83 ms|48.6 MB|[Download]()|[Download]()|
-  |M|17.44 M|1.94 G||4.37 ms|69.8 MB|[Download]()|[Download]()|
+  |M|17.44 M|1.94 G|0.57815|4.37 ms|69.8 MB|[Download]()|[Download]()|
 
 ## Inference
 
