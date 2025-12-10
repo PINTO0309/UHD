@@ -135,7 +135,7 @@ options:
   --img-size IMG_SIZE
    Input size HxW, e.g., 64x64.
   --conf-thresh CONF_THRESH
-   Confidence threshold.
+   Confidence threshold. Default: 0.90
   --record RECORD
    MP4 path for automatic recording when --camera is used.
   --actual-size
