@@ -764,7 +764,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w64_se_iou_64x64_quality_lr0.005_relu/best_utod_0299_map_0.40910.pt \
 --batch-size 64 \
@@ -804,7 +804,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/3/ultratinyod_res_anc8_w96_se_iou_64x64_quality_lr0.004/best_utod_0293_map_0.46502.pt \
 --batch-size 64 \
@@ -843,7 +843,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w128_se_iou_64x64_quality_lr0.003_relu/best_utod_0293_map_0.45776.pt \
 --batch-size 64 \
@@ -882,7 +882,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w160_se_iou_64x64_quality_lr0.001_relu/best_utod_0300_map_0.45385.pt \
 --batch-size 64 \
@@ -921,7 +921,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w192_se_iou_64x64_quality_lr0.001_relu/best_utod_0300_map_0.47468.pt \
 --batch-size 64 \
@@ -1187,7 +1187,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/6/ultratinyod_res_anc8_w64_loese_64x64_quality_lr0.005/best_utod_0296_map_0.40903.pt \
 --batch-size 64 \
@@ -1226,7 +1226,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/6/ultratinyod_res_anc8_w96_loese_64x64_quality_lr0.004/best_utod_0279_map_0.46170.pt \
 --batch-size 64 \
@@ -1265,7 +1265,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/6/ultratinyod_res_anc8_w128_loese_64x64_quality_lr0.003/best_utod_0259_map_0.45860.pt \
 --batch-size 64 \
@@ -1304,7 +1304,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/6/ultratinyod_res_anc8_w160_loese_64x64_quality_lr0.001/best_utod_0210_map_0.47518.pt \
 --batch-size 64 \
@@ -1343,7 +1343,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w192_se_iou_64x64_quality_lr0.001_relu/best_utod_0300_map_0.47468.pt \
 --batch-size 64 \
@@ -1382,7 +1382,7 @@ IMPHEAD=quality
 uv run python train.py \
 --arch ultratinyod \
 --image-dir data/wholebody34/obj_train_data \
---img-size 64 \
+--img-size ${SIZE} \
 --exp-name ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${IMPHEAD}_lr${LR}_relu_distill \
 --ckpt runs/4/ultratinyod_res_anc8_w256_se_iou_64x64_quality_lr0.001_relu/best_utod_0300_map_0.46965.pt \
 --batch-size 64 \
