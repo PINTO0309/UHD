@@ -138,7 +138,8 @@ def decode_anchor(
         pred_w_i = pred_w[bi]
         pred_h_i = pred_h[bi]
 
-        flat_scores = score_map.view(-1, num_classes)
+        # reshape handles non-contiguous tensors from broadcasting/permutation safely
+        flat_scores = score_map.reshape(-1, num_classes)
         max_scores, max_cls = flat_scores.max(dim=1)
         mask = max_scores >= conf_thresh
         if mask.any():
