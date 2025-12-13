@@ -170,14 +170,14 @@ class YoloDataset(Dataset):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
             arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
             h0, w0 = arr.shape[:2]
-            arr = cv2.resize(arr, (self.img_w, self.img_h), interpolation=cv2.INTER_AREA)
+            arr = cv2.resize(arr, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
             if self.pipeline:
                 img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
             else:
                 img_np = arr
 
             if img_np.shape[0] != self.img_h or img_np.shape[1] != self.img_w:
-                img_np = cv2.resize(img_np, (self.img_w, self.img_h), interpolation=cv2.INTER_AREA)
+                img_np = cv2.resize(img_np, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
             last_sample = (img_np, boxes_np, labels_np, img_path, (h0, w0))
             if boxes_np.size > 0:
                 target = {

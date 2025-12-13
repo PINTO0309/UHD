@@ -118,7 +118,7 @@ class AugmentationPipeline:
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
                 new_w = max(1, int(w * s))
                 new_h = max(1, int(h * s if keep_aspect else h * s))
-                img_scaled = cv2.resize((img * 255).astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_AREA)
+                img_scaled = cv2.resize((img * 255).astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 canvas = np.ones((h, w, 3), dtype=np.uint8) * 114
                 y0 = max(0, (h - new_h) // 2)
                 x0 = max(0, (w - new_w) // 2)
@@ -200,7 +200,7 @@ class AugmentationPipeline:
                 img2, boxes2, labels2 = self.dataset.sample_random()[:3]
                 h, w = img.shape[:2]
                 if img2.shape[:2] != (h, w):
-                    img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_AREA)
+                    img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_LINEAR)
                 lam = 0.5
                 img = (lam * img + (1 - lam) * img2).clip(0.0, 1.0)
                 boxes = np.concatenate([boxes, boxes2], axis=0) if boxes.size and boxes2.size else (boxes2 if boxes.size == 0 else boxes)
@@ -219,7 +219,7 @@ class AugmentationPipeline:
                 resized_imgs = []
                 for im in imgs:
                     if im.shape[0] != self.img_h or im.shape[1] != self.img_w:
-                        im = cv2.resize(im, (self.img_w, self.img_h), interpolation=cv2.INTER_AREA)
+                        im = cv2.resize(im, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
                     resized_imgs.append(im)
                 imgs = resized_imgs
                 canvas = np.ones((self.img_h * 2, self.img_w * 2, 3), dtype=np.float32) * 114 / 255.0
@@ -275,7 +275,7 @@ class AugmentationPipeline:
                     if boxes2.size == 0:
                         continue
                     if img2.shape[:2] != (h, w):
-                        img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_AREA)
+                        img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_LINEAR)
                     num_paste = min(max_objs, boxes2.shape[0])
                     sel = np.random.choice(boxes2.shape[0], num_paste, replace=False)
                     for idx in sel:
@@ -290,7 +290,7 @@ class AugmentationPipeline:
                         scale = random.uniform(float(scale_jitter[0]), float(scale_jitter[1]))
                         new_w = max(1, int(patch.shape[1] * scale))
                         new_h = max(1, int(patch.shape[0] * scale))
-                        patch_resized = cv2.resize((patch * 255).astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_AREA)
+                        patch_resized = cv2.resize((patch * 255).astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                         patch_resized = patch_resized.astype(np.float32) / 255.0
                         px = random.randint(0, max(0, w - new_w))
                         py = random.randint(0, max(0, h - new_h))
@@ -323,7 +323,7 @@ class AugmentationPipeline:
                     boxes[:, 3] *= h / ch
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
                     boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
-                img = cv2.resize((img * 255).astype(np.uint8), (self.img_w, self.img_h), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+                img = cv2.resize((img * 255).astype(np.uint8), (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR).astype(np.float32) / 255.0
 
         elif name == "RandomResizedCrop":
             if should_apply(aug_cfg.get("prob", 0.0)):
@@ -365,7 +365,7 @@ class AugmentationPipeline:
                             )
                             boxes = _xyxy_to_cxcywh(boxes_xyxy)
                             labels = labels[keep]
-                        img = cv2.resize((img_crop * 255).astype(np.uint8), (self.img_w, self.img_h), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+                        img = cv2.resize((img_crop * 255).astype(np.uint8), (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR).astype(np.float32) / 255.0
                         break
 
         elif name == "RandomBrightness":
