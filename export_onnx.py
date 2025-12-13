@@ -278,6 +278,8 @@ def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: s
         outputs=[resize_out],
         mode="nearest",
         coordinate_transformation_mode="asymmetric",
+        cubic_coeff_a=-0.75,
+        nearest_mode="floor",
         name="InputResize",
     )
     g.node.insert(0, resize_node)
