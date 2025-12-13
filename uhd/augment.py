@@ -106,6 +106,7 @@ class AugmentationPipeline:
 
         elif name == "RandomScale":
             if should_apply(0.0):
+                h, w = img.shape[:2]
                 s_min, s_max = aug_cfg.get("scale_range", [1.0, 1.0])
                 s = random.uniform(float(s_min), float(s_max))
                 keep_aspect = bool(aug_cfg.get("keep_aspect_ratio", True))
@@ -115,31 +116,32 @@ class AugmentationPipeline:
                     boxes[:, 2] *= s
                     boxes[:, 3] *= s
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
-                new_w = max(1, int(self.img_w * s))
-                new_h = max(1, int(self.img_h * s if keep_aspect else self.img_h * s))
+                new_w = max(1, int(w * s))
+                new_h = max(1, int(h * s if keep_aspect else h * s))
                 img_scaled = cv2.resize((img * 255).astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                canvas = np.ones((self.img_h, self.img_w, 3), dtype=np.uint8) * 114
-                y0 = max(0, (self.img_h - new_h) // 2)
-                x0 = max(0, (self.img_w - new_w) // 2)
-                y1 = min(self.img_h, y0 + new_h)
-                x1 = min(self.img_w, x0 + new_w)
+                canvas = np.ones((h, w, 3), dtype=np.uint8) * 114
+                y0 = max(0, (h - new_h) // 2)
+                x0 = max(0, (w - new_w) // 2)
+                y1 = min(h, y0 + new_h)
+                x1 = min(w, x0 + new_w)
                 canvas[y0:y1, x0:x1, :] = img_scaled[: y1 - y0, : x1 - x0, :]
                 img = canvas.astype(np.float32) / 255.0
 
         elif name == "Translation":
             if should_apply(0.0):
+                h, w = img.shape[:2]
                 translate = float(aug_cfg.get("translate", 0.0))
                 dx = random.uniform(-translate, translate)
                 dy = random.uniform(-translate, translate)
                 fill = aug_cfg.get("fill", [114, 114, 114])
                 fill = [int(v) for v in fill]
-                shift_x = int(dx * self.img_w)
-                shift_y = int(dy * self.img_h)
+                shift_x = int(dx * w)
+                shift_y = int(dy * h)
                 canvas = np.ones_like(img) * np.array(fill, dtype=np.float32)[None, None, :] / 255.0
                 x_from = max(0, -shift_x)
                 y_from = max(0, -shift_y)
-                x_to = min(self.img_w, self.img_w - shift_x)
-                y_to = min(self.img_h, self.img_h - shift_y)
+                x_to = min(w, w - shift_x)
+                y_to = min(h, h - shift_y)
                 canvas[y_from + shift_y : y_to + shift_y, x_from + shift_x : x_to + shift_x] = img[y_from:y_to, x_from:x_to]
                 img = canvas
                 if boxes.size:
@@ -196,6 +198,9 @@ class AugmentationPipeline:
         elif name == "MixUp":
             if self.dataset is not None and should_apply(1.0):
                 img2, boxes2, labels2 = self.dataset.sample_random()[:3]
+                h, w = img.shape[:2]
+                if img2.shape[:2] != (h, w):
+                    img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_LINEAR)
                 lam = 0.5
                 img = (lam * img + (1 - lam) * img2).clip(0.0, 1.0)
                 boxes = np.concatenate([boxes, boxes2], axis=0) if boxes.size and boxes2.size else (boxes2 if boxes.size == 0 else boxes)
@@ -211,6 +216,12 @@ class AugmentationPipeline:
                     imgs.append(img_i)
                     boxes_list.append(b_i)
                     labels_list.append(l_i)
+                resized_imgs = []
+                for im in imgs:
+                    if im.shape[0] != self.img_h or im.shape[1] != self.img_w:
+                        im = cv2.resize(im, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
+                    resized_imgs.append(im)
+                imgs = resized_imgs
                 canvas = np.ones((self.img_h * 2, self.img_w * 2, 3), dtype=np.float32) * 114 / 255.0
                 positions = [(0, 0), (self.img_w, 0), (0, self.img_h), (self.img_w, self.img_h)]
                 new_boxes = []
@@ -258,19 +269,22 @@ class AugmentationPipeline:
                 sample_num = int(aug_cfg.get("sample_num", 1))
                 max_objs = int(aug_cfg.get("max_paste_objects", 5))
                 scale_jitter = aug_cfg.get("scale_jitter", [0.8, 1.2])
+                h, w = img.shape[:2]
                 for _ in range(sample_num):
                     img2, boxes2, labels2 = self.dataset.sample_random()[:3]
                     if boxes2.size == 0:
                         continue
+                    if img2.shape[:2] != (h, w):
+                        img2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_LINEAR)
                     num_paste = min(max_objs, boxes2.shape[0])
                     sel = np.random.choice(boxes2.shape[0], num_paste, replace=False)
                     for idx in sel:
                         cx, cy, bw, bh = boxes2[idx]
-                        x1 = int((cx - bw / 2) * self.img_w)
-                        y1 = int((cy - bh / 2) * self.img_h)
-                        x2 = int((cx + bw / 2) * self.img_w)
-                        y2 = int((cy + bh / 2) * self.img_h)
-                        patch = img2[max(0, y1) : min(self.img_h, y2), max(0, x1) : min(self.img_w, x2)]
+                        x1 = int((cx - bw / 2) * w)
+                        y1 = int((cy - bh / 2) * h)
+                        x2 = int((cx + bw / 2) * w)
+                        y2 = int((cy + bh / 2) * h)
+                        patch = img2[max(0, y1) : min(h, y2), max(0, x1) : min(w, x2)]
                         if patch.size == 0:
                             continue
                         scale = random.uniform(float(scale_jitter[0]), float(scale_jitter[1]))
@@ -278,13 +292,13 @@ class AugmentationPipeline:
                         new_h = max(1, int(patch.shape[0] * scale))
                         patch_resized = cv2.resize((patch * 255).astype(np.uint8), (new_w, new_h))
                         patch_resized = patch_resized.astype(np.float32) / 255.0
-                        px = random.randint(0, max(0, self.img_w - new_w))
-                        py = random.randint(0, max(0, self.img_h - new_h))
+                        px = random.randint(0, max(0, w - new_w))
+                        py = random.randint(0, max(0, h - new_h))
                         img[py : py + new_h, px : px + new_w] = patch_resized
-                        ncx = (px + new_w / 2) / self.img_w
-                        ncy = (py + new_h / 2) / self.img_h
-                        nbw = new_w / self.img_w
-                        nbh = new_h / self.img_h
+                        ncx = (px + new_w / 2) / w
+                        ncy = (py + new_h / 2) / h
+                        nbw = new_w / w
+                        nbh = new_h / h
                         boxes = np.concatenate([boxes, np.array([[ncx, ncy, nbw, nbh]], dtype=np.float32)], axis=0)
                         labels = np.concatenate([labels, np.array([labels2[idx]], dtype=labels.dtype)], axis=0)
                 if boxes.size:
@@ -293,47 +307,49 @@ class AugmentationPipeline:
 
         elif name == "RandomCrop":
             if should_apply(0.0):
+                h, w = img.shape[:2]
                 crop_ratio = float(aug_cfg) if not isinstance(aug_cfg, dict) else float(aug_cfg.get("ratio", 0.9))
-                ch = int(self.img_h * crop_ratio)
-                cw = int(self.img_w * crop_ratio)
+                ch = int(h * crop_ratio)
+                cw = int(w * crop_ratio)
                 if ch < 1 or cw < 1:
                     return img, boxes, labels
-                y0 = random.randint(0, self.img_h - ch)
-                x0 = random.randint(0, self.img_w - cw)
+                y0 = random.randint(0, h - ch)
+                x0 = random.randint(0, w - cw)
                 img = img[y0 : y0 + ch, x0 : x0 + cw]
                 if boxes.size:
-                    boxes[:, 0] = (boxes[:, 0] * self.img_w - x0) / cw
-                    boxes[:, 1] = (boxes[:, 1] * self.img_h - y0) / ch
-                    boxes[:, 2] *= self.img_w / cw
-                    boxes[:, 3] *= self.img_h / ch
+                    boxes[:, 0] = (boxes[:, 0] * w - x0) / cw
+                    boxes[:, 1] = (boxes[:, 1] * h - y0) / ch
+                    boxes[:, 2] *= w / cw
+                    boxes[:, 3] *= h / ch
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
                     boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
                 img = cv2.resize((img * 255).astype(np.uint8), (self.img_w, self.img_h)).astype(np.float32) / 255.0
 
         elif name == "RandomResizedCrop":
             if should_apply(aug_cfg.get("prob", 0.0)):
+                h, w = img.shape[:2]
                 scale = aug_cfg.get("scale", [0.6, 1.0])
                 ratio = aug_cfg.get("ratio", [0.75, 1.33])
                 min_vis = float(aug_cfg.get("min_visibility", 0.25))
                 for _ in range(10):
-                    target_area = self.img_w * self.img_h * random.uniform(scale[0], scale[1])
+                    target_area = w * h * random.uniform(scale[0], scale[1])
                     aspect = random.uniform(ratio[0], ratio[1])
                     cw = int(round((target_area * aspect) ** 0.5))
                     ch = int(round((target_area / aspect) ** 0.5))
-                    if cw <= self.img_w and ch <= self.img_h:
-                        x0 = random.randint(0, self.img_w - cw)
-                        y0 = random.randint(0, self.img_h - ch)
+                    if cw <= w and ch <= h:
+                        x0 = random.randint(0, w - cw)
+                        y0 = random.randint(0, h - ch)
                         img_crop = img[y0 : y0 + ch, x0 : x0 + cw]
                         if boxes.size:
                             boxes_xyxy = _cxcywh_to_xyxy(boxes)
-                            inter_x1 = np.maximum(boxes_xyxy[:, 0] * self.img_w, x0)
-                            inter_y1 = np.maximum(boxes_xyxy[:, 1] * self.img_h, y0)
-                            inter_x2 = np.minimum(boxes_xyxy[:, 2] * self.img_w, x0 + cw)
-                            inter_y2 = np.minimum(boxes_xyxy[:, 3] * self.img_h, y0 + ch)
+                            inter_x1 = np.maximum(boxes_xyxy[:, 0] * w, x0)
+                            inter_y1 = np.maximum(boxes_xyxy[:, 1] * h, y0)
+                            inter_x2 = np.minimum(boxes_xyxy[:, 2] * w, x0 + cw)
+                            inter_y2 = np.minimum(boxes_xyxy[:, 3] * h, y0 + ch)
                             inter_w = np.maximum(0.0, inter_x2 - inter_x1)
                             inter_h = np.maximum(0.0, inter_y2 - inter_y1)
                             inter_area = inter_w * inter_h
-                            box_area = (boxes_xyxy[:, 2] - boxes_xyxy[:, 0]) * (boxes_xyxy[:, 3] - boxes_xyxy[:, 1]) * self.img_w * self.img_h
+                            box_area = (boxes_xyxy[:, 2] - boxes_xyxy[:, 0]) * (boxes_xyxy[:, 3] - boxes_xyxy[:, 1]) * w * h
                             vis = inter_area / (box_area + 1e-6)
                             keep = vis >= min_vis
                             if keep.sum() == 0:
@@ -426,12 +442,13 @@ class AugmentationPipeline:
 
         elif name == "RandomRain":
             if should_apply(aug_cfg.get("prob", 0.0)):
+                h, w = img.shape[:2]
                 density = aug_cfg.get("density", [0.002, 0.006])
-                drops = int(self.img_w * self.img_h * random.uniform(float(density[0]), float(density[1])))
+                drops = int(w * h * random.uniform(float(density[0]), float(density[1])))
                 rain = img.copy()
                 for _ in range(drops):
-                    x = random.randint(0, self.img_w - 1)
-                    y = random.randint(0, self.img_h - 1)
+                    x = random.randint(0, w - 1)
+                    y = random.randint(0, h - 1)
                     length = random.randint(*aug_cfg.get("drop_length", [15, 30]))
                     thickness = random.randint(*aug_cfg.get("drop_width_range", [1, 2]))
                     rain = cv2.line(
@@ -452,11 +469,12 @@ class AugmentationPipeline:
 
         elif name == "RandomSunFlare":
             if should_apply(aug_cfg.get("prob", 0.0)):
+                h, w = img.shape[:2]
                 src_radius = aug_cfg.get("src_radius_range", [50, 150])
                 radius = random.randint(int(src_radius[0]), int(src_radius[1]))
                 intensity = aug_cfg.get("src_intensity", [0.6, 1.0])
                 flare = np.zeros_like(img)
-                center = (random.randint(0, self.img_w - 1), random.randint(0, self.img_h - 1))
+                center = (random.randint(0, w - 1), random.randint(0, h - 1))
                 cv2.circle(flare, center, radius, (1, 1, 1), -1)
                 img = np.clip(img + flare * random.uniform(float(intensity[0]), float(intensity[1])), 0.0, 1.0)
 

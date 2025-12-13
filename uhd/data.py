@@ -3,9 +3,9 @@ import os
 import random
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import cv2
 import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
@@ -142,12 +142,13 @@ class YoloDataset(Dataset):
     def __len__(self) -> int:
         return len(self.items)
 
-    def _load_raw_resized(self, idx: int):
+    def _load_raw(self, idx: int):
         img_path, label_path = self.items[idx]
-        with Image.open(img_path) as im:
-            im = im.convert("RGB")
-            im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
-            arr = np.array(im, dtype=np.float32) / 255.0
+        im_bgr = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        if im_bgr is None:
+            raise ValueError(f"Failed to read image: {img_path}")
+        im_rgb = cv2.cvtColor(im_bgr, cv2.COLOR_BGR2RGB)
+        arr = im_rgb.astype(np.float32) / 255.0
         raw_boxes = _read_label(label_path, self.class_to_idx)
         boxes: List[Sequence[float]] = []
         labels: List[int] = []
@@ -160,41 +161,22 @@ class YoloDataset(Dataset):
 
     def sample_random(self):
         ridx = random.randrange(len(self.items))
-        return self._load_raw_resized(ridx)
+        return self._load_raw(ridx)
 
     def __getitem__(self, idx: int):
         max_retry = 10
         last_sample = None
         for attempt in range(max_retry):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
-            img_path, label_path = self.items[cur_idx]
-            with Image.open(img_path) as im:
-                im = im.convert("RGB")
-                w0, h0 = im.size
-                if self.augment and random.random() < 0.5:
-                    im = im.transpose(Image.FLIP_LEFT_RIGHT)
-                    flipped = True
-                else:
-                    flipped = False
-                im = im.resize((self.img_w, self.img_h), Image.BILINEAR)
-                arr = np.array(im, dtype=np.float32) / 255.0
-
-            raw_boxes = _read_label(label_path, self.class_to_idx)
-            boxes: List[Sequence[float]] = []
-            labels: List[int] = []
-            for cid, cx, cy, w, h in raw_boxes:
-                if flipped:
-                    cx = 1.0 - cx
-                boxes.append([cx, cy, w, h])
-                labels.append(cid)
-
-            boxes_np = np.array(boxes, dtype=np.float32)
-            labels_np = np.array(labels, dtype=np.int64)
+            arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
+            h0, w0 = arr.shape[:2]
             if self.pipeline:
                 img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
             else:
                 img_np = arr
 
+            if img_np.shape[0] != self.img_h or img_np.shape[1] != self.img_w:
+                img_np = cv2.resize(img_np, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
             last_sample = (img_np, boxes_np, labels_np, img_path, (h0, w0))
             if boxes_np.size > 0:
                 target = {
