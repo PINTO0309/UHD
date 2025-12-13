@@ -160,6 +160,21 @@ options:
   --camera 0 \
   --conf-thresh 0.90
   ```
+- ONNX with pre-processing (PIL equivalent of Resize) + post-processing
+  ```bash
+  uv run demo_uhd.py \
+  --onnx ultratinyod_res_anc8_w64_64x64_dynamic.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
+  ```
+- ONNX with pre-processing (PIL equivalent of Resize) + without post-processing
+  ```bash
+  uv run demo_uhd.py \
+  --onnx ultratinyod_res_anc8_w64_64x64_dynamic_nopost.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
+  ```
+
 
 ## Training Examples (full CLI)
 
