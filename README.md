@@ -1560,21 +1560,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=64
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1584,21 +1584,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=96
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1608,21 +1608,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=128
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1632,21 +1632,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=160
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1656,21 +1656,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=192
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1680,21 +1680,21 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=256
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_quality_lr0.005_impaug5/best_utod_0001_map_0.00000.pt \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
