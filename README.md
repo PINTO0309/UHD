@@ -28,9 +28,9 @@ gh release download onnx -R PINTO0309/UHD
 - Legacy models
 
   <details><summary>Click to expand</summary>
-  
+
   - w/o ESE
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.38 M|0.18 G|0.40343|0.93 ms|5.6 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_quality_nopost.onnx)|
@@ -39,9 +39,9 @@ gh release download onnx -R PINTO0309/UHD
     |C|8.46 M|1.11 G|0.45005|2.66 ms|33.9 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_quality_nopost.onnx)|
     |M|12.15 M|1.60 G|0.44875|4.07 ms|48.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_quality_nopost.onnx)|
     |L|21.54 M|2.83 G|0.44686|6.23 ms|86.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_nopost.onnx)|
-  
+
   - w ESE
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.45 M|0.18 G|0.41018|1.05 ms|5.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_se_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_se_64x64_quality_nopost.onnx)|
@@ -52,7 +52,7 @@ gh release download onnx -R PINTO0309/UHD
     |L|22.59 M|2.83 G|0.45787|6.52 ms|90.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_64x64_quality_nopost.onnx)|
 
   - ESE + IoU-aware + Swish
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.60 M|0.20 G|0.42806|1.25 ms|6.5 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_se_iou_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_se_iou_64x64_quality_nopost.onnx)|
@@ -63,7 +63,7 @@ gh release download onnx -R PINTO0309/UHD
     |L|24.98 M|3.13 G|0.47774|7.46 ms|100 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_iou_64x64_quality.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_se_iou_64x64_quality_nopost.onnx)|
 
   - ESE + IoU-aware + ReLU
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.60 M|0.20 G|0.40910|0.63 ms|6.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_quality_relu_nopost.onnx)|
@@ -74,7 +74,7 @@ gh release download onnx -R PINTO0309/UHD
     |L|24.98 M|3.13 G|0.46965|6.14 ms|100 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_quality_relu_nopost.onnx)|
 
   - ESE + IoU-aware + large-object-branch + ReLU
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.98 M|0.22 G|0.40903|0.77 ms|8.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese_nopost.onnx)|
@@ -107,6 +107,9 @@ gh release download onnx -R PINTO0309/UHD
   |M|17.44 M|1.94 G|0.57815|3.57 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx)|
 
 ## Inference
+
+> [!CAUTION]
+> If you resize images to 64x64 in preprocessing, you must use PIL or your own custom resize function. Never use OpenCV's cv2.resize() . Using cv2.resize() will significantly reduce the accuracy of inference.
 
 ```bash
 usage: demo_uhd.py
@@ -1560,49 +1563,145 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
   ANCHOR=8
   CNNWIDTH=64
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_64x64_quality_lr0.007/best_utod_0299_map_0.40343.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=96
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_64x64_quality_lr0.004/best_utod_0296_map_0.44529.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=128
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_64x64_quality_lr0.003/best_utod_0300_map_0.44945.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=160
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_64x64_quality_lr0.001/best_utod_0300_map_0.45005.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=192
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_64x64_quality_lr0.001/best_utod_0300_map_0.44875.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=256
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_64x64_quality_lr0.001/best_utod_0300_map_0.44686.pt \
-  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_quality.onnx \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
+  --opset 17 \
+  --dynamic-resize
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess
+  uv run python export_onnx.py \
+  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
+  --opset 17 \
+  --no-merge-postprocess \
+  --dynamic-resize
   ```
 
 </details>
