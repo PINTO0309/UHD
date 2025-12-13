@@ -6,10 +6,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
+from .resize import normalize_resize_mode, resize_image_numpy
 
 
 def _resolve_path(entry: str, image_dir: str, list_path: Optional[str]) -> Optional[str]:
@@ -59,6 +59,7 @@ class YoloDataset(Dataset):
         val_split: float = 0.1,
         seed: int = 42,
         img_size: Tuple[int, int] = (64, 64),
+        resize_mode: str = "opencv_inter_nearest",
         augment: bool = False,
         class_ids: Sequence[int] = (0,),
         augment_cfg: Optional[Dict] = None,
@@ -73,6 +74,7 @@ class YoloDataset(Dataset):
             self.img_h, self.img_w = img_size
         else:
             self.img_h = self.img_w = int(img_size)
+        self.resize_mode = normalize_resize_mode(resize_mode)
         self.augment = augment
         self.class_ids = list(class_ids)
         if not self.class_ids:
@@ -164,6 +166,9 @@ class YoloDataset(Dataset):
         ridx = random.randrange(len(self.items))
         return self._load_raw(ridx)
 
+    def resize_image(self, img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
+        return resize_image_numpy(img, size=size, mode=self.resize_mode)
+
     def __getitem__(self, idx: int):
         max_retry = 10
         last_sample = None
@@ -171,9 +176,7 @@ class YoloDataset(Dataset):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
             arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
             h0, w0 = arr.shape[:2]
-            pil_img = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
-            pil_img = pil_img.resize((self.img_w, self.img_h), resample=Image.NEAREST)
-            arr_resized = np.asarray(pil_img, dtype=np.float32) / 255.0
+            arr_resized = self.resize_image(arr, (self.img_w, self.img_h))
             if self.pipeline:
                 img_np, boxes_np, labels_np = self.pipeline(arr_resized, boxes_np, labels_np)
             else:

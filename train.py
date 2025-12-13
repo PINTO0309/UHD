@@ -1,5 +1,6 @@
 import argparse
 import glob
+import json
 import os
 import random
 import math
@@ -23,6 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
+from uhd.resize import normalize_resize_mode
 
 
 class ModelEma:
@@ -80,6 +82,42 @@ def parse_args():
         "--img-size",
         default="64x64",
         help="Input size as HxW, e.g., 64x64. If single int, applies to both sides.",
+    )
+    parser.set_defaults(resize_mode="torch_bilinear")
+    resize_group = parser.add_mutually_exclusive_group()
+    resize_group.add_argument(
+        "--resize-mode",
+        choices=["torch_bilinear", "torch_nearest", "opencv_inter_linear", "opencv_inter_nearest"],
+        dest="resize_mode",
+        help="Resize mode used during training preprocessing.",
+    )
+    resize_group.add_argument(
+        "--torch_bilinear",
+        dest="resize_mode",
+        action="store_const",
+        const="torch_bilinear",
+        help="Shortcut for --resize-mode torch_bilinear.",
+    )
+    resize_group.add_argument(
+        "--torch_nearest",
+        dest="resize_mode",
+        action="store_const",
+        const="torch_nearest",
+        help="Shortcut for --resize-mode torch_nearest.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_linear",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_linear",
+        help="Shortcut for --resize-mode opencv_inter_linear.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_nearest",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_nearest",
+        help="Shortcut for --resize-mode opencv_inter_nearest.",
     )
     parser.add_argument("--exp-name", default="default", help="Experiment name; logs will be saved under runs/<exp-name>.")
     parser.add_argument("--batch-size", type=int, default=64)
@@ -431,7 +469,7 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
             pass
 
 
-def make_datasets(args, class_ids, aug_cfg):
+def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     img_h, img_w = parse_img_size(args.img_size)
     base = YoloDataset(
         image_dir=args.image_dir,
@@ -440,6 +478,7 @@ def make_datasets(args, class_ids, aug_cfg):
         val_split=0.0,
         seed=args.seed,
         img_size=(img_h, img_w),
+        resize_mode=resize_mode,
         augment=False,
         class_ids=class_ids,
         augment_cfg=aug_cfg,
@@ -472,6 +511,7 @@ def make_datasets(args, class_ids, aug_cfg):
         val_split=0.0,
         seed=args.seed,
         img_size=(img_h, img_w),
+        resize_mode=resize_mode,
         augment=True,
         class_ids=class_ids,
         augment_cfg=aug_cfg,
@@ -484,6 +524,7 @@ def make_datasets(args, class_ids, aug_cfg):
         val_split=0.0,
         seed=args.seed,
         img_size=(img_h, img_w),
+        resize_mode=resize_mode,
         augment=False,
         class_ids=class_ids,
         augment_cfg=aug_cfg,
@@ -1265,6 +1306,7 @@ def main():
     class_ids = parse_classes(args.classes)
     num_classes = len(class_ids)
     aug_cfg = load_aug_config(args.aug_config)
+    resize_mode = normalize_resize_mode(args.resize_mode)
     use_skip = bool(args.use_skip)
     utod_residual = bool(args.utod_residual)
     backbone = args.backbone
@@ -1369,7 +1411,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1387,6 +1429,14 @@ def main():
             num_classes = len(class_ids)
         if "augment_cfg" in meta:
             aug_cfg = meta["augment_cfg"]
+        if "resize_mode" in meta and meta["resize_mode"]:
+            try:
+                new_resize_mode = normalize_resize_mode(meta["resize_mode"])
+                if new_resize_mode != resize_mode:
+                    print(f"Overriding CLI resize-mode={resize_mode} with {label} resize-mode={new_resize_mode}")
+                resize_mode = new_resize_mode
+            except ValueError:
+                print(f"[WARN] Unsupported {label} resize-mode={meta['resize_mode']}; keeping {resize_mode}")
         if "use_skip" in meta and bool(meta["use_skip"]) != use_skip:
             print(f"Overriding CLI use-skip={use_skip} with {label} use-skip={bool(meta['use_skip'])}")
             use_skip = bool(meta["use_skip"])
@@ -1539,10 +1589,30 @@ def main():
     run_dir = os.path.join("runs", args.exp_name)
     ensure_dir(run_dir)
     log_path = os.path.join(run_dir, "train.log")
+    existing_log = ""
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r") as f:
+                existing_log = f.read()
+        except OSError:
+            existing_log = ""
+    cli_dump = json.dumps(vars(args), sort_keys=True, indent=2, default=str)
+    header_lines = [
+        "=== CLI args ===",
+        cli_dump,
+        f"resolved_resize_mode: {resize_mode}",
+        "",
+    ]
+    with open(log_path, "w") as f:
+        f.write("\n".join(header_lines))
+        if existing_log:
+            if not existing_log.startswith("\n"):
+                f.write("\n")
+            f.write(existing_log)
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
 
-    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg)
+    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg, resize_mode=resize_mode)
     anchors_tensor = None
     if arch_cnn_like and anchor_head:
         if anchor_list:
@@ -2029,6 +2099,7 @@ def main():
                     "arch": args.arch,
                     "classes": class_ids,
                     "augment_cfg": aug_cfg,
+                    "resize_mode": resize_mode,
                     "use_skip": use_skip,
                     "utod_residual": utod_residual,
                     "use_fpn": use_fpn,
@@ -2110,6 +2181,7 @@ def main():
             "arch": args.arch,
             "classes": class_ids,
             "augment_cfg": aug_cfg,
+            "resize_mode": resize_mode,
             "use_skip": use_skip,
             "utod_residual": utod_residual,
             "use_fpn": use_fpn,

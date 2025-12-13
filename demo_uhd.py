@@ -124,16 +124,42 @@ def load_anchors_from_onnx(onnx_path: str) -> Tuple[Optional[np.ndarray], Option
     return anchors, wh_scale, has_quality
 
 
-def has_input_resize(onnx_path: str) -> bool:
-    """Check whether ONNX graph contains a head Resize node (exported via --dynamic-resize)."""
+def inspect_resize_info(onnx_path: str) -> dict:
+    """Infer input Resize presence/mode from ONNX metadata and graph."""
+    info = {"dynamic_resize": False, "resize_mode": None}
     try:
         model = onnx.load(onnx_path, load_external_data=False)
     except Exception:
-        return False
+        return info
+
+    meta = {m.key.lower(): m.value for m in model.metadata_props}
+    if "dynamic_resize" in meta:
+        info["dynamic_resize"] = str(meta["dynamic_resize"]).lower() == "true"
+    if "resize_mode" in meta:
+        info["resize_mode"] = meta["resize_mode"]
+
     for node in model.graph.node:
-        if node.op_type == "Resize" and (node.name == "InputResize" or (node.input and node.input[0] == "images")):
-            return True
-    return False
+        if node.op_type != "Resize":
+            continue
+        if node.name == "InputResize" or (node.input and node.input[0] == "images"):
+            info["dynamic_resize"] = True
+            if info["resize_mode"] is None:
+                op_mode = None
+                coord = None
+                nearest_mode = None
+                for attr in node.attribute:
+                    if attr.name == "mode":
+                        op_mode = attr.s.decode("utf-8") if attr.s else None
+                    elif attr.name == "coordinate_transformation_mode":
+                        coord = attr.s.decode("utf-8") if attr.s else None
+                    elif attr.name == "nearest_mode":
+                        nearest_mode = attr.s.decode("utf-8") if attr.s else None
+                if op_mode == "linear":
+                    info["resize_mode"] = "torch_bilinear" if coord == "half_pixel" else "opencv_inter_linear"
+                elif op_mode == "nearest":
+                    info["resize_mode"] = "torch_nearest" if coord == "half_pixel" else "opencv_inter_nearest"
+            break
+    return info
 
 
 def decode_ultratinyod_raw(
@@ -239,7 +265,13 @@ def decode_ultratinyod_raw(
 
 def load_session(onnx_path: str, img_size: Tuple[int, int]):
     """Load ONNX session and infer whether outputs already include post-process."""
-    dynamic_resize = has_input_resize(onnx_path)
+    resize_info = inspect_resize_info(onnx_path)
+    dynamic_resize = bool(resize_info.get("dynamic_resize", False))
+    resize_mode = resize_info.get("resize_mode")
+    if dynamic_resize:
+        print(f"[INFO] Detected input Resize in ONNX (mode={resize_mode or 'unknown'})")
+    else:
+        print("[INFO] No input Resize detected; preprocessing will resize with OpenCV.")
     session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
     input_info = session.get_inputs()[0]
     outputs_info = session.get_outputs()
@@ -314,6 +346,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "decoded_output": decoded_output,
         "raw_output": raw_output,
         "dynamic_resize": dynamic_resize,
+        "resize_mode": resize_mode,
     }
 
 

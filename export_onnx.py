@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from uhd.ultratinyod import UltraTinyOD, UltraTinyODConfig
+from uhd.resize import normalize_resize_mode
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -239,14 +240,26 @@ class UltraTinyODRawWithAnchors(nn.Module):
         return raw, anchors, wh_scale
 
 
-def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "images") -> None:
+def _resize_attrs_from_mode(resize_mode: str):
+    rm = normalize_resize_mode(resize_mode)
+    if rm == "torch_bilinear":
+        return "linear", "half_pixel", "floor"
+    if rm == "torch_nearest":
+        return "nearest", "asymmetric", "floor"
+    if rm == "opencv_inter_linear":
+        return "linear", "asymmetric", "floor"
+    return "nearest", "asymmetric", "floor"
+
+
+def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "images", resize_mode: str = "torch_nearest") -> None:
     """
     Reload an ONNX model, make input dynamic, and insert a Resize to the fixed target_size
     at the head of the graph. Overwrites the ONNX file in-place.
     """
     import onnx
-    from onnx import helper, numpy_helper, TensorProto
+    from onnx import helper, numpy_helper
 
+    mode_attr, ctm_attr, nearest_attr = _resize_attrs_from_mode(resize_mode)
     model = onnx.load(onnx_path, load_external_data=False)
     g = model.graph
     inp = None
@@ -276,10 +289,10 @@ def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: s
         "Resize",
         inputs=[input_name, "", "", sizes.name],
         outputs=[resize_out],
-        mode="nearest",
-        coordinate_transformation_mode="asymmetric",
+        mode=mode_attr,
+        coordinate_transformation_mode=ctm_attr,
         cubic_coeff_a=-0.75,
-        nearest_mode="floor",
+        nearest_mode=nearest_attr,
         name="InputResize",
     )
     g.node.insert(0, resize_node)
@@ -334,6 +347,28 @@ def simplify_onnx_path(output_path: str) -> bool:
         return False
     onnx.save(model_simplified, output_path)
     return True
+
+
+def update_metadata_props(output_path: str, props: Dict[str, str]) -> None:
+    """Add/update metadata_props on an ONNX file; silently skip if onnx is unavailable."""
+    try:
+        import onnx
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"[WARN] Failed to import onnx for metadata update: {exc}")
+        return
+    try:
+        model = onnx.load(output_path, load_external_data=False)
+    except Exception as exc:  # pragma: no cover - IO failure
+        print(f"[WARN] Failed to load ONNX for metadata update: {exc}")
+        return
+    kv = {p.key: p.value for p in model.metadata_props}
+    kv.update({str(k): str(v) for k, v in props.items() if v is not None})
+    model.metadata_props.clear()
+    for k, v in kv.items():
+        prop = model.metadata_props.add()
+        prop.key = k
+        prop.value = v
+    onnx.save(model, output_path)
 
 
 def verify_outputs(model: UltraTinyODWithPost, onnx_path: str, img_size: Tuple[int, int]) -> Dict[str, float]:
@@ -395,6 +430,11 @@ def main():
 
     ckpt_path = args.checkpoint or args.weights
     state, meta = load_checkpoint(ckpt_path, use_ema=bool(args.use_ema))
+    try:
+        resize_mode = normalize_resize_mode(meta.get("resize_mode", "opencv_inter_nearest"))
+    except Exception:
+        print("[WARN] resize_mode missing or invalid in checkpoint meta; defaulting to opencv_inter_nearest.")
+        resize_mode = "opencv_inter_nearest"
     cfg, inferred = infer_utod_config(state, meta, args)
 
     model = UltraTinyOD(
@@ -457,11 +497,19 @@ def main():
 
     # Inject input resize and dynamic axes after export/simplification
     if args.dynamic_resize:
-        add_input_resize(args.output, target_size=img_size, input_name="images")
-        print(f"Injected input Resize to fixed size {img_size} with dynamic input axes.")
+        add_input_resize(args.output, target_size=img_size, input_name="images", resize_mode=resize_mode)
+        print(f"Injected input Resize to fixed size {img_size} with dynamic input axes (mode={resize_mode}).")
         if not args.no_simplify:
             simplify_onnx_path(args.output)
             print("Re-simplified ONNX after injecting Resize.")
+
+    update_metadata_props(
+        args.output,
+        {
+            "resize_mode": resize_mode,
+            "dynamic_resize": str(bool(args.dynamic_resize)).lower(),
+        },
+    )
 
 
 if __name__ == "__main__":

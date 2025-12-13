@@ -5,8 +5,8 @@ import cv2
 import numpy as np
 import torch
 import torchvision.transforms.v2 as T
-from PIL import Image
 
+from .resize import resize_image_numpy
 
 def _cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
     cx, cy, w, h = boxes.T
@@ -30,13 +30,6 @@ def _clip_boxes(boxes: np.ndarray) -> np.ndarray:
     boxes[:, 0::2] = boxes[:, 0::2].clip(0.0, 1.0)
     boxes[:, 1::2] = boxes[:, 1::2].clip(0.0, 1.0)
     return boxes
-
-
-def _pil_resize(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    """Resize HWC float32 [0,1] image via PIL nearest."""
-    pil_img = Image.fromarray(np.clip(img * 255.0, 0, 255).astype(np.uint8))
-    pil_img = pil_img.resize(size, resample=Image.NEAREST)
-    return np.asarray(pil_img, dtype=np.float32) / 255.0
 
 
 def _filter_boxes(boxes: np.ndarray, labels: np.ndarray, min_area: float) -> Tuple[np.ndarray, np.ndarray]:
@@ -87,6 +80,12 @@ class AugmentationPipeline:
 
         return img, boxes, labels
 
+    def _resize(self, img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
+        if self.dataset is not None and hasattr(self.dataset, "resize_image"):
+            return self.dataset.resize_image(img, size)
+        mode = getattr(self.dataset, "resize_mode", "opencv_inter_nearest") if self.dataset is not None else "opencv_inter_nearest"
+        return resize_image_numpy(img, size=size, mode=mode)
+
     def _apply_op(self, name: str, aug_cfg, img: np.ndarray, boxes: np.ndarray, labels: np.ndarray):
         prob = None
         if isinstance(aug_cfg, dict) and "prob" in aug_cfg:
@@ -126,7 +125,7 @@ class AugmentationPipeline:
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
                 new_w = max(1, int(w * s))
                 new_h = max(1, int(h * s if keep_aspect else h * s))
-                img_scaled = _pil_resize(img, (new_w, new_h))
+                img_scaled = self._resize(img, (new_w, new_h))
                 canvas = np.ones((h, w, 3), dtype=np.float32) * (114.0 / 255.0)
                 y0 = max(0, (h - new_h) // 2)
                 x0 = max(0, (w - new_w) // 2)
@@ -208,7 +207,7 @@ class AugmentationPipeline:
                 img2, boxes2, labels2 = self.dataset.sample_random()[:3]
                 h, w = img.shape[:2]
                 if img2.shape[:2] != (h, w):
-                    img2 = _pil_resize(img2, (w, h))
+                    img2 = self._resize(img2, (w, h))
                 lam = 0.5
                 img = (lam * img + (1 - lam) * img2).clip(0.0, 1.0)
                 boxes = np.concatenate([boxes, boxes2], axis=0) if boxes.size and boxes2.size else (boxes2 if boxes.size == 0 else boxes)
@@ -227,7 +226,7 @@ class AugmentationPipeline:
                 resized_imgs = []
                 for im in imgs:
                     if im.shape[0] != self.img_h or im.shape[1] != self.img_w:
-                        im = _pil_resize(im, (self.img_w, self.img_h))
+                        im = self._resize(im, (self.img_w, self.img_h))
                     resized_imgs.append(im)
                 imgs = resized_imgs
                 canvas = np.ones((self.img_h * 2, self.img_w * 2, 3), dtype=np.float32) * 114 / 255.0
@@ -283,7 +282,7 @@ class AugmentationPipeline:
                     if boxes2.size == 0:
                         continue
                     if img2.shape[:2] != (h, w):
-                        img2 = _pil_resize(img2, (w, h))
+                        img2 = self._resize(img2, (w, h))
                     num_paste = min(max_objs, boxes2.shape[0])
                     sel = np.random.choice(boxes2.shape[0], num_paste, replace=False)
                     for idx in sel:
@@ -298,7 +297,7 @@ class AugmentationPipeline:
                         scale = random.uniform(float(scale_jitter[0]), float(scale_jitter[1]))
                         new_w = max(1, int(patch.shape[1] * scale))
                         new_h = max(1, int(patch.shape[0] * scale))
-                        patch_resized = _pil_resize(patch, (new_w, new_h))
+                        patch_resized = self._resize(patch, (new_w, new_h))
                         px = random.randint(0, max(0, w - new_w))
                         py = random.randint(0, max(0, h - new_h))
                         img[py : py + new_h, px : px + new_w] = patch_resized
@@ -330,7 +329,7 @@ class AugmentationPipeline:
                     boxes[:, 3] *= h / ch
                     boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
                     boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
-                img = _pil_resize(img, (self.img_w, self.img_h))
+                img = self._resize(img, (self.img_w, self.img_h))
 
         elif name == "RandomResizedCrop":
             if should_apply(aug_cfg.get("prob", 0.0)):
@@ -372,7 +371,7 @@ class AugmentationPipeline:
                             )
                             boxes = _xyxy_to_cxcywh(boxes_xyxy)
                             labels = labels[keep]
-                        img = _pil_resize(img_crop, (self.img_w, self.img_h))
+                        img = self._resize(img_crop, (self.img_w, self.img_h))
                         break
 
         elif name == "RandomBrightness":
