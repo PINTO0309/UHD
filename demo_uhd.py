@@ -15,7 +15,7 @@ from onnx import numpy_helper
 
 def preprocess(img_bgr: np.ndarray, img_size: Tuple[int, int]) -> np.ndarray:
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(img_rgb, img_size, interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(img_rgb, img_size, interpolation=cv2.INTER_AREA)
     arr = resized.astype(np.float32) / 255.0
     chw = np.transpose(arr, (2, 0, 1))
     return chw[np.newaxis, ...]
@@ -394,7 +394,7 @@ def run_images(
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
-        base = cv2.resize(img_bgr, (target_w, target_h)) if actual_size else img_bgr
+        base = cv2.resize(img_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA) if actual_size else img_bgr
         vis_out = draw_boxes(base, boxes, (0, 0, 255))
         save_path = out_dir / img_path.name
         cv2.imwrite(str(save_path), vis_out)
@@ -429,7 +429,7 @@ def run_camera(
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
-        base = cv2.resize(frame, (target_w, target_h)) if actual_size else frame
+        base = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA) if actual_size else frame
         vis = draw_boxes(base, boxes, (255, 0, 0))
 
         t1 = time.perf_counter()
@@ -461,7 +461,7 @@ def run_camera(
                 cv2.LINE_AA,
             )
 
-        vis_out = cv2.resize(vis, img_size) if actual_size else vis
+        vis_out = cv2.resize(vis, img_size, interpolation=cv2.INTER_AREA) if actual_size else vis
 
         if record_path:
             if writer is None:
