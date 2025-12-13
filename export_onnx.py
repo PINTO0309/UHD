@@ -276,8 +276,8 @@ def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: s
         "Resize",
         inputs=[input_name, "", "", sizes.name],
         outputs=[resize_out],
-        mode="linear",
-        coordinate_transformation_mode="half_pixel",
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
         name="InputResize",
     )
     g.node.insert(0, resize_node)

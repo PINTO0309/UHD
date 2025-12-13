@@ -109,7 +109,7 @@ gh release download onnx -R PINTO0309/UHD
 ## Inference
 
 > [!CAUTION]
-> If you resize images to 64x64 in preprocessing, you must use PIL or your own custom resize function. Never use OpenCV's cv2.resize() . Using cv2.resize() will significantly reduce the accuracy of inference.
+> If you pre-process and resize your images to `64x64`, use `nearest` mode.
 
 ```bash
 usage: demo_uhd.py

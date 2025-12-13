@@ -1267,7 +1267,7 @@ requires-dist = [
     { name = "onnxsim", specifier = "==0.4.30" },
     { name = "opencv-python", specifier = "==4.11.0.86" },
     { name = "pandas", specifier = "==2.3.3" },
-    { name = "pillow", specifier = ">=12.0.0" },
+    { name = "pillow", specifier = "==12.0.0" },
     { name = "pyarrow", specifier = "==22.0.0" },
     { name = "pycocotools", specifier = "==2.0.8" },
     { name = "pyyaml", specifier = "==6.0.2" },

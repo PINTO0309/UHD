@@ -19,9 +19,8 @@ def preprocess(img_bgr: np.ndarray, img_size: Tuple[int, int], dynamic_resize: b
     if dynamic_resize:
         arr = img_rgb.astype(np.float32) / 255.0
     else:
-        pil_img = Image.fromarray(img_rgb)
-        pil_img = pil_img.resize(img_size, resample=Image.BILINEAR)
-        arr = np.asarray(pil_img, dtype=np.float32) / 255.0
+        resized = cv2.resize(img_rgb, img_size, interpolation=cv2.INTER_NEAREST)
+        arr = resized.astype(np.float32) / 255.0
     chw = np.transpose(arr, (2, 0, 1))
     return chw[np.newaxis, ...]
 
