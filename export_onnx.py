@@ -239,6 +239,55 @@ class UltraTinyODRawWithAnchors(nn.Module):
         return raw, anchors, wh_scale
 
 
+def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "images") -> None:
+    """
+    Reload an ONNX model, make input dynamic, and insert a Resize to the fixed target_size
+    at the head of the graph. Overwrites the ONNX file in-place.
+    """
+    import onnx
+    from onnx import helper, numpy_helper, TensorProto
+
+    model = onnx.load(onnx_path, load_external_data=False)
+    g = model.graph
+    inp = None
+    for i in g.input:
+        if i.name == input_name:
+            inp = i
+            break
+    if inp is None:
+        raise ValueError(f"Input '{input_name}' not found in ONNX graph.")
+    dims = inp.type.tensor_type.shape.dim
+    if len(dims) < 4:
+        raise ValueError(f"Input '{input_name}' has unexpected rank: {len(dims)}")
+    # dynamic batch/H/W (avoid setting dim_value=0 which may cause ORT Resize failure)
+    dims[2].dim_param = dims[2].dim_param or "H"
+    if not dims[2].HasField("dim_value") or dims[2].dim_value == 0:
+        dims[2].ClearField("dim_value")
+    dims[3].dim_param = dims[3].dim_param or "W"
+    if not dims[3].HasField("dim_value") or dims[3].dim_value == 0:
+        dims[3].ClearField("dim_value")
+
+    target_h, target_w = target_size
+    sizes = numpy_helper.from_array(np.array([1, 3, target_h, target_w], dtype=np.int64), name=f"{input_name}_sizes")
+    g.initializer.append(sizes)
+
+    resize_out = f"{input_name}_resized"
+    resize_node = helper.make_node(
+        "Resize",
+        inputs=[input_name, "", "", sizes.name],
+        outputs=[resize_out],
+        mode="linear",
+        coordinate_transformation_mode="half_pixel",
+        name="InputResize",
+    )
+    g.node.insert(0, resize_node)
+    for node in g.node[1:]:
+        node.input[:] = [resize_out if inp_name == input_name else inp_name for inp_name in node.input]
+
+    model.opset_import[0].version = max(model.opset_import[0].version, 11)
+    onnx.save(model, onnx_path)
+
+
 def export_onnx(
     model: nn.Module,
     output_path: str,
@@ -265,18 +314,24 @@ def export_onnx(
         do_constant_folding=True,
     )
     if simplify:
-        try:
-            import onnx
-            from onnxsim import simplify as onnx_simplify
-        except Exception as exc:  # pragma: no cover - optional dependency
-            print(f"[WARN] Failed to import onnx/onnxsim for simplification: {exc}")
-            return
-        model_onnx = onnx.load(output_path)
-        model_simplified, check = onnx_simplify(model_onnx)
-        if not check:
-            print("[WARN] onnx-simplifier check failed; keeping original export.")
-            return
-        onnx.save(model_simplified, output_path)
+        simplify_onnx_path(output_path)
+
+
+def simplify_onnx_path(output_path: str) -> bool:
+    """Run onnx-simplifier on an ONNX file, in-place. Returns True on success."""
+    try:
+        import onnx
+        from onnxsim import simplify as onnx_simplify
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"[WARN] Failed to import onnx/onnxsim for simplification: {exc}")
+        return False
+    model_onnx = onnx.load(output_path)
+    model_simplified, check = onnx_simplify(model_onnx)
+    if not check:
+        print("[WARN] onnx-simplifier check failed; keeping original export.")
+        return False
+    onnx.save(model_simplified, output_path)
+    return True
 
 
 def verify_outputs(model: UltraTinyODWithPost, onnx_path: str, img_size: Tuple[int, int]) -> Dict[str, float]:
@@ -324,6 +379,11 @@ def build_argparser():
     parser.add_argument("--no-simplify", action="store_true", help="Skip onnx-simplifier.")
     parser.add_argument("--non-strict", action="store_true", help="Load weights with strict=False.")
     parser.add_argument("--verify", action="store_true", help="Run a quick ONNXRuntime vs PyTorch diff check.")
+    parser.add_argument(
+        "--dynamic-resize",
+        action="store_true",
+        help="Add a Resize op at the graph head and make input dynamic after export/simplify.",
+    )
     return parser
 
 
@@ -372,9 +432,9 @@ def main():
         output_names = ["detections"]
 
     device = torch.device("cpu")
+    img_size = parse_img_size(args.img_size)
     export_module.to(device)
 
-    img_size = parse_img_size(args.img_size)
     out_dir = os.path.dirname(os.path.abspath(args.output))
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
@@ -392,6 +452,14 @@ def main():
     if args.verify and args.merge_postprocess:
         deltas = verify_outputs(export_module, args.output, img_size=img_size)
         print("Verification max abs diff:", deltas)
+
+    # Inject input resize and dynamic axes after export/simplification
+    if args.dynamic_resize:
+        add_input_resize(args.output, target_size=img_size, input_name="images")
+        print(f"Injected input Resize to fixed size {img_size} with dynamic input axes.")
+        if not args.no_simplify:
+            simplify_onnx_path(args.output)
+            print("Re-simplified ONNX after injecting Resize.")
 
 
 if __name__ == "__main__":

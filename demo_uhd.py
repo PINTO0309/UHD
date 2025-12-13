@@ -6,17 +6,22 @@ import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import onnx
 import cv2
 import numpy as np
 import onnxruntime as ort
-import onnx
 from onnx import numpy_helper
+from PIL import Image
 
 
-def preprocess(img_bgr: np.ndarray, img_size: Tuple[int, int]) -> np.ndarray:
+def preprocess(img_bgr: np.ndarray, img_size: Tuple[int, int], dynamic_resize: bool) -> np.ndarray:
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(img_rgb, img_size, interpolation=cv2.INTER_LINEAR)
-    arr = resized.astype(np.float32) / 255.0
+    if dynamic_resize:
+        arr = img_rgb.astype(np.float32) / 255.0
+    else:
+        pil_img = Image.fromarray(img_rgb)
+        pil_img = pil_img.resize(img_size, resample=Image.BILINEAR)
+        arr = np.asarray(pil_img, dtype=np.float32) / 255.0
     chw = np.transpose(arr, (2, 0, 1))
     return chw[np.newaxis, ...]
 
@@ -118,6 +123,18 @@ def load_anchors_from_onnx(onnx_path: str) -> Tuple[Optional[np.ndarray], Option
         if "quality" in name_l:
             has_quality = True
     return anchors, wh_scale, has_quality
+
+
+def has_input_resize(onnx_path: str) -> bool:
+    """Check whether ONNX graph contains a head Resize node (exported via --dynamic-resize)."""
+    try:
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return False
+    for node in model.graph.node:
+        if node.op_type == "Resize" and (node.name == "InputResize" or (node.input and node.input[0] == "images")):
+            return True
+    return False
 
 
 def decode_ultratinyod_raw(
@@ -223,6 +240,7 @@ def decode_ultratinyod_raw(
 
 def load_session(onnx_path: str, img_size: Tuple[int, int]):
     """Load ONNX session and infer whether outputs already include post-process."""
+    dynamic_resize = has_input_resize(onnx_path)
     session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
     input_info = session.get_inputs()[0]
     outputs_info = session.get_outputs()
@@ -296,6 +314,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "input_name": input_info.name,
         "decoded_output": decoded_output,
         "raw_output": raw_output,
+        "dynamic_resize": dynamic_resize,
     }
 
 
@@ -375,6 +394,7 @@ def run_images(
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    dynamic_resize = bool(session_info.get("dynamic_resize", False))
     exts = {".jpg", ".jpeg", ".png", ".bmp"}
     images = [p for p in img_dir.iterdir() if p.suffix.lower() in exts]
     if not images:
@@ -388,7 +408,7 @@ def run_images(
             continue
         h, w = img_bgr.shape[:2]
         target_h, target_w = img_size if actual_size else (h, w)
-        inp = preprocess(img_bgr, img_size)
+        inp = preprocess(img_bgr, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
@@ -416,6 +436,7 @@ def run_camera(
 
     writer = None
     last_time = None
+    dynamic_resize = bool(session_info.get("dynamic_resize", False))
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -423,7 +444,7 @@ def run_camera(
         t0 = time.perf_counter()
         h, w = frame.shape[:2]
         target_h, target_w = img_size if actual_size else (h, w)
-        inp = preprocess(frame, img_size)
+        inp = preprocess(frame, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:

@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
@@ -170,15 +171,17 @@ class YoloDataset(Dataset):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
             arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
             h0, w0 = arr.shape[:2]
-            arr = cv2.resize(arr, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
+            pil_img = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+            pil_img = pil_img.resize((self.img_w, self.img_h), resample=Image.BILINEAR)
+            arr_resized = np.asarray(pil_img, dtype=np.float32) / 255.0
             if self.pipeline:
-                img_np, boxes_np, labels_np = self.pipeline(arr, boxes_np, labels_np)
+                img_np, boxes_np, labels_np = self.pipeline(arr_resized, boxes_np, labels_np)
             else:
-                img_np = arr
+                img_np = arr_resized
 
-            if img_np.shape[0] != self.img_h or img_np.shape[1] != self.img_w:
-                img_np = cv2.resize(img_np, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
-            last_sample = (img_np, boxes_np, labels_np, img_path, (h0, w0))
+            img_np = np.ascontiguousarray(img_np)
+            img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+            last_sample = (img_tensor, boxes_np, labels_np, img_path, (h0, w0))
             if boxes_np.size > 0:
                 target = {
                     "boxes": torch.tensor(boxes_np, dtype=torch.float32),
@@ -186,20 +189,18 @@ class YoloDataset(Dataset):
                     "image_id": img_path,
                     "orig_size": (h0, w0),
                 }
-                img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
                 return img_tensor, target
 
         # fallback: return last attempt even if empty to avoid infinite loop
         if last_sample is None:
             raise ValueError("Dataset is empty.")
-        img_np, boxes_np, labels_np, img_path, orig_size = last_sample
+        img_tensor, boxes_np, labels_np, img_path, orig_size = last_sample
         target = {
             "boxes": torch.tensor(boxes_np, dtype=torch.float32),
             "labels": torch.tensor(labels_np, dtype=torch.long),
             "image_id": img_path,
             "orig_size": orig_size,
         }
-        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
         return img_tensor, target
 
 
