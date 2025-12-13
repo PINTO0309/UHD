@@ -109,7 +109,7 @@ gh release download onnx -R PINTO0309/UHD
 ## Inference
 
 > [!CAUTION]
-> If you resize images to 64x64 in preprocessing, you must use PIL or your own custom resize function. Never use OpenCV's cv2.resize() . Using cv2.resize() will significantly reduce the accuracy of inference.
+> If you resize images to `64x64` in preprocessing, you must use PIL or your own custom resize function. Never use OpenCV's `cv2.resize()`. Using `cv2.resize()` will significantly reduce the accuracy of inference.
 
 ```bash
 usage: demo_uhd.py
@@ -160,6 +160,21 @@ options:
   --camera 0 \
   --conf-thresh 0.90
   ```
+- ONNX with pre-processing (PIL equivalent of Resize) + post-processing
+  ```bash
+  uv run demo_uhd.py \
+  --onnx ultratinyod_res_anc8_w64_64x64_dynamic.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
+  ```
+- ONNX with pre-processing (PIL equivalent of Resize) + without post-processing
+  ```bash
+  uv run demo_uhd.py \
+  --onnx ultratinyod_res_anc8_w64_64x64_dynamic_nopost.onnx \
+  --camera 0 \
+  --conf-thresh 0.90
+  ```
+  
 
 ## Training Examples (full CLI)
 
