@@ -33,9 +33,9 @@ def _clip_boxes(boxes: np.ndarray) -> np.ndarray:
 
 
 def _pil_resize(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    """Resize HWC float32 [0,1] image via PIL bilinear."""
+    """Resize HWC float32 [0,1] image via PIL nearest."""
     pil_img = Image.fromarray(np.clip(img * 255.0, 0, 255).astype(np.uint8))
-    pil_img = pil_img.resize(size, resample=Image.BILINEAR)
+    pil_img = pil_img.resize(size, resample=Image.NEAREST)
     return np.asarray(pil_img, dtype=np.float32) / 255.0
 
 

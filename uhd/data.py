@@ -6,15 +6,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
+from PIL import Image
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
-
-
-def resize_like_onnx(x: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
-    """Match ONNX export resize: nearest neighbor."""
-    return F.interpolate(x, size=(out_h, out_w), mode="nearest")
 
 
 def _resolve_path(entry: str, image_dir: str, list_path: Optional[str]) -> Optional[str]:
@@ -176,9 +171,9 @@ class YoloDataset(Dataset):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
             arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
             h0, w0 = arr.shape[:2]
-            img_t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)  # BCHW
-            img_t = resize_like_onnx(img_t, self.img_h, self.img_w)
-            arr_resized = img_t.squeeze(0).permute(1, 2, 0).numpy()
+            pil_img = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+            pil_img = pil_img.resize((self.img_w, self.img_h), resample=Image.NEAREST)
+            arr_resized = np.asarray(pil_img, dtype=np.float32) / 255.0
             if self.pipeline:
                 img_np, boxes_np, labels_np = self.pipeline(arr_resized, boxes_np, labels_np)
             else:
