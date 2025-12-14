@@ -1577,9 +1577,9 @@ The internal workings of TorchVision's downsampling and PIL's downsampling are v
 
 |Training|Deploy|
 |:-|:-|
-|When training while downsampling using TorchVision's Resize (`InterpolationMode.BILINEAR`)|Merge `Resize Linear + half-pixel` at the input of the ONNX model|
-|When training while downsampling using TorchVision's Resize (`InterpolationMode.NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model|
-|When training while downsampling using OpenCV's Resize (`cv2.INTER_NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model or OpenCV `INTER_NEAREST`|
+|When training while downsampling using TorchVision's Resize (`InterpolationMode.BILINEAR`)|Merge `Resize Linear + half-pixel` at the input of the ONNX model. This will result in the highest model accuracy. However, it will be limited to deployment on hardware, NPUs, and frameworks that support the resize operation of bilinear interpolation. It is not suitable for quantization.|
+|When training while downsampling using TorchVision's Resize (`InterpolationMode.NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model. It is the most versatile in terms of HW, NPU, and quantization deployment, but the accuracy of the model will be lower.|
+|When training while downsampling using OpenCV's Resize (`cv2.INTER_NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model or OpenCV `INTER_NEAREST`. Although the accuracy is low, it is highly versatile because the downsampling of images can be freely written on the program side. However, downsampling must be implemented manually.|
 
 1. Error after PIL conversion when downsampling with TorchVision's Resize InterpolationMode.BILINEAR
     ```
