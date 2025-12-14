@@ -251,7 +251,7 @@ def _resize_attrs_from_mode(resize_mode: str):
     return "nearest", "asymmetric", "floor"
 
 
-def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "images", resize_mode: str = "torch_nearest") -> None:
+def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "input_rgb", resize_mode: str = "torch_nearest") -> None:
     """
     Reload an ONNX model, make input dynamic, and insert a Resize to the fixed target_size
     at the head of the graph. Overwrites the ONNX file in-place.
@@ -315,9 +315,9 @@ def export_onnx(
     model.eval()
     h, w = img_size
     dummy = torch.zeros(1, 3, h, w, device=next(model.parameters()).device)
-    input_names = ["images"]
+    input_names = ["input_rgb"]
     if output_names is None:
-        output_names = ["detections"]
+        output_names = ["score_classid_cxcywh"]
     torch.onnx.export(
         model,
         dummy,
@@ -381,7 +381,7 @@ def verify_outputs(model: UltraTinyODWithPost, onnx_path: str, img_size: Tuple[i
     with torch.no_grad():
         torch_out = model(sample)
     sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-    ort_outs = sess.run(None, {"images": sample.numpy()})
+    ort_outs = sess.run(None, {"input_rgb": sample.numpy()})
 
     deltas = {}
     ref = torch_out.detach().cpu().numpy()
@@ -468,10 +468,10 @@ def main():
 
     if not args.merge_postprocess:
         export_module = UltraTinyODRawWithAnchors(model)
-        output_names = ["pred", "anchors", "wh_scale"]
+        output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
     else:
         export_module = UltraTinyODWithPost(model, topk=args.topk, conf_thresh=args.conf_thresh)
-        output_names = ["detections"]
+        output_names = ["score_classid_cxcywh"]
 
     device = torch.device("cpu")
     img_size = parse_img_size(args.img_size)
@@ -497,7 +497,7 @@ def main():
 
     # Inject input resize and dynamic axes after export/simplification
     if args.dynamic_resize:
-        add_input_resize(args.output, target_size=img_size, input_name="images", resize_mode=resize_mode)
+        add_input_resize(args.output, target_size=img_size, input_name="input_rgb", resize_mode=resize_mode)
         print(f"Injected input Resize to fixed size {img_size} with dynamic input axes (mode={resize_mode}).")
         if not args.no_simplify:
             simplify_onnx_path(args.output)
@@ -508,6 +508,9 @@ def main():
         {
             "resize_mode": resize_mode,
             "dynamic_resize": str(bool(args.dynamic_resize)).lower(),
+            "decode_score": "score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)",
+            "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
+            "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),
         },
     )
 
