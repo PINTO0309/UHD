@@ -94,10 +94,12 @@ def benchmark(interp):
 # --------------------------------------------------
 # 実測
 # --------------------------------------------------
+t_nearest = benchmark(cv2.INTER_NEAREST)
 t_linear = benchmark(cv2.INTER_LINEAR)
 t_area   = benchmark(cv2.INTER_AREA)
 
 print("=== Resize benchmark ===")
+print(f"INTER_NEAREST : {t_nearest:.4f} ms")
 print(f"INTER_LINEAR : {t_linear:.4f} ms")
 print(f"INTER_AREA   : {t_area:.4f} ms")
 print(f"AREA / LINEAR ratio : {t_area / t_linear:.2f}x")
