@@ -1569,35 +1569,35 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 - `iou`: 1 - IoU for matched predictions
 
 ## The impact of image downsampling methods
-TorchVision's Resize method is implemented using a downsampling method similar to PIL on the backend, but it is significantly different from OpenCV's downsampling implementation. Therefore, when downsampling images in preprocessing during training, it is important to note that the numerical characteristics of the images used by the model for training will be completely different depending on whether you use TorchVision's Resize method or OpenCV's Resize method. Below is the pixel-level error calculation when downsampling an image to 64x64 pixels. If the diff value is greater than 1.0, the images are completely different.
+PyTorch's Resize method is implemented using a downsampling method similar to PIL on the backend, but it is significantly different from OpenCV's downsampling implementation. Therefore, when downsampling images in preprocessing during training, it is important to note that the numerical characteristics of the images used by the model for training will be completely different depending on whether you use PyTorch's Resize method or OpenCV's Resize method. Below is the pixel-level error calculation when downsampling an image to 64x64 pixels. If the diff value is greater than 1.0, the images are completely different.
 
 Therefore, it is easy to imagine that if the downsampling method used for preprocessing during learning is different from the downsampling method used during inference, the output inference results will be disastrous.
 
-The internal workings of TorchVision's downsampling and PIL's downsampling are very similar but slightly different. When deploying and inferencing in Python and other environments, accuracy will be significantly degraded unless the model is deployed according to the following criteria. If you train using OpenCV's `cv2.INTER_LINEAR`, the model will never produce the correct output after preprocessing in PyTorch, TensorFlow, or ONNX other than OpenCV.
+The internal workings of PyTorch's downsampling and PIL's downsampling are very similar but slightly different. When deploying and inferencing in Python and other environments, accuracy will be significantly degraded unless the model is deployed according to the following criteria. If you train using OpenCV's `cv2.INTER_LINEAR`, the model will never produce the correct output after preprocessing in PyTorch, TensorFlow, or ONNX other than OpenCV.
 
 |Training|Deploy|
 |:-|:-|
-|When training while downsampling using TorchVision's Resize (`InterpolationMode.BILINEAR`)|Merge `Resize Linear + half-pixel` at the input of the ONNX model. This will result in the highest model accuracy. However, it will be limited to deployment on hardware, NPUs, and frameworks that support the resize operation of bilinear interpolation. It is not suitable for quantization.|
-|When training while downsampling using TorchVision's Resize (`InterpolationMode.NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model. It is the most versatile in terms of HW, NPU, and quantization deployment, but the accuracy of the model will be lower.|
+|When training while downsampling using PyTorch's Resize (`InterpolationMode.BILINEAR`)|Merge `Resize Linear + half-pixel` at the input of the ONNX model. This will result in the highest model accuracy. However, it will be limited to deployment on hardware, NPUs, and frameworks that support the resize operation of bilinear interpolation. It is not suitable for quantization.|
+|When training while downsampling using PyTorch's Resize (`InterpolationMode.NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model. It is the most versatile in terms of HW, NPU, and quantization deployment, but the accuracy of the model will be lower.|
 |When training while downsampling using OpenCV's Resize (`cv2.INTER_NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model or OpenCV `INTER_NEAREST`. Although the accuracy is low, it is highly versatile because the downsampling of images can be freely written on the program side. However, downsampling must be implemented manually.|
 
-1. Error after PIL conversion when downsampling with TorchVision's Resize InterpolationMode.BILINEAR
+1. Error after PIL conversion when downsampling with PyTorch's Resize InterpolationMode.BILINEAR
     ```
-    torchvision(InterpolationMode.BILINEAR) -> Convert to PIL vs torchvision Tensor(InterpolationMode.BILINEAR)
+    PyTorch(InterpolationMode.BILINEAR) -> Convert to PIL vs PyTorch Tensor(InterpolationMode.BILINEAR)
       max  diff : 1
       mean diff : 0.4949
       std  diff : 0.5000
     ```
-2. Error when downsampling with TorchVision's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
+2. Error when downsampling with PyTorch's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
     ```
-    torchvision(InterpolationMode.BILINEAR) -> Convert to PIL vs OpenCV INTER_LINEAR
+    PyTorch(InterpolationMode.BILINEAR) -> Convert to PIL vs OpenCV INTER_LINEAR
       max  diff : 104
       mean diff : 10.2930
       std  diff : 13.2792
     ```
-3. Error when downsampling with TorchVision's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
+3. Error when downsampling with PyTorch's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
     ```
-    torchvision Tensor(InterpolationMode.BILINEAR) vs OpenCV INTER_LINEAR
+    PyTorch Tensor(InterpolationMode.BILINEAR) vs OpenCV INTER_LINEAR
       max  diff : 104
       mean diff : 10.3336
       std  diff : 13.2463
