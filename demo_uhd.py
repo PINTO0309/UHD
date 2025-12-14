@@ -81,11 +81,17 @@ def non_max_suppression(
     return [boxes[i] for i in keep]
 
 
-def draw_boxes(img_bgr: np.ndarray, boxes: List[Tuple[float, int, float, float, float, float]], color: Tuple[int, int, int]) -> np.ndarray:
+def draw_boxes(
+    img_bgr: np.ndarray,
+    boxes: List[Tuple[float, int, float, float, float, float]],
+    color: Tuple[int, int, int],
+    class0_color: Tuple[int, int, int] = (0, 0, 255),
+) -> np.ndarray:
     out = img_bgr.copy()
     for score, cls_id, x1, y1, x2, y2 in boxes:
         x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])
-        cv2.rectangle(out, (x1i, y1i), (x2i, y2i), color, 2)
+        box_color = class0_color if cls_id == 0 else color
+        cv2.rectangle(out, (x1i, y1i), (x2i, y2i), box_color, 2)
     return out
 
 
