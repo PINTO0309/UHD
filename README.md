@@ -115,7 +115,7 @@ gh release download onnx -R PINTO0309/UHD
   |S|7.79 M|0.87 G|0.58478|1.97 ms|31.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_torch_bilinear_dynamic_nopost.onnx)|
   |C|12.13 M|1.35 G|0.58459|2.74 ms|48.6 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_torch_bilinear_dynamic_nopost.onnx)|
   |M|17.44 M|1.94 G|0.59034|3.57 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic_nopost.onnx)|
-  |L|30.92 M|3.44 G|0.58929| ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx)|
+  |L|30.92 M|3.44 G|0.58929|7.16 ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx)|
 
 - `torch_nearest_dynamic` + No resizing required + Suitable for quantization
 
