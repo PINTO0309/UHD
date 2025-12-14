@@ -5,7 +5,7 @@ Ultra-lightweight human detection. The number of parameters does not correlate t
 
 This model is an experimental implementation and is not suitable for real-time inference using a USB camera, etc.
 
-https://github.com/user-attachments/assets/6115de34-ec8a-4649-9e1a-7da46e6f370d
+https://github.com/user-attachments/assets/c5cec06b-71b4-4e61-81e9-e66eef50d082
 
 - Variant-S / `w ESE + IoU-aware + ReLU`
 
