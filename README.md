@@ -117,6 +117,14 @@ gh release download onnx -R PINTO0309/UHD
   |M|17.44 M|1.94 G|0.59034|3.57 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic_nopost.onnx)|
   |L|30.92 M|3.44 G|0.58929| ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx)|
 
+- `torch_nearest_dynamic` + No resizing required + Suitable for quantization
+
+  **WIP**
+
+- `opencv_inter_nearest` + Optimized for OpenCV downsampling + Suitable for quantization
+
+  **WIP**
+
 ## Inference
 
 > [!CAUTION]
