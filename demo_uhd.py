@@ -293,9 +293,17 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     if decoded_output is None:
         # Probe with a dummy forward to inspect actual shapes and capture anchors/wh_scale outputs if present.
         _, c_in, h_in, w_in = input_info.shape
-        h_probe = int(img_size[0] if h_in in (None, "None") else h_in)
-        w_probe = int(img_size[1] if w_in in (None, "None") else w_in)
-        dummy = np.zeros((1, int(c_in or 3), h_probe, w_probe), dtype=np.float32)
+
+        def _dim_or_fallback(dim, fallback: int) -> int:
+            try:
+                return int(fallback if dim in (None, "None") else dim)
+            except Exception:
+                return int(fallback)
+
+        c_probe = _dim_or_fallback(c_in, 3)
+        h_probe = _dim_or_fallback(h_in, img_size[0])
+        w_probe = _dim_or_fallback(w_in, img_size[1])
+        dummy = np.zeros((1, c_probe, h_probe, w_probe), dtype=np.float32)
         outs = session.run(None, {input_info.name: dummy})
         for meta, val in zip(outputs_info, outs):
             if val.ndim == 4 and raw_output is None:
