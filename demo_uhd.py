@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+os.environ["QT_LOGGING_RULES"] = "*.warning=false"
 import re
 import time
 from pathlib import Path
