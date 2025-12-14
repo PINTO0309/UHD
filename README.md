@@ -1573,6 +1573,14 @@ TorchVision's Resize method is implemented using a downsampling method similar t
 
 Therefore, it is easy to imagine that if the downsampling method used for preprocessing during learning is different from the downsampling method used during inference, the output inference results will be disastrous.
 
+The internal workings of TorchVision's downsampling and PIL's downsampling are very similar but slightly different. When deploying and inferencing in Python and other environments, accuracy will be significantly degraded unless the model is deployed according to the following criteria. If you train using OpenCV's `cv2.INTER_LINEAR`, the model will never produce the correct output after preprocessing in PyTorch, TensorFlow, or ONNX other than OpenCV.
+
+|Training|Deploy|
+|:-|:-|
+|When training while downsampling using TorchVision's Resize (`InterpolationMode.BILINEAR`)|Merge `Resize Linear + half-pixel` at the input of the ONNX model|
+|When training while downsampling using TorchVision's Resize (`InterpolationMode.NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model|
+|When training while downsampling using OpenCV's Resize (`cv2.INTER_NEAREST`)|Merge `Resize Nearest` at the input of the ONNX model or OpenCV `INTER_NEAREST`|
+
 1. Error after PIL conversion when downsampling with TorchVision's Resize InterpolationMode.BILINEAR
     ```
     torchvision(InterpolationMode.BILINEAR) -> Convert to PIL vs torchvision Tensor(InterpolationMode.BILINEAR)
