@@ -177,7 +177,8 @@ options:
   --onnx ultratinyod_res_anc8_w192_64x64_loese_distill.onnx \
   --camera 0 \
   --conf-thresh 0.90 \
-  --use-nms
+  --use-nms \
+  --actual-size
   ```
 - ONNX without post-processing
   ```bash
@@ -185,7 +186,8 @@ options:
   --onnx ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx \
   --camera 0 \
   --conf-thresh 0.90 \
-  --use-nms
+  --use-nms \
+  --actual-size
   ```
 - ONNX with pre-processing (PIL equivalent of Resize) + post-processing
   ```bash
@@ -193,7 +195,8 @@ options:
   --onnx ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx \
   --camera 0 \
   --conf-thresh 0.90 \
-  --use-nms
+  --use-nms \
+  --actual-size
   ```
 - ONNX with pre-processing (PIL equivalent of Resize) + without post-processing
   ```bash
@@ -201,7 +204,8 @@ options:
   --onnx ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx \
   --camera 0 \
   --conf-thresh 0.90 \
-  --use-nms
+  --use-nms \
+  --actual-size
   ```
 
 
