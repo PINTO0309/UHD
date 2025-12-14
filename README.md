@@ -1568,6 +1568,42 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 - `l1`: L1 loss on box coordinates
 - `iou`: 1 - IoU for matched predictions
 
+## The impact of image downsampling methods
+TorchVision's Resize method is implemented using a downsampling method similar to PIL on the backend, but it is significantly different from OpenCV's downsampling implementation. Therefore, when downsampling images in preprocessing during training, it is important to note that the numerical characteristics of the images used by the model for training will be completely different depending on whether you use TorchVision's Resize method or OpenCV's Resize method. Below is the pixel-level error calculation when downsampling an image to 64x64 pixels. If the diff value is greater than 1.0, the images are completely different.
+
+Therefore, it is easy to imagine that if the downsampling method used for preprocessing during learning is different from the downsampling method used during inference, the output inference results will be disastrous.
+
+1. Error after PIL conversion when downsampling with TorchVision's Resize InterpolationMode.BILINEAR
+    ```
+    torchvision(InterpolationMode.BILINEAR) -> Convert to PIL vs torchvision Tensor(InterpolationMode.BILINEAR)
+      max  diff : 1
+      mean diff : 0.4949
+      std  diff : 0.5000
+    ```
+2. Error when downsampling with TorchVision's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
+    ```
+    torchvision(InterpolationMode.BILINEAR) -> Convert to PIL vs OpenCV INTER_LINEAR
+      max  diff : 104
+      mean diff : 10.2930
+      std  diff : 13.2792
+    ```
+3. Error when downsampling with TorchVision's Resize InterpolationMode.BILINEAR compared to downsampling with OpenCV's INTER_LINER
+    ```
+    torchvision Tensor(InterpolationMode.BILINEAR) vs OpenCV INTER_LINEAR
+      max  diff : 104
+      mean diff : 10.3336
+      std  diff : 13.2463
+    ```
+4. Accuracy and speed of each interpolation method when downsampling in OpenCV
+    - Accuracy: `INTER_NEAREST < INTER_LINEAR < INTER_AREA`, Speed: `INTER_NEAREST > INTER_LINEAR > INTER_AREA`
+    ```
+    === Resize benchmark ===
+    INTER_NEAREST : 0.0061 ms
+    INTER_LINEAR  : 0.0143 ms
+    INTER_AREA    : 0.3621 ms
+    AREA / LINEAR ratio : 25.40x
+    ```
+
 ## ONNX export
 
 <details><summary>Click to expand</summary>
