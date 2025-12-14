@@ -50,6 +50,37 @@ def postprocess(detections: np.ndarray, orig_shape: Tuple[int, int], conf_thresh
     return out
 
 
+def non_max_suppression(
+    boxes: List[Tuple[float, int, float, float, float, float]], iou_thresh: float
+) -> List[Tuple[float, int, float, float, float, float]]:
+    if not boxes:
+        return boxes
+    arr = np.array(boxes, dtype=np.float32)
+    scores = arr[:, 0]
+    cls_ids = arr[:, 1].astype(np.int32)
+    x1, y1, x2, y2 = arr[:, 2], arr[:, 3], arr[:, 4], arr[:, 5]
+    areas = (x2 - x1) * (y2 - y1)
+
+    keep: List[int] = []
+    for cls in np.unique(cls_ids):
+        cls_mask = np.where(cls_ids == cls)[0]
+        order = cls_mask[np.argsort(-scores[cls_mask])]
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+            inter_w = np.maximum(0.0, xx2 - xx1)
+            inter_h = np.maximum(0.0, yy2 - yy1)
+            inter = inter_w * inter_h
+            iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
+            remain = np.where(iou <= iou_thresh)[0]
+            order = order[remain + 1]
+    return [boxes[i] for i in keep]
+
+
 def draw_boxes(img_bgr: np.ndarray, boxes: List[Tuple[float, int, float, float, float, float]], color: Tuple[int, int, int]) -> np.ndarray:
     out = img_bgr.copy()
     for score, cls_id, x1, y1, x2, y2 in boxes:
@@ -432,6 +463,8 @@ def run_images(
     img_size: Tuple[int, int],
     conf_thresh: float,
     actual_size: bool,
+    use_nms: bool,
+    nms_iou: float,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -455,6 +488,8 @@ def run_images(
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
+        if use_nms:
+            boxes = non_max_suppression(boxes, nms_iou)
         base = cv2.resize(img_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR) if actual_size else img_bgr
         vis_out = draw_boxes(base, boxes, (0, 0, 255))
         save_path = out_dir / img_path.name
@@ -470,6 +505,8 @@ def run_camera(
     conf_thresh: float,
     record_path: Optional[Path] = None,
     actual_size: bool = False,
+    use_nms: bool = False,
+    nms_iou: float = 0.8,
 ) -> None:
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
@@ -491,6 +528,8 @@ def run_camera(
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
+        if use_nms:
+            boxes = non_max_suppression(boxes, nms_iou)
         base = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR) if actual_size else frame
         vis = draw_boxes(base, boxes, (255, 0, 0))
 
@@ -575,6 +614,17 @@ def build_args():
         action="store_true",
         help="Display and recording use the model input resolution instead of the original frame size.",
     )
+    parser.add_argument(
+        "--use-nms",
+        action="store_true",
+        help="Apply Non-Maximum Suppression on decoded boxes (default IoU=0.8).",
+    )
+    parser.add_argument(
+        "--nms-iou",
+        type=float,
+        default=0.8,
+        help="IoU threshold for NMS (effective only when --use-nms is set).",
+    )
     return parser
 
 
@@ -592,10 +642,22 @@ def main():
             img_size,
             args.conf_thresh,
             args.actual_size,
+            args.use_nms,
+            args.nms_iou,
         )
     else:
         record_path = Path(args.record) if args.record else None
-        run_camera(session, session_info, int(args.camera), img_size, args.conf_thresh, record_path, args.actual_size)
+        run_camera(
+            session,
+            session_info,
+            int(args.camera),
+            img_size,
+            args.conf_thresh,
+            record_path,
+            args.actual_size,
+            args.use_nms,
+            args.nms_iou,
+        )
 
 
 if __name__ == "__main__":

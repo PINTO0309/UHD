@@ -121,6 +121,8 @@ usage: demo_uhd.py
 [--conf-thresh CONF_THRESH]
 [--record RECORD]
 [--actual-size]
+[--use-nms]
+[--nms-iou NMS_IOU]
 
 UltraTinyOD ONNX demo (CPU).
 
@@ -144,6 +146,10 @@ options:
   --actual-size
    Display and recording use the model input resolution instead of
    the original frame size.
+  --use-nms
+   Apply Non-Maximum Suppression on decoded boxes (default IoU=0.8).
+  --nms-iou NMS_IOU
+   IoU threshold for NMS (effective only when --use-nms is set).
 ```
 
 - ONNX with post-processing
@@ -151,28 +157,32 @@ options:
   uv run demo_uhd.py \
   --onnx ultratinyod_res_anc8_w192_64x64_loese_distill.onnx \
   --camera 0 \
-  --conf-thresh 0.90
+  --conf-thresh 0.90 \
+  --use-nms
   ```
 - ONNX without post-processing
   ```bash
   uv run demo_uhd.py \
   --onnx ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx \
   --camera 0 \
-  --conf-thresh 0.90
+  --conf-thresh 0.90 \
+  --use-nms
   ```
 - ONNX with pre-processing (PIL equivalent of Resize) + post-processing
   ```bash
   uv run demo_uhd.py \
-  --onnx ultratinyod_res_anc8_w64_64x64_dynamic.onnx \
+  --onnx ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx \
   --camera 0 \
-  --conf-thresh 0.90
+  --conf-thresh 0.90 \
+  --use-nms
   ```
 - ONNX with pre-processing (PIL equivalent of Resize) + without post-processing
   ```bash
   uv run demo_uhd.py \
-  --onnx ultratinyod_res_anc8_w64_64x64_dynamic_nopost.onnx \
+  --onnx ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx \
   --camera 0 \
-  --conf-thresh 0.90
+  --conf-thresh 0.90 \
+  --use-nms
   ```
 
 
