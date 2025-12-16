@@ -1159,6 +1159,19 @@ wheels = [
 ]
 
 [[package]]
+name = "torch-pruning"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/43/ddacbb7f5ecbd7a1223ba57e80cadd8cfc58d05c54b8b8f529e819817f22/torch_pruning-1.6.1.tar.gz", hash = "sha256:3166ab2b700a5819d2b1db5b4a228e161bc32cc31e3022563b873ddd706fcacb", size = 89167, upload-time = "2025-09-07T17:25:48.681Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/bf/ac91f896d1a0c1bb4fceaac8ffd5bf8f23754d3566137e0b313b072f8f77/torch_pruning-1.6.1-py3-none-any.whl", hash = "sha256:5cb619e55bb4d1b7ce71be9782865ad4977bfe99c148fdce9c3822eab08a9c08", size = 70181, upload-time = "2025-09-07T17:25:45.819Z" },
+]
+
+[[package]]
 name = "torchvision"
 version = "0.20.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1251,6 +1264,7 @@ dependencies = [
     { name = "sit4onnx" },
     { name = "tensorboard" },
     { name = "torch" },
+    { name = "torch-pruning" },
     { name = "torchvision" },
     { name = "tqdm" },
 ]
@@ -1275,6 +1289,7 @@ requires-dist = [
     { name = "sit4onnx", specifier = "==1.0.10" },
     { name = "tensorboard", specifier = "==2.17.1" },
     { name = "torch", specifier = "==2.5.1" },
+    { name = "torch-pruning", specifier = "==1.6.1" },
     { name = "torchvision", specifier = "==0.20.1" },
     { name = "tqdm", specifier = "==4.67.1" },
 ]

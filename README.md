@@ -85,7 +85,7 @@ gh release download onnx -R PINTO0309/UHD
     |L|30.92 M|3.44 G|0.48243|7.40 ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_loese.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_loese_nopost.onnx)|
 
   - **[For long distances and extremely small objects]** ESE + IoU-aware + ReLU + Distillation
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.60 M|0.20 G|0.55224|0.63 ms|6.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_distill_nopost.onnx)|
@@ -93,9 +93,9 @@ gh release download onnx -R PINTO0309/UHD
     |S|6.30 M|0.79 G|0.57361|1.71 ms|25.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill_nopost.onnx)|
     |C|9.81 M|1.23 G|0.56183|2.51 ms|39.3 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill_nopost.onnx)|
     |M|14.09 M|1.77 G|0.57666|3.54 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill_nopost.onnx)|
-  
+
   - **[For short/medium distance]** ESE + IoU-aware + large-object-branch + ReLU + Distillation
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.98 M|0.22 G|0.54883|0.70 ms|8.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese_distill_nopost.onnx)|
@@ -1813,6 +1813,20 @@ uv run onnx2tf \
 -cotof \
 -oiqt
 ```
+
+## Pruning (UltraTinyOD + Torch-Pruning)
+
+- UltraTinyOD checkpoints only; head and final conv are kept intact by default.
+- Per-layer magnitude pruning; depthwise conv is skipped.
+- Example:
+  ```bash
+  uv run python prune_utod.py \
+  --ckpt runs/10/ultratinyod_res_anc8_w128_loese_64x64_lr0.003_torch_bilinear/best_utod_0279_map_0.45808.pt \
+  --prune-ratio 0.25 \
+  --min-channels 8 \
+  --out best_utod_0279_pruned.pt
+  ```
+- Optional flags: `--use-ema` (load EMA weights), `--no-protect-head` (also prune head blocks).
 
 ## Arch
 

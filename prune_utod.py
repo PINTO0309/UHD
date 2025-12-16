@@ -1,0 +1,224 @@
+import argparse
+import os
+from typing import Dict, List, Sequence, Tuple
+
+import torch
+import torch.nn as nn
+import torch_pruning as tp
+
+from uhd.models import build_model
+from uhd.utils import default_device
+
+
+def parse_img_size(arg: str) -> Tuple[int, int]:
+    s = str(arg).lower().replace(" ", "")
+    if "x" in s:
+        h, w = s.split("x")
+        return int(h), int(w)
+    val = int(float(s))
+    return val, val
+
+
+def count_parameters(model: nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters())
+
+
+def load_ultratinyod_from_ckpt(ckpt_path: str, device: torch.device, use_ema: bool = False) -> Tuple[nn.Module, Dict]:
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    if "model" not in ckpt:
+        raise ValueError(f"{ckpt_path} does not look like a training checkpoint (missing 'model').")
+    arch = str(ckpt.get("arch", ""))
+    if arch.lower() != "ultratinyod":
+        raise ValueError(f"Checkpoint arch={arch} is not UltraTinyOD.")
+    state = ckpt.get("ema") if use_ema and ckpt.get("ema") is not None else ckpt["model"]
+    anchors = ckpt.get("anchors", [])
+    num_anchors = int(ckpt.get("num_anchors", len(anchors) if anchors else 3))
+    classes = ckpt.get("classes", [0])
+    num_classes = len(classes)
+    model = build_model(
+        "ultratinyod",
+        width=int(ckpt.get("cnn_width", ckpt.get("c_stem", 16))),
+        num_classes=num_classes,
+        anchors=anchors,
+        num_anchors=num_anchors,
+        output_stride=int(ckpt.get("output_stride", 8)),
+        utod_use_residual=bool(ckpt.get("utod_residual", False)),
+        use_improved_head=bool(ckpt.get("use_improved_head", False)),
+        use_head_ese=bool(ckpt.get("utod_head_ese", False)),
+        use_iou_aware_head=bool(ckpt.get("use_iou_aware_head", False)),
+        quality_power=float(ckpt.get("quality_power", 1.0)),
+        utod_context_rfb=bool(ckpt.get("utod_context_rfb", False)),
+        utod_context_dilation=int(ckpt.get("utod_context_dilation", 2)),
+        utod_large_obj_branch=bool(ckpt.get("utod_large_obj_branch", False)),
+        utod_large_obj_depth=int(ckpt.get("utod_large_obj_depth", 1)),
+        utod_large_obj_ch_scale=float(ckpt.get("utod_large_obj_ch_scale", 1.0)),
+        activation=ckpt.get("activation", "swish"),
+        use_batchnorm=bool(ckpt.get("use_batchnorm", True)),
+    )
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing:
+        print(f"[warn] missing keys while loading: {missing[:10]}{' ...' if len(missing) > 10 else ''}")
+    if unexpected:
+        print(f"[warn] unexpected keys while loading: {unexpected[:10]}{' ...' if len(unexpected) > 10 else ''}")
+    if anchors and hasattr(model, "set_anchors"):
+        model.set_anchors(torch.as_tensor(anchors, dtype=torch.float32))
+    model.to(device)
+    return model, ckpt
+
+
+def collect_prunable_modules(model: nn.Module, protect_head: bool = True) -> List[Tuple[str, nn.Module]]:
+    prunable: List[Tuple[str, nn.Module]] = []
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Conv2d):
+            continue
+        if module.groups != 1:
+            continue  # skip depthwise
+        if protect_head and ("head" in name):
+            continue
+        if "backbone.sppf.cv2" in name:
+            continue  # keep the final feature conv intact
+        if "backbone.block4" in name:
+            continue
+        prunable.append((name, module))
+    return prunable
+
+
+def prune_model(
+    model: nn.Module,
+    example_inputs: torch.Tensor,
+    prune_ratio: float,
+    min_channels: int,
+    protect_head: bool,
+) -> List[Dict]:
+    model.eval()
+    pruned_layers: List[Dict] = []
+    for name, _ in collect_prunable_modules(model, protect_head=protect_head):
+        module = dict(model.named_modules()).get(name)
+        if module is None or not isinstance(module, nn.Conv2d):
+            continue
+        ch = module.out_channels
+        n_prune = int(ch * prune_ratio)
+        keep = ch - n_prune
+        if keep < min_channels:
+            n_prune = max(0, ch - min_channels)
+        if n_prune <= 0:
+            continue
+        scores = module.weight.detach().abs().mean(dim=(1, 2, 3))
+        idxs = scores.argsort()[:n_prune].tolist()
+        with torch.no_grad():
+            dg = tp.DependencyGraph().build_dependency(
+                model,
+                example_inputs=example_inputs,
+                ignored_layers=None,
+                verbose=False,
+            )
+        group = dg.get_pruning_group(module, tp.prune_conv_out_channels, idxs)
+        if not dg.check_pruning_group(group):
+            print(f"[skip] pruning group for {name} is not valid; skipping.")
+            continue
+        group.prune()
+        pruned_layers.append({"layer": name, "removed": n_prune, "before": ch, "after": ch - n_prune})
+    return pruned_layers
+
+
+def build_pruned_ckpt(model: nn.Module, meta: Dict, pruning_info: Dict) -> Dict:
+    keys_to_keep = [
+        "arch",
+        "classes",
+        "anchors",
+        "num_anchors",
+        "cnn_width",
+        "output_stride",
+        "utod_residual",
+        "use_improved_head",
+        "use_iou_aware_head",
+        "utod_head_ese",
+        "quality_power",
+        "utod_context_rfb",
+        "utod_context_dilation",
+        "utod_large_obj_branch",
+        "utod_large_obj_depth",
+        "utod_large_obj_ch_scale",
+        "activation",
+        "use_batchnorm",
+        "resize_mode",
+    ]
+    new_ckpt = {k: meta[k] for k in keys_to_keep if k in meta}
+    new_ckpt["arch"] = "ultratinyod"
+    new_ckpt["model"] = model.state_dict()
+    new_ckpt["pruning"] = pruning_info
+    return new_ckpt
+
+
+def default_out_path(ckpt_path: str, ratio: float) -> str:
+    base, ext = os.path.splitext(ckpt_path)
+    tag = f"_pruned_r{int(ratio * 100):02d}"
+    return base + tag + (ext if ext else ".pt")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Prune UltraTinyOD checkpoints with Torch-Pruning.")
+    parser.add_argument("--ckpt", required=True, help="Path to UltraTinyOD checkpoint (.pt).")
+    parser.add_argument("--out", default=None, help="Output path for pruned checkpoint.")
+    parser.add_argument("--img-size", default="64x64", help="Dummy input size HxW for graph tracing.")
+    parser.add_argument("--device", default=None, help="cpu or cuda (defaults to cuda if available).")
+    parser.add_argument("--prune-ratio", type=float, default=0.2, help="Per-layer output-channel prune ratio.")
+    parser.add_argument("--min-channels", type=int, default=8, help="Minimum output channels to keep per conv.")
+    parser.add_argument(
+        "--no-protect-head",
+        dest="protect_head",
+        action="store_false",
+        default=True,
+        help="Allow pruning on head blocks.",
+    )
+    parser.add_argument("--use-ema", action="store_true", help="Load EMA weights from the checkpoint when available.")
+    parser.add_argument("--dry-run", action="store_true", help="Do not save; only report pruning results.")
+    args = parser.parse_args()
+
+    img_h, img_w = parse_img_size(args.img_size)
+    device = default_device(args.device)
+    print(f"[info] loading {args.ckpt} on {device}")
+    model, meta = load_ultratinyod_from_ckpt(args.ckpt, device=device, use_ema=args.use_ema)
+    example_inputs = torch.randn(1, 3, img_h, img_w, device=device)
+    params_before = count_parameters(model)
+
+    pruned_layers = prune_model(
+        model,
+        example_inputs=example_inputs,
+        prune_ratio=float(args.prune_ratio),
+        min_channels=int(args.min_channels),
+        protect_head=bool(args.protect_head),
+    )
+    params_after = count_parameters(model)
+
+    model.eval()
+    with torch.no_grad():
+        _ = model(example_inputs)
+
+    print(f"[done] pruned layers: {len(pruned_layers)}")
+    for info in pruned_layers:
+        print(f"  {info['layer']}: {info['before']} -> {info['after']} (-{info['removed']})")
+    print(f"[stats] params {params_before:,} -> {params_after:,} (delta {-params_before + params_after:,})")
+
+    if args.dry_run:
+        return
+
+    out_path = args.out or default_out_path(args.ckpt, ratio=float(args.prune_ratio))
+    pruning_info = {
+        "source": os.path.abspath(args.ckpt),
+        "use_ema": bool(args.use_ema),
+        "protect_head": bool(args.protect_head),
+        "prune_ratio": float(args.prune_ratio),
+        "min_channels": int(args.min_channels),
+        "img_size": (img_h, img_w),
+        "params_before": int(params_before),
+        "params_after": int(params_after),
+        "layers": pruned_layers,
+    }
+    pruned_ckpt = build_pruned_ckpt(model, meta, pruning_info)
+    torch.save(pruned_ckpt, out_path)
+    print(f"[save] wrote pruned checkpoint to {out_path}")
+
+
+if __name__ == "__main__":
+    main()
