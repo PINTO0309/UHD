@@ -1,14 +1,19 @@
 import argparse
 import os
 from typing import Dict, List, Sequence, Tuple
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
 import torch_pruning as tp
 from torch_pruning.utils import count_ops_and_params
+from torch.utils.data import DataLoader
 
 from uhd.models import build_model
 from uhd.utils import default_device
+from uhd.data import detection_collate
+from uhd.metrics import evaluate_map
+from train import parse_classes, load_aug_config, normalize_resize_mode, make_datasets
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -174,6 +179,65 @@ def build_pruned_ckpt(model: nn.Module, meta: Dict, pruning_info: Dict) -> Dict:
     return new_ckpt
 
 
+def run_validation(
+    model: nn.Module,
+    meta: Dict,
+    device: torch.device,
+    img_size: Tuple[int, int],
+    args,
+):
+    class_ids = parse_classes(args.classes) if args.classes is not None else meta.get("classes", [0])
+    num_classes = len(class_ids)
+    resize_mode = normalize_resize_mode(args.resize_mode or meta.get("resize_mode", "torch_bilinear"))
+    try:
+        aug_cfg = load_aug_config(args.aug_config)
+    except Exception as e:
+        print(f"[warn] failed to load aug-config {args.aug_config}: {e}; using empty augment config.")
+        aug_cfg = {}
+    ds_args = SimpleNamespace(
+        image_dir=args.image_dir,
+        train_split=args.train_split,
+        val_split=args.val_split,
+        seed=args.seed,
+        img_size=f"{img_size[0]}x{img_size[1]}",
+        resize_mode=resize_mode,
+        aug_config=args.aug_config,
+        aug_cfg=aug_cfg,
+        val_only=True,
+        val_count=args.val_count,
+    )
+    # make_datasets expects aug_cfg separately
+    train_ds, val_ds = make_datasets(ds_args, class_ids, aug_cfg, resize_mode=resize_mode)
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=detection_collate,
+        pin_memory=True,
+        persistent_workers=False,
+    )
+    model.eval()
+    all_preds = []
+    all_targets = []
+    with torch.no_grad():
+        for imgs, targets in val_loader:
+            imgs = imgs.to(device)
+            raw, decoded = model(imgs, decode=True, conf_thresh=args.conf_thresh)
+            preds_cpu = []
+            for p_img in decoded:
+                preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
+            all_preds.extend(preds_cpu)
+            all_targets.extend(targets)
+    metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=args.iou_thresh)
+    print("[val] mAP@0.5: {:.4f}".format(metrics.get("mAP@0.5", 0.0)))
+    for k, v in metrics.items():
+        if k == "mAP@0.5":
+            continue
+        print(f"[val] {k}: {v:.4f}")
+    return metrics
+
+
 def default_out_path(ckpt_path: str, ratio: float) -> str:
     base, ext = os.path.splitext(ckpt_path)
     tag = f"_pruned_r{int(ratio * 100):02d}"
@@ -203,6 +267,19 @@ def main():
     )
     parser.add_argument("--use-ema", action="store_true", help="Load EMA weights from the checkpoint when available.")
     parser.add_argument("--dry-run", action="store_true", help="Do not save; only report pruning results.")
+    parser.add_argument("--validate", action="store_true", help="Run a quick validation after pruning.")
+    parser.add_argument("--image-dir", default=None, help="Image directory for validation (same as training image-dir).")
+    parser.add_argument("--classes", default=None, help="Comma-separated class ids (defaults to checkpoint classes).")
+    parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Augmentation config for dataset loading.")
+    parser.add_argument("--train-split", type=float, default=0.8, help="Train split used to form val set.")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Validation split.")
+    parser.add_argument("--val-count", type=int, default=None, help="Limit number of validation samples.")
+    parser.add_argument("--batch-size", type=int, default=64, help="Validation batch size.")
+    parser.add_argument("--num-workers", type=int, default=4, help="Dataloader workers for validation.")
+    parser.add_argument("--seed", type=int, default=42, help="Seed for dataset split.")
+    parser.add_argument("--resize-mode", default=None, help="Resize mode override for validation.")
+    parser.add_argument("--iou-thresh", type=float, default=0.5, help="IoU threshold for mAP@0.5.")
+    parser.add_argument("--conf-thresh", type=float, default=0.15, help="Confidence threshold for decoding.")
     args = parser.parse_args()
 
     img_h, img_w = parse_img_size(args.img_size)
@@ -231,6 +308,12 @@ def main():
         print(f"  {info['layer']}: {info['before']} -> {info['after']} (-{info['removed']})")
     print(f"[stats] params {params_before:,} -> {params_after:,} (delta {-params_before + params_after:,})")
 
+    val_metrics = None
+    if args.validate:
+        if not args.image_dir:
+            raise ValueError("--image-dir is required when --validate is set.")
+        val_metrics = run_validation(model, meta, device, (img_h, img_w), args)
+
     if args.dry_run:
         return
 
@@ -247,6 +330,8 @@ def main():
         "params_after": int(params_after),
         "layers": pruned_layers,
     }
+    if val_metrics is not None:
+        pruning_info["val_metrics"] = val_metrics
     pruned_ckpt = build_pruned_ckpt(model, meta, pruning_info)
     torch.save(pruned_ckpt, out_path)
     print(f"[save] wrote pruned checkpoint to {out_path}")
