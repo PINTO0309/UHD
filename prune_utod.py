@@ -5,6 +5,7 @@ from typing import Dict, List, Sequence, Tuple
 import torch
 import torch.nn as nn
 import torch_pruning as tp
+from torch_pruning.utils import count_ops_and_params
 
 from uhd.models import build_model
 from uhd.utils import default_device
@@ -89,35 +90,58 @@ def prune_model(
     prune_ratio: float,
     min_channels: int,
     protect_head: bool,
+    prune_step: float = 0.0,
 ) -> List[Dict]:
     model.eval()
     pruned_layers: List[Dict] = []
+    orig_out = {
+        name: m.out_channels for name, m in collect_prunable_modules(model, protect_head=protect_head)
+    }
+    targets = {
+        name: max(min_channels, int(round(ch * (1.0 - prune_ratio)))) for name, ch in orig_out.items()
+    }
+    steps = {name: max(1, int(round(ch * prune_step))) if prune_step > 0 else None for name, ch in orig_out.items()}
+
     for name, _ in collect_prunable_modules(model, protect_head=protect_head):
-        module = dict(model.named_modules()).get(name)
-        if module is None or not isinstance(module, nn.Conv2d):
-            continue
-        ch = module.out_channels
-        n_prune = int(ch * prune_ratio)
-        keep = ch - n_prune
-        if keep < min_channels:
-            n_prune = max(0, ch - min_channels)
-        if n_prune <= 0:
-            continue
-        scores = module.weight.detach().abs().mean(dim=(1, 2, 3))
-        idxs = scores.argsort()[:n_prune].tolist()
-        with torch.no_grad():
-            dg = tp.DependencyGraph().build_dependency(
-                model,
-                example_inputs=example_inputs,
-                ignored_layers=None,
-                verbose=False,
+        total_removed = 0
+        while True:
+            module = dict(model.named_modules()).get(name)
+            if module is None or not isinstance(module, nn.Conv2d):
+                break
+            ch = module.out_channels
+            target = targets[name]
+            if ch <= target:
+                break
+            step_remove = ch - target if prune_step <= 0 else min(ch - target, steps[name])
+            scores = module.weight.detach().abs().mean(dim=(1, 2, 3))
+            idxs = scores.argsort()[:step_remove].tolist()
+            with torch.no_grad():
+                dg = tp.DependencyGraph().build_dependency(
+                    model,
+                    example_inputs=example_inputs,
+                    ignored_layers=None,
+                    verbose=False,
+                )
+            group = dg.get_pruning_group(module, tp.prune_conv_out_channels, idxs)
+            if not dg.check_pruning_group(group):
+                print(f"[skip] pruning group for {name} is not valid; stopping this layer.")
+                break
+
+            ops_before, params_before = count_ops_and_params(model, example_inputs=example_inputs)
+            group.prune()
+            ops_after, params_after = count_ops_and_params(model, example_inputs=example_inputs)
+            print(
+                f"[step] {name} prune {step_remove} -> {module.out_channels} | "
+                f"FLOPs {ops_before/1e9:.2f}G -> {ops_after/1e9:.2f}G, "
+                f"Params {params_before/1e6:.2f}M -> {params_after/1e6:.2f}M"
             )
-        group = dg.get_pruning_group(module, tp.prune_conv_out_channels, idxs)
-        if not dg.check_pruning_group(group):
-            print(f"[skip] pruning group for {name} is not valid; skipping.")
-            continue
-        group.prune()
-        pruned_layers.append({"layer": name, "removed": n_prune, "before": ch, "after": ch - n_prune})
+            total_removed += step_remove
+        if total_removed > 0:
+            module = dict(model.named_modules()).get(name)
+            after_ch = module.out_channels if module is not None else None
+            pruned_layers.append(
+                {"layer": name, "removed": total_removed, "before": orig_out[name], "after": after_ch}
+            )
     return pruned_layers
 
 
@@ -162,7 +186,13 @@ def main():
     parser.add_argument("--out", default=None, help="Output path for pruned checkpoint.")
     parser.add_argument("--img-size", default="64x64", help="Dummy input size HxW for graph tracing.")
     parser.add_argument("--device", default=None, help="cpu or cuda (defaults to cuda if available).")
-    parser.add_argument("--prune-ratio", type=float, default=0.2, help="Per-layer output-channel prune ratio.")
+    parser.add_argument("--prune-ratio", type=float, default=0.2, help="Per-layer output-channel prune ratio (target).")
+    parser.add_argument(
+        "--prune-step",
+        type=float,
+        default=0.0,
+        help="Optional staged pruning step (e.g., 0.05 prunes ~5% of original channels per pass until reaching --prune-ratio).",
+    )
     parser.add_argument("--min-channels", type=int, default=8, help="Minimum output channels to keep per conv.")
     parser.add_argument(
         "--no-protect-head",
@@ -188,6 +218,7 @@ def main():
         prune_ratio=float(args.prune_ratio),
         min_channels=int(args.min_channels),
         protect_head=bool(args.protect_head),
+        prune_step=float(args.prune_step),
     )
     params_after = count_parameters(model)
 
@@ -209,6 +240,7 @@ def main():
         "use_ema": bool(args.use_ema),
         "protect_head": bool(args.protect_head),
         "prune_ratio": float(args.prune_ratio),
+        "prune_step": float(args.prune_step),
         "min_channels": int(args.min_channels),
         "img_size": (img_h, img_w),
         "params_before": int(params_before),
