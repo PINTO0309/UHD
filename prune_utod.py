@@ -144,6 +144,8 @@ def prune_model(
             ch = module.out_channels
             target = targets[name]
             if ch <= target:
+                if total_removed == 0 and ch == target:
+                    print(f"[skip] {name}: at or below target ({ch} <= {target}); min-channels may be limiting.")
                 break
             step_remove = ch - target if prune_step <= 0 else min(ch - target, steps[name])
             scores = module.weight.detach().abs().mean(dim=(1, 2, 3))
