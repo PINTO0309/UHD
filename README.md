@@ -1820,7 +1820,7 @@ uv run onnx2tf \
 - Per-layer magnitude pruning; depthwise conv is skipped.
 - Example:
   ```bash
-uv run python prune_utod.py \
+  uv run python prune_utod.py \
   --ckpt runs/10/ultratinyod_res_anc8_w128_loese_64x64_lr0.003_torch_bilinear/best_utod_0279_map_0.45808.pt \
   --prune-ratio 0.25 \
   --prune-step 0.05 \
