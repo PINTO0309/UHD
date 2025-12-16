@@ -218,9 +218,12 @@ def run_validation(
         pin_memory=True,
         persistent_workers=False,
     )
+    print(f"[val] samples: {len(val_ds)} | classes: {class_ids}")
     model.eval()
     all_preds = []
     all_targets = []
+    total_gt = 0
+    total_pred = 0
     with torch.no_grad():
         for imgs, targets in val_loader:
             imgs = imgs.to(device)
@@ -245,15 +248,25 @@ def run_validation(
             )
             preds_cpu = []
             for p_img in decoded:
+                total_pred += len(p_img)
                 preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
             all_preds.extend(preds_cpu)
             all_targets.extend(targets)
+            for tgt in targets:
+                total_gt += len(tgt["boxes"])
     metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=args.iou_thresh)
+    metrics["_val_samples"] = len(val_ds)
+    metrics["_val_gt_boxes"] = total_gt
+    metrics["_val_pred_boxes"] = total_pred
+    print(f"[val] gt boxes: {total_gt}, pred boxes: {total_pred}")
     print("[val] mAP@0.5: {:.4f}".format(metrics.get("mAP@0.5", 0.0)))
     for k, v in metrics.items():
         if k == "mAP@0.5":
             continue
-        print(f"[val] {k}: {v:.4f}")
+        if isinstance(v, (int, float)):
+            print(f"[val] {k}: {v:.4f}")
+        else:
+            print(f"[val] {k}: {v}")
     return metrics
 
 
