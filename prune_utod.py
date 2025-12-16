@@ -223,11 +223,15 @@ def run_validation(
     with torch.no_grad():
         for imgs, targets in val_loader:
             imgs = imgs.to(device)
-            if hasattr(model, "backbone") and hasattr(model, "head"):
-                feat = model.backbone(imgs)
-                raw, decoded = model.head(feat, decode=True, conf_thresh=args.conf_thresh)
-            else:
-                raw, decoded = model(imgs, decode=True)
+            raw, decoded = model(imgs, decode=True)
+            # Optional post-filter by confidence (forward decode uses default 0.3).
+            if decoded is None:
+                decoded = [[] for _ in range(imgs.size(0))]
+            if args.conf_thresh is not None:
+                decoded = [
+                    [(score, cls, box) for (score, cls, box) in pred if score >= args.conf_thresh]
+                    for pred in decoded
+                ]
             preds_cpu = []
             for p_img in decoded:
                 preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
