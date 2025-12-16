@@ -115,7 +115,7 @@ def prune_model(
             step_remove = ch - target if prune_step <= 0 else min(ch - target, steps[name])
             scores = module.weight.detach().abs().mean(dim=(1, 2, 3))
             idxs = scores.argsort()[:step_remove].tolist()
-            with torch.no_grad():
+            with torch.enable_grad():
                 dg = tp.DependencyGraph().build_dependency(
                     model,
                     example_inputs=example_inputs,

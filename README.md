@@ -1825,6 +1825,7 @@ uv run onnx2tf \
   --prune-ratio 0.25 \
   --prune-step 0.05 \
   --min-channels 8 \
+  --use-ema \
   --out best_utod_0279_pruned.pt
   ```
 - Optional flags: `--use-ema` (load EMA weights), `--no-protect-head` (also prune head blocks), `--prune-step` (stage pruning in 0.05 steps until the target ratio).
