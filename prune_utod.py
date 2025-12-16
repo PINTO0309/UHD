@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from uhd.models import build_model
 from uhd.utils import default_device
 from uhd.data import detection_collate
-from uhd.metrics import evaluate_map
+from uhd.metrics import evaluate_map, decode_anchor
 from train import parse_classes, load_aug_config, normalize_resize_mode, make_datasets
 
 
@@ -223,15 +223,25 @@ def run_validation(
     with torch.no_grad():
         for imgs, targets in val_loader:
             imgs = imgs.to(device)
-            raw, decoded = model(imgs, decode=True)
-            # Optional post-filter by confidence (forward decode uses default 0.3).
-            if decoded is None:
-                decoded = [[] for _ in range(imgs.size(0))]
-            if args.conf_thresh is not None:
-                decoded = [
-                    [(score, cls, box) for (score, cls, box) in pred if score >= args.conf_thresh]
-                    for pred in decoded
-                ]
+            raw = model(imgs)
+            # Manual decode to control confidence threshold explicitly.
+            head = getattr(model, "head", None)
+            anchors = head.anchors if head is not None else torch.tensor(meta.get("anchors", []), device=device)
+            has_quality = bool(getattr(head, "has_quality", False)) if head is not None else False
+            wh_scale = head.wh_scale if (head is not None and getattr(head, "use_improved_head", False)) else None
+            score_mode = getattr(head, "score_mode", "obj_quality_cls") if head is not None else "obj_quality_cls"
+            quality_power = float(getattr(head, "quality_power", 1.0)) if head is not None else 1.0
+            decoded = decode_anchor(
+                raw,
+                anchors=anchors,
+                num_classes=num_classes,
+                conf_thresh=args.conf_thresh,
+                nms_thresh=0.5,
+                has_quality=has_quality,
+                wh_scale=wh_scale,
+                score_mode=score_mode,
+                quality_power=quality_power,
+            )
             preds_cpu = []
             for p_img in decoded:
                 preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
