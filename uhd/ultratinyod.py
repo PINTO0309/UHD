@@ -179,8 +179,8 @@ class SPPFmin(nn.Module):
 
     def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu"):
         super().__init__()
-        # まずチャネルを半減
-        c_hidden = c_in // 2
+        # まずチャネルを半減（奇数でも切り上げて整合性を保つ）
+        c_hidden = int(math.ceil(c_in / 2))
         self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name)
         # 1 回だけの MaxPool（pool_k×pool_k）
         self.pool = nn.MaxPool2d(kernel_size=pool_k, stride=1, padding=pool_k // 2)

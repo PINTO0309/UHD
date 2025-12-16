@@ -75,6 +75,44 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         stem_w = state.get("backbone.stem.conv.weight")
         c_stem = int(stem_w.shape[0]) if stem_w is not None else 16
 
+    channels_override = None
+    channels_source = "default"
+    if isinstance(meta, dict):
+        if "pruned_channels" in meta:
+            channels_override = meta["pruned_channels"]
+            channels_source = "meta_pruned"
+        elif isinstance(meta.get("pruning"), dict) and "pruned_channels" in meta["pruning"]:
+            channels_override = meta["pruning"]["pruned_channels"]
+            channels_source = "meta_pruning_block"
+    if channels_override is None:
+        # Infer pruned channels from state_dict shapes when meta is missing.
+        shape_keys = {
+            "stem": "backbone.stem.conv.weight",
+            "block1_dw": "backbone.block1.dw.conv.weight",
+            "block1_pw": "backbone.block1.pw.conv.weight",
+            "block2_dw": "backbone.block2.dw.conv.weight",
+            "block2_pw": "backbone.block2.pw.conv.weight",
+            "block3_dw": "backbone.block3.dw.conv.weight",
+            "block3_pw": "backbone.block3.pw.conv.weight",
+            "block4_dw": "backbone.block4.dw.conv.weight",
+            "block4_pw": "backbone.block4.pw.conv.weight",
+            "sppf_out": "backbone.sppf.cv2.conv.weight",
+        }
+        shape_override = {}
+        missing_shape = False
+        for name, key in shape_keys.items():
+            w = state.get(key)
+            if w is None:
+                missing_shape = True
+                break
+            shape_override[name] = int(w.shape[0])
+        if not missing_shape and shape_override:
+            channels_override = shape_override
+            channels_source = "state_shapes"
+    if channels_override and isinstance(channels_override, dict) and "stem" in channels_override:
+        # Align stem width to pruned value to avoid shape mismatch on load
+        c_stem = int(channels_override.get("stem", c_stem))
+
     stride = int(meta.get("output_stride") or 8)
 
     use_improved_head = bool(
@@ -123,6 +161,8 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_residual": use_residual,
         "use_iou_aware_head": use_iou_aware_head,
         "quality_power": quality_power,
+        "channels_override": channels_override,
+        "channels_source": channels_source,
         "anchors_source": anchors_source,
         "activation": activation,
         "use_context_rfb": use_context_rfb,
@@ -447,6 +487,7 @@ def main():
         use_iou_aware_head=inferred.get("use_iou_aware_head", False),
         quality_power=inferred.get("quality_power", 1.0),
         activation=inferred.get("activation", "swish"),
+        channels_override=inferred.get("channels_override"),
     )
     try:
         model.load_state_dict(state, strict=not args.non_strict)
