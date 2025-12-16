@@ -2,6 +2,7 @@ import argparse
 import os
 from typing import Dict, List, Sequence, Tuple
 from types import SimpleNamespace
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -297,7 +298,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Seed for dataset split.")
     parser.add_argument("--resize-mode", default=None, help="Resize mode override for validation.")
     parser.add_argument("--iou-thresh", type=float, default=0.5, help="IoU threshold for mAP@0.5.")
-    parser.add_argument("--conf-thresh", type=float, default=0.15, help="Confidence threshold for decoding.")
+    parser.add_argument("--conf-thresh", type=float, default=0.05, help="Confidence threshold for decoding/validation.")
+    parser.add_argument("--eval-before", action="store_true", help="Run validation on the original checkpoint before pruning.")
     args = parser.parse_args()
 
     img_h, img_w = parse_img_size(args.img_size)
@@ -306,6 +308,10 @@ def main():
     model, meta = load_ultratinyod_from_ckpt(args.ckpt, device=device, use_ema=args.use_ema)
     example_inputs = torch.randn(1, 3, img_h, img_w, device=device)
     params_before = count_parameters(model)
+
+    baseline_metrics = None
+    if args.validate and args.eval_before:
+        baseline_metrics = run_validation(deepcopy(model), meta, device, (img_h, img_w), args)
 
     pruned_layers = prune_model(
         model,
@@ -350,6 +356,8 @@ def main():
     }
     if val_metrics is not None:
         pruning_info["val_metrics"] = val_metrics
+    if baseline_metrics is not None:
+        pruning_info["val_metrics_before"] = baseline_metrics
     pruned_ckpt = build_pruned_ckpt(model, meta, pruning_info)
     torch.save(pruned_ckpt, out_path)
     print(f"[save] wrote pruned checkpoint to {out_path}")
