@@ -808,6 +808,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
     elif arch == "ultratinyod":
         use_head_ese = bool(kwargs.get("use_head_ese", kwargs.get("utod_head_ese", False)))
         utod_activation = kwargs.get("activation", "swish")
+        channels_override = kwargs.get("utod_channels_override")
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
@@ -834,6 +835,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
             quality_power=float(kwargs.get("quality_power", 1.0)),
             activation=utod_activation,
+            channels_override=channels_override,
         )
     elif arch == "transformer":
         model = TinyDETR(

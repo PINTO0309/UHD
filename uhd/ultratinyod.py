@@ -215,34 +215,52 @@ class UltraTinyODBackbone(nn.Module):
         sppf: SPPFmin 128->64 (8 -> 8)
     """
 
-    def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8, activation: str = "silu"):
+    def __init__(
+        self,
+        c_stem: int = 16,
+        use_residual: bool = False,
+        out_stride: int = 8,
+        activation: str = "silu",
+        channels_override: dict = None,
+    ):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
         self.use_residual = bool(use_residual)
         self.out_stride = int(out_stride)
         act_name = activation
+        ch_cfg = channels_override or {}
+        stem_ch = int(ch_cfg.get("stem", c_stem))
+        b1_dw = int(ch_cfg.get("block1_dw", stem_ch * 2))
+        b1_pw = int(ch_cfg.get("block1_pw", b1_dw))
+        b2_dw = int(ch_cfg.get("block2_dw", b1_pw * 2))
+        b2_pw = int(ch_cfg.get("block2_pw", b2_dw))
+        b3_dw = int(ch_cfg.get("block3_dw", b2_pw * (2 if self.out_stride >= 8 else 1)))
+        b3_pw = int(ch_cfg.get("block3_pw", b3_dw))
+        b4_dw = int(ch_cfg.get("block4_dw", b3_pw))
+        b4_pw = int(ch_cfg.get("block4_pw", b4_dw))
+        sppf_out = int(ch_cfg.get("sppf_out", b4_pw // 2))
         # 64 -> 32
-        self.stem = ConvBNAct(3, c_stem, k=3, s=2, act_name=act_name)
+        self.stem = ConvBNAct(3, stem_ch, k=3, s=2, act_name=act_name)
 
         # 32 -> 16
-        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name)   # 16 -> 32
+        self.block1 = DWConv(stem_ch, b1_pw, k=3, s=2, act_name=act_name)   # 16 -> 32
         # 16 -> 8 (stride 8) or keep 16 (stride 4)
         stride_block2 = 2 if self.out_stride >= 8 else 1
-        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2, act_name=act_name)  # 32 -> 64
+        self.block2 = DWConv(b1_pw, b2_pw, k=3, s=stride_block2, act_name=act_name)  # 32 -> 64
         # 8 -> 8 or 8 -> 4 (stride16 case)
         stride_block3 = 2 if self.out_stride == 16 else 1
-        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3, act_name=act_name)  # 64 -> 128
-        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1, act_name=act_name)  # 128 -> 128
+        self.block3 = DWConv(b2_pw, b3_pw, k=3, s=stride_block3, act_name=act_name)  # 64 -> 128
+        self.block4 = DWConv(b3_pw, b4_pw, k=3, s=1, act_name=act_name)  # 128 -> 128
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
-            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=stride_block3, p=0, act=False, act_name=act_name)
+            self.block3_skip = ConvBNAct(b2_pw, b3_pw, k=1, s=stride_block3, p=0, act=False, act_name=act_name)
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64
-        self.sppf = SPPFmin(c_stem * 8, c_stem * 4, act_name=act_name)
+        self.sppf = SPPFmin(b4_pw, sppf_out, act_name=act_name)
 
-        self.out_channels = c_stem * 4  # 64
+        self.out_channels = sppf_out  # 64
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.stem(x)
@@ -659,6 +677,7 @@ class UltraTinyOD(nn.Module):
         use_iou_aware_head: bool = False,
         quality_power: float = 1.0,
         activation: str = "silu",
+        channels_override: dict = None,
     ):
         super().__init__()
 
@@ -692,6 +711,7 @@ class UltraTinyOD(nn.Module):
             use_residual=use_residual,
             out_stride=int(config.stride),
             activation=act_name,
+            channels_override=channels_override or getattr(config, "channels_override", None),
         )
         self.head = UltraTinyODHead(self.backbone.out_channels, config, activation=act_name)
         self.anchors = self.head.anchors

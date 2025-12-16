@@ -1,20 +1,24 @@
 import argparse
 import os
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 from typing import Dict, List, Sequence, Tuple
 from types import SimpleNamespace
 from copy import deepcopy
+import subprocess
+import sys
 
 import torch
 import torch.nn as nn
 import torch_pruning as tp
 from torch_pruning.utils import count_ops_and_params
-from torch.utils.data import DataLoader
 
 from uhd.models import build_model
 from uhd.utils import default_device
+from uhd.resize import normalize_resize_mode
 from uhd.data import detection_collate
-from uhd.metrics import evaluate_map, decode_anchor
-from train import parse_classes, load_aug_config, normalize_resize_mode, make_datasets
+from uhd.metrics import decode_anchor, evaluate_map
+from train import parse_classes, load_aug_config, make_datasets
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -28,6 +32,28 @@ def parse_img_size(arg: str) -> Tuple[int, int]:
 
 def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+def _extract_utod_channels(model: nn.Module) -> Dict:
+    """Extract actual channel sizes from a pruned UltraTinyOD backbone."""
+    bb = getattr(model, "backbone", None)
+    if bb is None:
+        return {}
+    ch = {}
+    try:
+        ch["stem"] = bb.stem.conv.out_channels
+        ch["block1_dw"] = bb.block1.dw.conv.out_channels
+        ch["block1_pw"] = bb.block1.pw.conv.out_channels
+        ch["block2_dw"] = bb.block2.dw.conv.out_channels
+        ch["block2_pw"] = bb.block2.pw.conv.out_channels
+        ch["block3_dw"] = bb.block3.dw.conv.out_channels
+        ch["block3_pw"] = bb.block3.pw.conv.out_channels
+        ch["block4_dw"] = bb.block4.dw.conv.out_channels
+        ch["block4_pw"] = bb.block4.pw.conv.out_channels
+        ch["sppf_out"] = bb.sppf.cv2.conv.out_channels if hasattr(bb, "sppf") else getattr(bb, "out_channels", None)
+    except Exception:
+        pass
+    return ch
 
 
 def load_ultratinyod_from_ckpt(ckpt_path: str, device: torch.device, use_ema: bool = False) -> Tuple[nn.Module, Dict]:
@@ -177,10 +203,65 @@ def build_pruned_ckpt(model: nn.Module, meta: Dict, pruning_info: Dict) -> Dict:
     new_ckpt["arch"] = "ultratinyod"
     new_ckpt["model"] = model.state_dict()
     new_ckpt["pruning"] = pruning_info
+    ch = _extract_utod_channels(model)
+    if ch:
+        new_ckpt["pruned_channels"] = ch
     return new_ckpt
 
 
-def run_validation(
+def run_train_val(ckpt_path: str, args, meta: Dict, ckpt_non_strict: bool = False):
+    if not args.image_dir:
+        raise ValueError("--image-dir is required for validation via train.py")
+    class_arg = args.classes if args.classes is not None else ",".join([str(c) for c in meta.get("classes", [0])])
+    arch_arg = meta.get("arch", "ultratinyod")
+    cmd = [
+        sys.executable,
+        "train.py",
+        "--arch",
+        arch_arg,
+        "--val-only",
+        "--ckpt",
+        ckpt_path,
+        "--img-size",
+        args.img_size,
+        "--image-dir",
+        args.image_dir,
+        "--classes",
+        class_arg,
+        "--batch-size",
+        str(args.batch_size),
+        "--num-workers",
+        str(args.num_workers),
+        "--conf-thresh",
+        str(args.conf_thresh),
+        "--train-split",
+        str(args.train_split),
+        "--val-split",
+        str(args.val_split),
+    ]
+    if args.resize_mode:
+        cmd += ["--resize-mode", args.resize_mode]
+    if args.aug_config:
+        cmd += ["--aug-config", args.aug_config]
+    if args.val_count is not None:
+        cmd += ["--val-count", str(args.val_count)]
+    if args.seed is not None:
+        cmd += ["--seed", str(args.seed)]
+    if args.use_ema:
+        cmd.append("--use-ema")
+    if ckpt_non_strict:
+        cmd.append("--ckpt-non-strict")
+    print(f"[val/train.py] running: {' '.join(cmd)}")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    print(res.stdout)
+    if res.stderr:
+        print(res.stderr)
+    if res.returncode != 0:
+        raise RuntimeError(f"train.py val-only failed with code {res.returncode}")
+    return res.stdout
+
+
+def run_pruned_validation(
     model: nn.Module,
     meta: Dict,
     device: torch.device,
@@ -207,9 +288,8 @@ def run_validation(
         val_only=True,
         val_count=args.val_count,
     )
-    # make_datasets expects aug_cfg separately
-    train_ds, val_ds = make_datasets(ds_args, class_ids, aug_cfg, resize_mode=resize_mode)
-    val_loader = DataLoader(
+    _, val_ds = make_datasets(ds_args, class_ids, aug_cfg, resize_mode=resize_mode)
+    val_loader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
@@ -218,7 +298,13 @@ def run_validation(
         pin_memory=True,
         persistent_workers=False,
     )
-    print(f"[val] samples: {len(val_ds)} | classes: {class_ids}")
+    head = getattr(model, "head", None)
+    anchors = head.anchors if head is not None else torch.tensor(meta.get("anchors", []), device=device)
+    has_quality = bool(getattr(head, "has_quality", False)) if head is not None else False
+    wh_scale = head.wh_scale if (head is not None and getattr(head, "use_improved_head", False)) else None
+    score_mode = getattr(head, "score_mode", "obj_quality_cls") if head is not None else "obj_quality_cls"
+    quality_power = float(getattr(head, "quality_power", 1.0)) if head is not None else 1.0
+
     model.eval()
     all_preds = []
     all_targets = []
@@ -228,29 +314,19 @@ def run_validation(
         for imgs, targets in val_loader:
             imgs = imgs.to(device)
             raw = model(imgs)
-            # Manual decode to control confidence threshold explicitly.
-            head = getattr(model, "head", None)
-            anchors = head.anchors if head is not None else torch.tensor(meta.get("anchors", []), device=device)
-            has_quality = bool(getattr(head, "has_quality", False)) if head is not None else False
-            wh_scale = head.wh_scale if (head is not None and getattr(head, "use_improved_head", False)) else None
-            score_mode = getattr(head, "score_mode", "obj_quality_cls") if head is not None else "obj_quality_cls"
-            quality_power = float(getattr(head, "quality_power", 1.0)) if head is not None else 1.0
             decoded = decode_anchor(
                 raw,
                 anchors=anchors,
                 num_classes=num_classes,
                 conf_thresh=args.conf_thresh,
-                nms_thresh=0.5,
+                nms_thresh=args.nms_iou,
                 has_quality=has_quality,
                 wh_scale=wh_scale,
                 score_mode=score_mode,
                 quality_power=quality_power,
             )
-            preds_cpu = []
-            for p_img in decoded:
-                total_pred += len(p_img)
-                preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
-            all_preds.extend(preds_cpu)
+            total_pred += sum(len(p) for p in decoded)
+            all_preds.extend([[(s, c, b.detach().cpu()) for (s, c, b) in p] for p in decoded])
             all_targets.extend(targets)
             for tgt in targets:
                 total_gt += len(tgt["boxes"])
@@ -258,15 +334,15 @@ def run_validation(
     metrics["_val_samples"] = len(val_ds)
     metrics["_val_gt_boxes"] = total_gt
     metrics["_val_pred_boxes"] = total_pred
-    print(f"[val] gt boxes: {total_gt}, pred boxes: {total_pred}")
-    print("[val] mAP@0.5: {:.4f}".format(metrics.get("mAP@0.5", 0.0)))
+    print(f"[val(pruned)] gt boxes: {total_gt}, pred boxes: {total_pred}")
+    print("[val(pruned)] mAP@0.5: {:.4f}".format(metrics.get("mAP@0.5", 0.0)))
     for k, v in metrics.items():
         if k == "mAP@0.5":
             continue
         if isinstance(v, (int, float)):
-            print(f"[val] {k}: {v:.4f}")
+            print(f"[val(pruned)] {k}: {v:.4f}")
         else:
-            print(f"[val] {k}: {v}")
+            print(f"[val(pruned)] {k}: {v}")
     return metrics
 
 
@@ -310,8 +386,9 @@ def main():
     parser.add_argument("--num-workers", type=int, default=4, help="Dataloader workers for validation.")
     parser.add_argument("--seed", type=int, default=42, help="Seed for dataset split.")
     parser.add_argument("--resize-mode", default=None, help="Resize mode override for validation.")
+    parser.add_argument("--conf-thresh", type=float, default=0.15, help="Confidence threshold for decoding/validation.")
+    parser.add_argument("--nms-iou", type=float, default=0.5, help="NMS IoU threshold for validation decoding.")
     parser.add_argument("--iou-thresh", type=float, default=0.5, help="IoU threshold for mAP@0.5.")
-    parser.add_argument("--conf-thresh", type=float, default=0.05, help="Confidence threshold for decoding/validation.")
     parser.add_argument("--eval-before", action="store_true", help="Run validation on the original checkpoint before pruning.")
     args = parser.parse_args()
 
@@ -322,9 +399,8 @@ def main():
     example_inputs = torch.randn(1, 3, img_h, img_w, device=device)
     params_before = count_parameters(model)
 
-    baseline_metrics = None
     if args.validate and args.eval_before:
-        baseline_metrics = run_validation(deepcopy(model), meta, device, (img_h, img_w), args)
+        run_train_val(args.ckpt, args, meta, ckpt_non_strict=False)
 
     pruned_layers = prune_model(
         model,
@@ -345,12 +421,6 @@ def main():
         print(f"  {info['layer']}: {info['before']} -> {info['after']} (-{info['removed']})")
     print(f"[stats] params {params_before:,} -> {params_after:,} (delta {-params_before + params_after:,})")
 
-    val_metrics = None
-    if args.validate:
-        if not args.image_dir:
-            raise ValueError("--image-dir is required when --validate is set.")
-        val_metrics = run_validation(model, meta, device, (img_h, img_w), args)
-
     if args.dry_run:
         return
 
@@ -367,13 +437,17 @@ def main():
         "params_after": int(params_after),
         "layers": pruned_layers,
     }
-    if val_metrics is not None:
+    val_metrics = None
+    if args.validate:
+        if not args.image_dir:
+            raise ValueError("--image-dir is required when --validate is set.")
+        val_metrics = run_pruned_validation(model, meta, device, (img_h, img_w), args)
         pruning_info["val_metrics"] = val_metrics
-    if baseline_metrics is not None:
-        pruning_info["val_metrics_before"] = baseline_metrics
+
     pruned_ckpt = build_pruned_ckpt(model, meta, pruning_info)
     torch.save(pruned_ckpt, out_path)
     print(f"[save] wrote pruned checkpoint to {out_path}")
+    # Post-prune train.py eval is skipped because channel shapes no longer match the original architecture.
 
 
 if __name__ == "__main__":

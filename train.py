@@ -6,6 +6,8 @@ import random
 import math
 from copy import deepcopy
 from typing import Dict, Sequence, Optional
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 import numpy as np
 import torch
@@ -1408,6 +1410,11 @@ def main():
 
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
+    utod_channels_override = None
+    if pretrain_meta is not None and "pruned_channels" in pretrain_meta:
+        utod_channels_override = pretrain_meta["pruned_channels"]
+    elif ckpt_meta is not None and "pruned_channels" in ckpt_meta:
+        utod_channels_override = ckpt_meta["pruned_channels"]
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
@@ -1641,6 +1648,12 @@ def main():
 
     if args.arch != "cnn":
         backbone = None
+    # allow pruned UltraTinyOD channel overrides
+    utod_channels_override = None
+    if pretrain_meta is not None and "pruned_channels" in pretrain_meta:
+        utod_channels_override = pretrain_meta["pruned_channels"]
+    if ckpt_meta is not None and "pruned_channels" in ckpt_meta:
+        utod_channels_override = ckpt_meta["pruned_channels"]
     model = build_model(
         args.arch,
         width=cnn_width,
@@ -1668,6 +1681,7 @@ def main():
         utod_large_obj_branch=utod_large_obj_branch,
         utod_large_obj_depth=utod_large_obj_depth,
         utod_large_obj_ch_scale=utod_large_obj_ch_scale,
+        utod_channels_override=utod_channels_override,
         backbone=backbone,
         backbone_channels=backbone_channels,
         backbone_blocks=backbone_blocks,
