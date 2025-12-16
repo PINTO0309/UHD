@@ -99,13 +99,13 @@ def load_ultratinyod_from_ckpt(ckpt_path: str, device: torch.device, use_ema: bo
     return model, ckpt
 
 
-def collect_prunable_modules(model: nn.Module, protect_head: bool = True) -> List[Tuple[str, nn.Module]]:
+def collect_prunable_modules(model: nn.Module, protect_head: bool = True, prune_depthwise: bool = False) -> List[Tuple[str, nn.Module]]:
     prunable: List[Tuple[str, nn.Module]] = []
     for name, module in model.named_modules():
         if not isinstance(module, nn.Conv2d):
             continue
-        if module.groups != 1:
-            continue  # skip depthwise
+        if module.groups != 1 and not prune_depthwise:
+            continue  # skip depthwise unless explicitly requested
         if protect_head and ("head" in name):
             continue
         if "backbone.sppf.cv2" in name:
@@ -123,18 +123,19 @@ def prune_model(
     min_channels: int,
     protect_head: bool,
     prune_step: float = 0.0,
+    prune_depthwise: bool = False,
 ) -> List[Dict]:
     model.eval()
     pruned_layers: List[Dict] = []
     orig_out = {
-        name: m.out_channels for name, m in collect_prunable_modules(model, protect_head=protect_head)
+        name: m.out_channels for name, m in collect_prunable_modules(model, protect_head=protect_head, prune_depthwise=prune_depthwise)
     }
     targets = {
         name: max(min_channels, int(round(ch * (1.0 - prune_ratio)))) for name, ch in orig_out.items()
     }
     steps = {name: max(1, int(round(ch * prune_step))) if prune_step > 0 else None for name, ch in orig_out.items()}
 
-    for name, _ in collect_prunable_modules(model, protect_head=protect_head):
+    for name, _ in collect_prunable_modules(model, protect_head=protect_head, prune_depthwise=prune_depthwise):
         total_removed = 0
         while True:
             module = dict(model.named_modules()).get(name)
@@ -366,6 +367,7 @@ def main():
         help="Optional staged pruning step (e.g., 0.05 prunes ~5% of original channels per pass until reaching --prune-ratio).",
     )
     parser.add_argument("--min-channels", type=int, default=8, help="Minimum output channels to keep per conv.")
+    parser.add_argument("--prune-depthwise", action="store_true", help="Also prune depthwise convs (default: skip).")
     parser.add_argument(
         "--no-protect-head",
         dest="protect_head",
@@ -409,6 +411,7 @@ def main():
         min_channels=int(args.min_channels),
         protect_head=bool(args.protect_head),
         prune_step=float(args.prune_step),
+        prune_depthwise=bool(args.prune_depthwise),
     )
     params_after = count_parameters(model)
 
@@ -431,6 +434,7 @@ def main():
         "protect_head": bool(args.protect_head),
         "prune_ratio": float(args.prune_ratio),
         "prune_step": float(args.prune_step),
+        "prune_depthwise": bool(args.prune_depthwise),
         "min_channels": int(args.min_channels),
         "img_size": (img_h, img_w),
         "params_before": int(params_before),
