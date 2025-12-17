@@ -1821,15 +1821,15 @@ uv run onnx2tf \
 - Example:
   ```bash
   uv run python prune_utod.py \
-  --ckpt runs/10/ultratinyod_res_anc8_w128_loese_64x64_lr0.003_torch_bilinear/best_utod_0279_map_0.45808.pt \
-  --prune-ratio 0.25 \
+  --ckpt runs/11/ultratinyod_res_anc8_w128_loese_64x64_lr0.0003_torch_bilinear_distill/best_utod_0121_map_0.58478.pt \
+  --prune-ratio 0.30 \
   --prune-step 0.05 \
   --min-channels 8 \
   --use-ema \
-  --out best_utod_0279_pruned.pt \
+  --out ultratinyod_res_anc8_w128_loese_64x64_lr0.0003_torch_bilinear_distill_pruned.pt \
   --image-dir data/wholebody34/obj_train_data \
-  --classes 0 \
-  --validate
+  --validate \
+  --eval-before
   ```
 - Optional flags: `--use-ema` (load EMA weights), `--no-protect-head` (also prune head blocks), `--prune-step` (stage pruning in 0.05 steps until the target ratio), `--validate --image-dir <train_img_dir>` (run quick mAP@0.5 after pruning; uses the same YOLO labels/val-split).
 
