@@ -84,8 +84,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         elif isinstance(meta.get("pruning"), dict) and "pruned_channels" in meta["pruning"]:
             channels_override = meta["pruning"]["pruned_channels"]
             channels_source = "meta_pruning_block"
-    if channels_override is None:
-        # Infer pruned channels from state_dict shapes when meta is missing.
+    def _infer_channels_from_state(state_dict):
         shape_keys = {
             "stem": "backbone.stem.conv.weight",
             "block1_dw": "backbone.block1.dw.conv.weight",
@@ -96,19 +95,27 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
             "block3_pw": "backbone.block3.pw.conv.weight",
             "block4_dw": "backbone.block4.dw.conv.weight",
             "block4_pw": "backbone.block4.pw.conv.weight",
+            "sppf_hidden": "backbone.sppf.cv1.conv.weight",
             "sppf_out": "backbone.sppf.cv2.conv.weight",
         }
         shape_override = {}
-        missing_shape = False
         for name, key in shape_keys.items():
-            w = state.get(key)
+            w = state_dict.get(key)
             if w is None:
-                missing_shape = True
-                break
+                return None
             shape_override[name] = int(w.shape[0])
-        if not missing_shape and shape_override:
-            channels_override = shape_override
+        return shape_override or None
+
+    if channels_override is None:
+        inferred = _infer_channels_from_state(state)
+        if inferred:
+            channels_override = inferred
             channels_source = "state_shapes"
+    else:
+        inferred = _infer_channels_from_state(state)
+        if inferred:
+            for k, v in inferred.items():
+                channels_override.setdefault(k, v)
     if channels_override and isinstance(channels_override, dict) and "stem" in channels_override:
         # Align stem width to pruned value to avoid shape mismatch on load
         c_stem = int(channels_override.get("stem", c_stem))

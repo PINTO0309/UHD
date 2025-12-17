@@ -1408,13 +1408,54 @@ def main():
     if args.val_only and not (args.resume or args.ckpt):
         raise ValueError("--val-only requires either --resume or --ckpt to load weights.")
 
+    def _extract_pruned_channels(meta):
+        if meta is None or not isinstance(meta, dict):
+            return None
+        if "pruned_channels" in meta and isinstance(meta["pruned_channels"], dict):
+            return dict(meta["pruned_channels"])
+        pruning = meta.get("pruning")
+        if isinstance(pruning, dict) and isinstance(pruning.get("pruned_channels"), dict):
+            return dict(pruning["pruned_channels"])
+        return None
+
+    def _infer_utod_channels_from_state(state_dict):
+        if not isinstance(state_dict, dict):
+            return None
+        shape_keys = {
+            "stem": "backbone.stem.conv.weight",
+            "block1_dw": "backbone.block1.dw.conv.weight",
+            "block1_pw": "backbone.block1.pw.conv.weight",
+            "block2_dw": "backbone.block2.dw.conv.weight",
+            "block2_pw": "backbone.block2.pw.conv.weight",
+            "block3_dw": "backbone.block3.dw.conv.weight",
+            "block3_pw": "backbone.block3.pw.conv.weight",
+            "block4_dw": "backbone.block4.dw.conv.weight",
+            "block4_pw": "backbone.block4.pw.conv.weight",
+            "sppf_hidden": "backbone.sppf.cv1.conv.weight",
+            "sppf_out": "backbone.sppf.cv2.conv.weight",
+        }
+        channels = {}
+        for name, key in shape_keys.items():
+            w = state_dict.get(key)
+            if w is None:
+                return None
+            channels[name] = int(w.shape[0])
+        return channels
+
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
-    utod_channels_override = None
-    if pretrain_meta is not None and "pruned_channels" in pretrain_meta:
-        utod_channels_override = pretrain_meta["pruned_channels"]
-    elif ckpt_meta is not None and "pruned_channels" in ckpt_meta:
-        utod_channels_override = ckpt_meta["pruned_channels"]
+    pretrain_state = pretrain_meta.get("model") if isinstance(pretrain_meta, dict) else None
+    ckpt_state = ckpt_meta.get("model") if isinstance(ckpt_meta, dict) else None
+    utod_channels_override = _extract_pruned_channels(pretrain_meta)
+    if utod_channels_override is None:
+        utod_channels_override = _extract_pruned_channels(ckpt_meta)
+    inferred_channels = _infer_utod_channels_from_state(pretrain_state) or _infer_utod_channels_from_state(ckpt_state)
+    if utod_channels_override is None and inferred_channels is not None:
+        utod_channels_override = inferred_channels
+    elif utod_channels_override is not None and inferred_channels is not None:
+        # Fill missing fields such as sppf_hidden
+        for k, v in inferred_channels.items():
+            utod_channels_override.setdefault(k, v)
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
@@ -1648,12 +1689,6 @@ def main():
 
     if args.arch != "cnn":
         backbone = None
-    # allow pruned UltraTinyOD channel overrides
-    utod_channels_override = None
-    if pretrain_meta is not None and "pruned_channels" in pretrain_meta:
-        utod_channels_override = pretrain_meta["pruned_channels"]
-    if ckpt_meta is not None and "pruned_channels" in ckpt_meta:
-        utod_channels_override = ckpt_meta["pruned_channels"]
     model = build_model(
         args.arch,
         width=cnn_width,

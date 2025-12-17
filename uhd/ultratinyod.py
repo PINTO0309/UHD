@@ -177,10 +177,10 @@ class SPPFmin(nn.Module):
     UltraTinyOD 用に最小限構成にしている。
     """
 
-    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu"):
+    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu", c_hidden: Optional[int] = None):
         super().__init__()
         # まずチャネルを半減（奇数でも切り上げて整合性を保つ）
-        c_hidden = int(math.ceil(c_in / 2))
+        c_hidden = int(math.ceil(c_in / 2)) if c_hidden is None else int(c_hidden)
         self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name)
         # 1 回だけの MaxPool（pool_k×pool_k）
         self.pool = nn.MaxPool2d(kernel_size=pool_k, stride=1, padding=pool_k // 2)
@@ -240,6 +240,9 @@ class UltraTinyODBackbone(nn.Module):
         b4_dw = int(ch_cfg.get("block4_dw", b3_pw))
         b4_pw = int(ch_cfg.get("block4_pw", b4_dw))
         sppf_out = int(ch_cfg.get("sppf_out", b4_pw // 2))
+        sppf_hidden = ch_cfg.get("sppf_hidden", None)
+        if sppf_hidden is not None:
+            sppf_hidden = int(sppf_hidden)
         # 64 -> 32
         self.stem = ConvBNAct(3, stem_ch, k=3, s=2, act_name=act_name)
 
@@ -258,7 +261,7 @@ class UltraTinyODBackbone(nn.Module):
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64
-        self.sppf = SPPFmin(b4_pw, sppf_out, act_name=act_name)
+        self.sppf = SPPFmin(b4_pw, sppf_out, act_name=act_name, c_hidden=sppf_hidden)
 
         self.out_channels = sppf_out  # 64
 
