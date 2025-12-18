@@ -1854,3 +1854,7 @@ If you find this project useful, please consider citing:
   abstract  = {Ultra-lightweight human detection. The number of parameters does not correlate to inference speed.},
 }
 ```
+
+## Ref
+
+- https://github.com/espressif/esp-dl
