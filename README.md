@@ -139,6 +139,29 @@ gh release download onnx -R PINTO0309/UHD
   |M|17.44 M|1.94 G|0.56451|3.57 ms|69.8 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_opencv_inter_nearest_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_opencv_inter_nearest_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_opencv_inter_nearest_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_opencv_inter_nearest_dynamic_nopost.onnx)|
   |L|30.92 M|3.44 G|0.57383|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic_nopost.onnx)|
 
+- `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
+
+  ```
+  R: ront, Y: yocto, Z: zepto, A: atto
+  F: femto, P: pico, N: nano, T: tiny
+  S: small, C: compact, M: medium, L: large
+  ```
+
+  |Var|Par|FLOPs|@0.5|latency|size|static|w/o post<br>static|dynamic|w/o post<br>dynamic|
+  |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+  |R|135.72 K|0.016 G|0.22382| ms|863 KB|||||
+  |Y| M| G|| ms| MB|||||
+  |Z| M| G|| ms| MB|||||
+  |A| M| G|| ms| MB|||||
+  |F| M| G|| ms| MB|||||
+  |P| M| G|| ms| MB|||||
+  |N| M| G|| ms| MB|||||
+  |T| M| G|| ms| MB|||||
+  |S| M| G|| ms| MB|||||
+  |C| M| G|| ms| MB|||||
+  |M| M| G|| ms| MB|||||
+  |L|30.92 M|3.44 G|0.58642|7.16 ms|123.7 MB|||||
+
 ## Inference
 
 > [!CAUTION]
@@ -1668,22 +1691,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=64
+  CKPT=runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1692,22 +1716,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=96
+  CKPT=runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1716,22 +1741,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=128
+  CKPT=runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1740,22 +1766,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=160
+  CKPT=runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1764,22 +1791,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=192
+  CKPT=runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
@@ -1788,22 +1816,23 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=256
+  CKPT=runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static.onnx \
   --opset 17
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic.onnx \
   --opset 17 \
   --dynamic-resize
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_static_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess
   uv run python export_onnx.py \
-  --checkpoint runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt \
+  --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
