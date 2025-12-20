@@ -160,6 +160,8 @@ gh release download onnx -R PINTO0309/UHD
     output_name.2: anchors shape: [8, 2] dtype: float32
     output_name.3: wh_scale shape: [8, 2] dtype: float32
 
+    https://github.com/PINTO0309/UHD/blob/e0bbfe69afa0da4f83cf1f09b530a500bcd2d685/demo_uhd.py#L203-L301
+
     score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)
     cx = (sigmoid(tx)+gx)/w
     cy = (sigmoid(ty)+gy)/h
