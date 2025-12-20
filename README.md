@@ -140,12 +140,33 @@ gh release download onnx -R PINTO0309/UHD
   |L|30.92 M|3.44 G|0.57383|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic_nopost.onnx)|
 
 - `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
+  - Variants
+    ```
+    R: ront, Y: yocto, Z: zepto, A: atto
+    F: femto, P: pico, N: nano, T: tiny
+    S: small, C: compact, M: medium, L: large
+    ```
+  - With post-process model
+    ```
+    input_name.1: input_yuv422 shape: [1, 2, 64, 64] dtype: float32
 
-  ```
-  R: ront, Y: yocto, Z: zepto, A: atto
-  F: femto, P: pico, N: nano, T: tiny
-  S: small, C: compact, M: medium, L: large
-  ```
+    output_name.1: score_classid_cxcywh shape: [1, 100, 6] dtype: float32
+    ```
+  - Without post-process model
+    ```
+    input_name.1: input_yuv422 shape: [1, 2, 64, 64] dtype: float32
+
+    output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float32
+    output_name.2: anchors shape: [8, 2] dtype: float32
+    output_name.3: wh_scale shape: [8, 2] dtype: float32
+
+    score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)
+    cx = (sigmoid(tx)+gx)/w
+    cy = (sigmoid(ty)+gy)/h
+    bw = anchor_w*softplus(tw)*wh_scale
+    bh = anchor_h*softplus(th)*wh_scale
+    boxes = (cx±bw/2, cy±bh/2)
+    ```
 
   |Var|Param|FLOPs|@0.5|latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
