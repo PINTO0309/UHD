@@ -203,7 +203,7 @@ class UltraTinyODBackbone(nn.Module):
     """
     UltraTinyOD 用バックボーン
 
-    入力:  [B, 3, 64, 64]
+    入力:  [B, C, 64, 64]
     出力:  [B, C, H', W'] (H', W' は stride に依存: 4/8/16 のいずれか)
 
     構成:
@@ -215,7 +215,7 @@ class UltraTinyODBackbone(nn.Module):
         sppf: SPPFmin 128->64 (8 -> 8)
     """
 
-    def __init__(self, c_stem: int = 16, use_residual: bool = False, out_stride: int = 8, activation: str = "silu"):
+    def __init__(self, c_stem: int = 16, in_channels: int = 3, use_residual: bool = False, out_stride: int = 8, activation: str = "silu"):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
@@ -223,7 +223,7 @@ class UltraTinyODBackbone(nn.Module):
         self.out_stride = int(out_stride)
         act_name = activation
         # 64 -> 32
-        self.stem = ConvBNAct(3, c_stem, k=3, s=2, act_name=act_name)
+        self.stem = ConvBNAct(in_channels, c_stem, k=3, s=2, act_name=act_name)
 
         # 32 -> 16
         self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name)   # 16 -> 32
@@ -653,6 +653,7 @@ class UltraTinyOD(nn.Module):
         num_classes: int = 1,
         config: Optional[UltraTinyODConfig] = None,
         c_stem: int = 16,
+        in_channels: int = 3,
         use_residual: bool = False,
         use_improved_head: bool = False,
         use_head_ese: bool = False,
@@ -689,6 +690,7 @@ class UltraTinyOD(nn.Module):
 
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
+            in_channels=in_channels,
             use_residual=use_residual,
             out_stride=int(config.stride),
             activation=act_name,
@@ -740,7 +742,7 @@ class UltraTinyOD(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            入力画像 [B, 3, H, W] （H, W は 64 を想定）
+            入力画像 [B, C, H, W] （H, W は 64 を想定）
         decode : bool
             True にすると、YOLO 形式の decode 結果も返す
             （推論・後処理で便利）

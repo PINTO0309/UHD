@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from uhd.ultratinyod import UltraTinyOD, UltraTinyODConfig
-from uhd.resize import normalize_resize_mode
+from uhd.resize import YUV422_RESIZE_MODE, normalize_resize_mode
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -251,7 +251,13 @@ def _resize_attrs_from_mode(resize_mode: str):
     return "nearest", "asymmetric", "floor"
 
 
-def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: str = "input_rgb", resize_mode: str = "torch_nearest") -> None:
+def add_input_resize(
+    onnx_path: str,
+    target_size: Tuple[int, int],
+    input_name: str = "input_rgb",
+    resize_mode: str = "torch_nearest",
+    input_channels: int = 3,
+) -> None:
     """
     Reload an ONNX model, make input dynamic, and insert a Resize to the fixed target_size
     at the head of the graph. Overwrites the ONNX file in-place.
@@ -281,7 +287,7 @@ def add_input_resize(onnx_path: str, target_size: Tuple[int, int], input_name: s
         dims[3].ClearField("dim_value")
 
     target_h, target_w = target_size
-    sizes = numpy_helper.from_array(np.array([1, 3, target_h, target_w], dtype=np.int64), name=f"{input_name}_sizes")
+    sizes = numpy_helper.from_array(np.array([1, input_channels, target_h, target_w], dtype=np.int64), name=f"{input_name}_sizes")
     g.initializer.append(sizes)
 
     resize_out = f"{input_name}_resized"
@@ -311,11 +317,13 @@ def export_onnx(
     simplify: bool = True,
     output_names: Optional[Sequence[str]] = None,
     dynamic_axes: Optional[Dict[str, Dict[int, str]]] = None,
+    input_channels: int = 3,
+    input_name: str = "input_rgb",
 ) -> None:
     model.eval()
     h, w = img_size
-    dummy = torch.zeros(1, 3, h, w, device=next(model.parameters()).device)
-    input_names = ["input_rgb"]
+    dummy = torch.zeros(1, input_channels, h, w, device=next(model.parameters()).device)
+    input_names = [input_name]
     if output_names is None:
         output_names = ["score_classid_cxcywh"]
     torch.onnx.export(
@@ -371,17 +379,23 @@ def update_metadata_props(output_path: str, props: Dict[str, str]) -> None:
     onnx.save(model, output_path)
 
 
-def verify_outputs(model: UltraTinyODWithPost, onnx_path: str, img_size: Tuple[int, int]) -> Dict[str, float]:
+def verify_outputs(
+    model: UltraTinyODWithPost,
+    onnx_path: str,
+    img_size: Tuple[int, int],
+    input_channels: int = 3,
+    input_name: str = "input_rgb",
+) -> Dict[str, float]:
     import numpy as np
     import onnxruntime as ort
 
     h, w = img_size
     torch.manual_seed(0)
-    sample = torch.randn(1, 3, h, w)
+    sample = torch.randn(1, input_channels, h, w)
     with torch.no_grad():
         torch_out = model(sample)
     sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-    ort_outs = sess.run(None, {"input_rgb": sample.numpy()})
+    ort_outs = sess.run(None, {input_name: sample.numpy()})
 
     deltas = {}
     ref = torch_out.detach().cpu().numpy()
@@ -435,12 +449,15 @@ def main():
     except Exception:
         print("[WARN] resize_mode missing or invalid in checkpoint meta; defaulting to opencv_inter_nearest.")
         resize_mode = "opencv_inter_nearest"
+    input_channels = 2 if resize_mode == YUV422_RESIZE_MODE else 3
+    input_name = "input_yuv422" if resize_mode == YUV422_RESIZE_MODE else "input_rgb"
     cfg, inferred = infer_utod_config(state, meta, args)
 
     model = UltraTinyOD(
         num_classes=inferred["num_classes"],
         config=cfg,
         c_stem=inferred["c_stem"],
+        in_channels=input_channels,
         use_residual=inferred["use_residual"],
         use_improved_head=inferred["use_improved_head"],
         use_head_ese=inferred["use_head_ese"],
@@ -488,16 +505,30 @@ def main():
         simplify=not args.no_simplify,
         output_names=output_names,
         dynamic_axes=None,
+        input_channels=input_channels,
+        input_name=input_name,
     )
     print(f"Exported ONNX to {args.output}")
 
     if args.verify and args.merge_postprocess:
-        deltas = verify_outputs(export_module, args.output, img_size=img_size)
+        deltas = verify_outputs(
+            export_module,
+            args.output,
+            img_size=img_size,
+            input_channels=input_channels,
+            input_name=input_name,
+        )
         print("Verification max abs diff:", deltas)
 
     # Inject input resize and dynamic axes after export/simplification
     if args.dynamic_resize:
-        add_input_resize(args.output, target_size=img_size, input_name="input_rgb", resize_mode=resize_mode)
+        add_input_resize(
+            args.output,
+            target_size=img_size,
+            input_name=input_name,
+            resize_mode=resize_mode,
+            input_channels=input_channels,
+        )
         print(f"Injected input Resize to fixed size {img_size} with dynamic input axes (mode={resize_mode}).")
         if not args.no_simplify:
             simplify_onnx_path(args.output)

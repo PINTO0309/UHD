@@ -102,9 +102,9 @@ class CSPTinyBlock(nn.Module):
 class MicroCSPNet(nn.Module):
     """Tiny CSP-style backbone with stride 8 output."""
 
-    def __init__(self, activation: str = "swish") -> None:
+    def __init__(self, activation: str = "swish", in_channels: int = 3) -> None:
         super().__init__()
-        self.conv1 = ConvBNAct(3, 16, kernel_size=3, stride=1, activation=activation)
+        self.conv1 = ConvBNAct(in_channels, 16, kernel_size=3, stride=1, activation=activation)
         self.conv2 = ConvBNAct(16, 32, kernel_size=3, stride=2, activation=activation)
         self.csp2 = CSPTinyBlock(32, activation=activation)
         self.conv3 = ConvBNAct(32, 64, kernel_size=3, stride=2, activation=activation)
@@ -128,6 +128,7 @@ class UltraTinyResNet(nn.Module):
     def __init__(
         self,
         activation: str = "swish",
+        in_channels: int = 3,
         channels=None,
         blocks=None,
         use_long_skip: bool = False,
@@ -147,7 +148,7 @@ class UltraTinyResNet(nn.Module):
         if self.skip_mode not in ("add", "cat", "shuffle_cat", "s2d_cat"):
             raise ValueError(f"UltraTinyResNet skip_mode must be 'add', 'cat', 'shuffle_cat', or 's2d_cat'; got {self.skip_mode}")
         self.use_fpn = bool(use_fpn)
-        self.stem = ConvBNAct(3, ch_list[0], kernel_size=3, stride=1, activation=activation)
+        self.stem = ConvBNAct(in_channels, ch_list[0], kernel_size=3, stride=1, activation=activation)
 
         self.downs = nn.ModuleList()
         self.blocks = nn.ModuleList()
@@ -316,11 +317,11 @@ class EnhancedShuffleNet(nn.Module):
     Deeper stages and channel squeeze vs the prior minimal variant.
     """
 
-    def __init__(self, activation: str = "swish", use_global_skip: bool = False) -> None:
+    def __init__(self, activation: str = "swish", in_channels: int = 3, use_global_skip: bool = False) -> None:
         super().__init__()
         act = activation
         self.use_global_skip = bool(use_global_skip)
-        self.conv1 = ConvBNAct(3, 32, kernel_size=3, stride=2, activation=act)  # 32x32
+        self.conv1 = ConvBNAct(in_channels, 32, kernel_size=3, stride=2, activation=act)  # 32x32
         # Stage2: stride 2 entry, progressive widening via squeeze/expand (doubled depth)
         self.stage2 = nn.Sequential(
             ShuffleV2Block(32, 64, stride=2, activation=act),  # 16x16
@@ -382,6 +383,7 @@ class MiniCenterNet(nn.Module):
         self,
         width: int = 32,
         num_classes: int = 1,
+        in_channels: int = 3,
         use_skip: bool = False,
         activation: str = "swish",
         last_se: str = "none",
@@ -408,7 +410,7 @@ class MiniCenterNet(nn.Module):
             self.stage3 = None
         else:
             self.stem = nn.Sequential(
-                nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
+                nn.Conv2d(in_channels, width, kernel_size=3, stride=2, padding=1, bias=False),
                 nn.BatchNorm2d(width),
                 _make_activation(activation),
             )
@@ -472,6 +474,7 @@ class AnchorCNN(nn.Module):
         self,
         width: int = 32,
         num_classes: int = 1,
+        in_channels: int = 3,
         num_anchors: int = 3,
         anchors: Tuple[Tuple[float, float], ...] = (),
         use_skip: bool = False,
@@ -500,7 +503,7 @@ class AnchorCNN(nn.Module):
             self.stage3 = None
         else:
             self.stem = nn.Sequential(
-                nn.Conv2d(3, width, kernel_size=3, stride=2, padding=1, bias=False),
+                nn.Conv2d(in_channels, width, kernel_size=3, stride=2, padding=1, bias=False),
                 nn.BatchNorm2d(width),
                 _make_activation(activation),
             )
@@ -586,19 +589,20 @@ class TinyDETR(nn.Module):
         num_decoder_layers: int = 3,
         dim_feedforward: int = 128,
         num_classes: int = 1,
+        in_channels: int = 3,
         activation: str = "swish",
         use_fpn: bool = False,
     ) -> None:
         super().__init__()
         self.use_fpn = use_fpn
         if self.use_fpn:
-            self.stem = nn.Conv2d(3, d_model, kernel_size=3, stride=2, padding=1)
+            self.stem = nn.Conv2d(in_channels, d_model, kernel_size=3, stride=2, padding=1)
             self.fpn_high = DWConvBlock(d_model, d_model, stride=1, activation=activation)  # extra high-res stage
             self.fpn1 = DWConvBlock(d_model, d_model, stride=2, activation=activation)
             self.fpn2 = DWConvBlock(d_model, d_model, stride=2, activation=activation)
         else:
             # Higher-res single-scale patch embedding (stride 2 instead of 4)
-            self.patch = nn.Conv2d(3, d_model, kernel_size=3, stride=2, padding=1)
+            self.patch = nn.Conv2d(in_channels, d_model, kernel_size=3, stride=2, padding=1)
         self.d_model = d_model
         self.num_classes = num_classes
         act = activation.lower()
@@ -691,6 +695,7 @@ class _BackboneWithSE(nn.Module):
 def _build_backbone(
     name: str,
     activation: str,
+    in_channels: int = 3,
     backbone_channels=None,
     backbone_blocks=None,
     backbone_se: str = "none",
@@ -705,7 +710,7 @@ def _build_backbone(
         return None, None
     name = name.lower()
     if name in ("microcspnet", "micro-cspnet", "micro_cspnet"):
-        bb = MicroCSPNet(activation=activation)
+        bb = MicroCSPNet(activation=activation, in_channels=in_channels)
     elif name in ("ultratinyresnet", "ultra-tiny-resnet", "ultra_tiny_resnet"):
         skip_mode = "add"
         if backbone_skip_s2d_cat:
@@ -716,6 +721,7 @@ def _build_backbone(
             skip_mode = "cat"
         bb = UltraTinyResNet(
             activation=activation,
+            in_channels=in_channels,
             channels=backbone_channels,
             blocks=backbone_blocks,
             use_long_skip=backbone_skip,
@@ -728,7 +734,7 @@ def _build_backbone(
         "enhanced_shufflenet",
         "enhancedshufflenet",
     ):
-        bb = EnhancedShuffleNet(activation=activation, use_global_skip=backbone_skip)
+        bb = EnhancedShuffleNet(activation=activation, in_channels=in_channels, use_global_skip=backbone_skip)
     else:
         raise ValueError(f"Unknown backbone: {name}")
     se_mode = (backbone_se or "none").lower()
@@ -750,6 +756,7 @@ def _disable_bn(module: nn.Module) -> None:
 def build_model(arch: str, **kwargs) -> nn.Module:
     arch = arch.lower()
     use_batchnorm = kwargs.get("use_batchnorm", True)
+    input_channels = int(kwargs.get("input_channels", 3))
     model: nn.Module
     if arch == "cnn":
         width = kwargs.get("width", 32)
@@ -764,6 +771,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             _build_backbone(
                 backbone_name,
                 activation=activation,
+                in_channels=input_channels,
                 backbone_channels=kwargs.get("backbone_channels"),
                 backbone_blocks=kwargs.get("backbone_blocks"),
                 backbone_se=kwargs.get("backbone_se", "none"),
@@ -783,6 +791,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             model = AnchorCNN(
                 width=width,
                 num_classes=num_classes,
+                in_channels=input_channels,
                 num_anchors=kwargs.get("num_anchors", 3),
                 anchors=kwargs.get("anchors", ()),
                 use_skip=use_skip,
@@ -797,6 +806,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             model = MiniCenterNet(
                 width=width,
                 num_classes=num_classes,
+                in_channels=input_channels,
                 use_skip=use_skip,
                 activation=activation,
                 last_se=last_se,
@@ -828,6 +838,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             num_classes=cfg.num_classes,
             config=cfg,
             c_stem=int(stem_width),
+            in_channels=input_channels,
             use_residual=kwargs.get("utod_use_residual", False),
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
             use_head_ese=use_head_ese,
@@ -844,6 +855,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             num_decoder_layers=kwargs.get("decoder_layers", kwargs.get("layers", 3)),
             dim_feedforward=kwargs.get("dim_feedforward", 128),
             num_classes=kwargs.get("num_classes", 1),
+            in_channels=input_channels,
             activation=kwargs.get("activation", "swish"),
             use_fpn=kwargs.get("use_fpn", False),
         )

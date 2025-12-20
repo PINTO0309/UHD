@@ -24,7 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
-from uhd.resize import normalize_resize_mode
+from uhd.resize import YUV422_RESIZE_MODE, normalize_resize_mode
 
 
 class ModelEma:
@@ -87,7 +87,7 @@ def parse_args():
     resize_group = parser.add_mutually_exclusive_group()
     resize_group.add_argument(
         "--resize-mode",
-        choices=["torch_bilinear", "torch_nearest", "opencv_inter_linear", "opencv_inter_nearest"],
+        choices=["torch_bilinear", "torch_nearest", "opencv_inter_linear", "opencv_inter_nearest", "opencv_inter_nearest_yuv422"],
         dest="resize_mode",
         help="Resize mode used during training preprocessing.",
     )
@@ -118,6 +118,13 @@ def parse_args():
         action="store_const",
         const="opencv_inter_nearest",
         help="Shortcut for --resize-mode opencv_inter_nearest.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_nearest_yuv422",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_nearest_yuv422",
+        help="Shortcut for --resize-mode opencv_inter_nearest_yuv422.",
     )
     parser.add_argument("--exp-name", default="default", help="Experiment name; logs will be saved under runs/<exp-name>.")
     parser.add_argument("--batch-size", type=int, default=64)
@@ -1611,6 +1618,9 @@ def main():
             f.write(existing_log)
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
+    input_channels = 2 if resize_mode == YUV422_RESIZE_MODE else 3
+    if input_channels != 3 and teacher_backbone:
+        raise ValueError("teacher-backbone requires 3-channel RGB input; disable it when using opencv_inter_nearest_yuv422.")
 
     train_ds, val_ds = make_datasets(args, class_ids, aug_cfg, resize_mode=resize_mode)
     anchors_tensor = None
@@ -1643,6 +1653,7 @@ def main():
         backbone = None
     model = build_model(
         args.arch,
+        input_channels=input_channels,
         width=cnn_width,
         num_queries=args.num_queries,
         d_model=args.d_model,
@@ -1824,6 +1835,7 @@ def main():
             t_use_fpn = teacher_use_fpn or bool(t_meta.get("use_fpn", use_fpn))
             teacher_model = build_model(
                 t_arch,
+                input_channels=input_channels,
                 width=int(t_meta.get("cnn_width", args.cnn_width)),
                 num_queries=teacher_num_queries or args.num_queries,
                 d_model=teacher_d_model or args.d_model,
@@ -1891,6 +1903,7 @@ def main():
             t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
+                input_channels=input_channels,
                 width=t_cnn_width,
                 num_classes=t_num_classes,
                 use_skip=t_use_skip,
