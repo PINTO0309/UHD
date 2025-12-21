@@ -85,7 +85,7 @@ gh release download onnx -R PINTO0309/UHD
     |L|30.92 M|3.44 G|0.48243|7.40 ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_loese.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_loese_nopost.onnx)|
 
   - **[For long distances and extremely small objects]** ESE + IoU-aware + ReLU + Distillation
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.60 M|0.20 G|0.55224|0.63 ms|6.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_distill_nopost.onnx)|
@@ -93,9 +93,9 @@ gh release download onnx -R PINTO0309/UHD
     |S|6.30 M|0.79 G|0.57361|1.71 ms|25.2 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w128_64x64_distill_nopost.onnx)|
     |C|9.81 M|1.23 G|0.56183|2.51 ms|39.3 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_distill_nopost.onnx)|
     |M|14.09 M|1.77 G|0.57666|3.54 ms|56.4 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_distill_nopost.onnx)|
-  
+
   - **[For short/medium distance]** ESE + IoU-aware + large-object-branch + ReLU + Distillation
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.98 M|0.22 G|0.54883|0.70 ms|8.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_loese_distill_nopost.onnx)|
@@ -1871,7 +1871,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 </details>
 
-## INT8 quantization
+## LiteRT (TFLite) quantization
 
 ```bash
 uv run onnx2tf \
@@ -1879,6 +1879,45 @@ uv run onnx2tf \
 -cotof \
 -oiqt
 ```
+
+## ESP-DL Quantization
+
+This repository includes a calibration/quantization script for ESP-DL:
+`uhd/quantize_onnx_model_for_esp32.py`.
+
+### Image-only calibration (default)
+
+```bash
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_yuv422 \
+--onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
+--espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl
+```
+
+Notes:
+- The YUV422 models expect input shape `[1, 2, 64, 64]` with `opencv_inter_nearest_yuv422` preprocessing.
+- `--dataset-type image` is the default and ignores labels.
+- Adjust `--calib-steps`, `--batch-size`, `--target`, `--num-of-bits`, and `--device` as needed.
+
+### CLI options
+
+- `--image-dir`: Directory containing calibration images.
+- `--dataset-type`: Calibration dataset type (`image` or `yolo`, default `image`).
+- `--list-path`: Optional text file listing images to use.
+- `--img-size`: Square input size used for calibration (default `64`).
+- `--resize-mode`: Resize mode (default `opencv_inter_nearest_yuv422`).
+- `--class-ids`: Comma-separated class IDs to keep (yolo only, default `0`).
+- `--split`: Dataset split for calibration (`train`, `val`, `all`, default `all`).
+- `--val-split`: Validation split ratio (ignored when `--split all`, default `0.0`).
+- `--batch-size`: Calibration batch size (default `64`).
+- `--calib-steps`: Number of calibration steps (default `32`).
+- `--onnx-model`: Path to the input ONNX model (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx`).
+- `--espdl-model`: Path to the output `.espdl` file (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl`).
+- `--target`: Quantize target type (`c`, `esp32s3`, `esp32p4`, default `esp32s3`).
+- `--num-of-bits`: Quantization bits (default `8`).
+- `--device`: Device for calibration (`cpu` or `cuda`, default `cpu`).
 
 ## Arch
 

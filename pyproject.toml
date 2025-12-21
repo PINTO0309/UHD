@@ -30,5 +30,5 @@ dependencies = [
 [tool.uv]
 override-dependencies = [
     "onnx==1.19.0",
-    "onnxsim==0.4.30"
+    "onnxsim==0.4.30",
 ]

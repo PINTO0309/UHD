@@ -1395,7 +1395,7 @@ dependencies = [
 requires-dist = [
     { name = "bbalg", specifier = "==1.0.2" },
     { name = "datasets", specifier = "==4.3.0" },
-    { name = "esp-ppq", specifier = ">=1.2.3" },
+    { name = "esp-ppq", specifier = "==1.2.3" },
     { name = "huggingface-hub", specifier = "==1.0.1" },
     { name = "matplotlib", specifier = "==3.10.7" },
     { name = "numpy", specifier = "==1.26.4" },
