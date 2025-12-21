@@ -195,7 +195,7 @@ gh release download onnx -R PINTO0309/UHD
 
   - ESPDL
 
-    |Var|ESPDL<br>size|static w/o post|
+    |Var|ESPDL size|static w/o post|
     |:-:|:-:|:-:|
     |R|222.8 KB|[DL]()|
     |Y| MB||
