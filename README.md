@@ -146,6 +146,13 @@ gh release download onnx -R PINTO0309/UHD
     F: femto, P: pico, N: nano, T: tiny
     S: small, C: compact, M: medium, L: large
     ```
+  - `YUV422`
+    ```python
+    img_u8 = np.ones([64,64,3], dtype=np.uint8)
+    yuyv = cv2.cvtColor(img_u8, cv2.COLOR_RGB2YUV_YUYV)
+    print(yuyv.shape)
+    (64, 64, 2)
+    ```
   - With post-process model
     ```
     input_name.1: input_yuv422 shape: [1, 2, 64, 64] dtype: float32
