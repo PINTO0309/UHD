@@ -207,6 +207,8 @@ gh release download onnx -R PINTO0309/UHD
 
 ## Inference
 
+<details><summary>use-improved-head</summary>
+
 > [!CAUTION]
 > If you preprocess your images and resize them to 64x64 with OpenCV or similar, use `Nearest` mode.
 
@@ -288,6 +290,7 @@ options:
   --actual-size
   ```
 
+</details>
 
 ## Training Examples (full CLI)
 
@@ -1549,6 +1552,8 @@ uv run python train.py \
 
 ## Validation-only Example
 
+<details><summary>Click to expand</summary>
+
 Example of running only validation on a trained checkpoint:
 
 ```bash
@@ -1562,6 +1567,8 @@ uv run python train.py \
 --val-only \
 --use-ema
 ```
+
+</details>
 
 ## CLI parameters
 
@@ -1658,30 +1665,53 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 </details>
 
 ## Augmentation via YAML
+
+<details><summary>Click to expand</summary>
+
 - Specify a YAML file with `--aug-config` to run the `data_augment:` entries in the listed order (e.g., `--aug-config uhd/aug.yaml`).
 - Supported ops (examples): Mosaic / MixUp / CopyPaste / HorizontalFlip (class_swap_map supported) / VerticalFlip / RandomScale / Translation / RandomCrop / RandomResizedCrop / RandomBrightness / RandomContrast / RandomSaturation / RandomHSV / RandomPhotometricDistort / Blur / MedianBlur / MotionBlur / GaussianBlur / GaussNoise / ImageCompression / ISONoise / RandomRain / RandomFog / RandomSunFlare / CLAHE / ToGray / RemoveOutliers.
 - If `prob` is provided, it is used as the apply probability; otherwise defaults are used (most are 0, RandomPhotometricDistort defaults to 0.5). Unknown keys are ignored.
 
+</details>
+
 ## Loss terms (CNN / CenterNet)
+
+<details><summary>Click to expand</summary>
+
 - `loss`: total loss (`hm + off + wh`)
 - `hm`: focal loss on center heatmap
 - `off`: L1 loss on center offsets (within-cell quantization correction)
 - `wh`: L1 loss on width/height (feature-map scale)
 
+</details>
+
 ## Loss terms (CNN / Anchor head, `--use-anchor`)
+
+<details><summary>Click to expand</summary>
+
 - `loss`: total anchor loss (`box + obj + cls` [+ `quality`] when `--use-improved-head`)
 - `obj`: BCE on objectness for each anchor location (positive vs. background)
 - `cls`: BCE on per-class logits for positive anchors (one-hot over target classes)
 - `box`: (1 - IoU/GIoU/CIoU) on decoded boxes for positive anchors; IoU flavor set by `--iou-loss`
 - `quality` (improved head only): BCE on IoU-linked quality logit; obj targetもIoUでスケールされる
 
+</details>
+
 ## Loss terms (Transformer)
+
+<details><summary>Click to expand</summary>
+
 - `loss`: total loss (`cls + l1 + iou`)
 - `cls`: cross-entropy for class vs. background
 - `l1`: L1 loss on box coordinates
 - `iou`: 1 - IoU for matched predictions
 
+</details>
+
 ## The impact of image downsampling methods
+
+<details><summary>Click to expand</summary>
+
 PyTorch's Resize method is implemented using a downsampling method similar to PIL on the backend, but it is significantly different from OpenCV's downsampling implementation. Therefore, when downsampling images in preprocessing during training, it is important to note that the numerical characteristics of the images used by the model for training will be completely different depending on whether you use PyTorch's Resize method or OpenCV's Resize method. Below is the pixel-level error calculation when downsampling an image to 64x64 pixels. If the diff value is greater than 1.0, the images are completely different.
 
 Therefore, it is easy to imagine that if the downsampling method used for preprocessing during learning is different from the downsampling method used during inference, the output inference results will be disastrous.
@@ -1724,6 +1754,8 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
     INTER_AREA    : 0.3621 ms
     AREA / LINEAR ratio : 25.40x
     ```
+
+</details>
 
 ## ONNX export
 
@@ -1886,6 +1918,8 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 ## LiteRT (TFLite) quantization
 
+<details><summary>Click to expand</summary>
+
 ```bash
 uv run onnx2tf \
 -i ultratinyod_res_anc8_w64_64x64_quality_relu_nopost.onnx \
@@ -1893,12 +1927,16 @@ uv run onnx2tf \
 -oiqt
 ```
 
+</details>
+
 ## ESP-DL Quantization
 
 This repository includes a calibration/quantization script for ESP-DL:
 `uhd/quantize_onnx_model_for_esp32.py`.
 
 ### Image-only calibration (default)
+
+<details><summary>Click to expand</summary>
 
 ```bash
 uv run python uhd/quantize_onnx_model_for_esp32.py \
@@ -1970,7 +2008,11 @@ Notes:
 - `--dataset-type image` is the default and ignores labels.
 - Adjust `--calib-steps`, `--batch-size`, `--target`, `--num-of-bits`, and `--device` as needed.
 
+</details>
+
 ### CLI options
+
+<details><summary>Click to expand</summary>
 
 - `--image-dir`: Directory containing calibration images.
 - `--dataset-type`: Calibration dataset type (`image` or `yolo`, default `image`).
@@ -1992,7 +2034,11 @@ Notes:
 - `--num-of-bits`: Quantization bits (default `8`).
 - `--device`: Device for calibration (`cpu` or `cuda`, default `cpu`).
 
+</details>
+
 ## Arch
+
+<details><summary>Click to expand</summary>
 
 |ONNX|LiteRT(TFLite)|
 |:-:|:-:|
@@ -2008,6 +2054,8 @@ interact with smartphones](https://github.com/PINTO0309/PUC) - MIT License
 6. [HSC: Happy smile classifier](https://github.com/PINTO0309/HSC) - MIT License
 7. [WHC: Waving Hand Classification](https://github.com/PINTO0309/WHC) - MIT License
 8. [UHD: Ultra-lightweight human detection](https://github.com/PINTO0309/UHD) - MIT License
+
+</details>
 
 ## Citation
 
