@@ -197,7 +197,7 @@ gh release download onnx -R PINTO0309/UHD
 
     |Var|ESPDL size|static w/o post|
     |:-:|:-:|:-:|
-    |R|222.8 KB|[DL]()|
+    |R|222.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|
     |Y| MB||
     |Z| MB||
     |A| MB||
