@@ -1,12 +1,17 @@
 import argparse
 import glob
 import os
+import re
+import tempfile
 
 import cv2
 import numpy as np
+import onnx
 import torch
 from torch.utils.data import DataLoader, Dataset
 from esp_ppq.api import espdl_quantize_onnx
+from esp_ppq.api.setting import QuantizationSettingFactory
+from esp_ppq.core import TargetPlatform
 
 try:
     from uhd.data import YoloDataset
@@ -22,6 +27,154 @@ DEFAULT_NUM_OF_BITS = 8
 DEFAULT_DEVICE = "cpu"
 
 DEVICE = DEFAULT_DEVICE
+
+
+def sanitize_onnx_model(onnx_model_path, export_dir=None, batch_size=None, expand_group_conv=False):
+    model = onnx.load(onnx_model_path)
+    init_by_name = {init.name: init for init in model.graph.initializer}
+    if export_dir:
+        os.makedirs(export_dir, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(onnx_model_path))[0]
+        for name in ("anchors", "wh_scale"):
+            init = init_by_name.get(name)
+            if init is None:
+                print(f"Initializer '{name}' not found; skipping export.")
+                continue
+            arr = onnx.numpy_helper.to_array(init)
+            out_path = os.path.join(export_dir, f"{base_name}_{name}.npy")
+            np.save(out_path, arr)
+            print(f"Exported initializer '{name}' to: {out_path}")
+    group_conv_updates = []
+    if expand_group_conv:
+        for node in model.graph.node:
+            if node.op_type != "Conv":
+                continue
+            attrs = {attr.name: onnx.helper.get_attribute_value(attr) for attr in node.attribute}
+            groups = int(attrs.get("group", 1) or 1)
+            if groups <= 1:
+                continue
+            if len(node.input) < 2:
+                continue
+            weight_name = node.input[1]
+            weight_init = init_by_name.get(weight_name)
+            if weight_init is None:
+                continue
+            weight = onnx.numpy_helper.to_array(weight_init)
+            if weight.ndim != 4:
+                continue
+            in_per_group = weight.shape[1]
+            in_channels = in_per_group * groups
+            out_channels = weight.shape[0]
+            if out_channels % groups != 0:
+                continue
+            out_per_group = out_channels // groups
+            new_weight = np.zeros((out_channels, in_channels, weight.shape[2], weight.shape[3]), dtype=weight.dtype)
+            for group_idx in range(groups):
+                out_start = group_idx * out_per_group
+                in_start = group_idx * in_per_group
+                new_weight[
+                    out_start : out_start + out_per_group,
+                    in_start : in_start + in_per_group,
+                    :,
+                    :,
+                ] = weight[out_start : out_start + out_per_group, :, :, :]
+            weight_init.CopyFrom(onnx.numpy_helper.from_array(new_weight, weight_name))
+            kept_attrs = [attr for attr in node.attribute if attr.name != "group"]
+            del node.attribute[:]
+            node.attribute.extend(kept_attrs)
+            node.attribute.extend([onnx.helper.make_attribute("group", 1)])
+            group_conv_updates.append(node.name or weight_name)
+    resize_updates = []
+    if batch_size is not None:
+        for node in model.graph.node:
+            if node.op_type != "Resize":
+                continue
+            if len(node.input) < 4:
+                continue
+            size_name = node.input[3]
+            init = init_by_name.get(size_name)
+            if init is None:
+                continue
+            arr = onnx.numpy_helper.to_array(init)
+            if arr.ndim != 1 or arr.size != 4:
+                continue
+            old_n = int(arr[0])
+            if old_n > 0 and old_n != batch_size:
+                arr = arr.copy()
+                arr[0] = batch_size
+                init.CopyFrom(onnx.numpy_helper.from_array(arr, init.name))
+                resize_updates.append(f"{size_name}: {old_n} -> {batch_size}")
+    node_inputs = {name for node in model.graph.node for name in node.input}
+    node_outputs = {name for node in model.graph.node for name in node.output}
+    init_names = {init.name for init in model.graph.initializer}
+
+    kept_outputs = [out for out in model.graph.output if out.name in node_outputs]
+    kept_inputs = [
+        inp for inp in model.graph.input if inp.name in node_inputs or inp.name in init_names
+    ]
+
+    removed_outputs = [out.name for out in model.graph.output if out.name not in node_outputs]
+    removed_inputs = [
+        inp.name
+        for inp in model.graph.input
+        if inp.name not in node_inputs and inp.name not in init_names
+    ]
+
+    if not removed_outputs and not removed_inputs and not resize_updates and not group_conv_updates:
+        return onnx_model_path
+
+    if removed_outputs:
+        del model.graph.output[:]
+        model.graph.output.extend(kept_outputs)
+    if removed_inputs:
+        del model.graph.input[:]
+        model.graph.input.extend(kept_inputs)
+
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp:
+        onnx.save(model, tmp.name)
+        sanitized_path = tmp.name
+
+    if group_conv_updates:
+        print(f"Sanitized ONNX: expanded group convs: {len(group_conv_updates)}")
+    if resize_updates:
+        print("Sanitized ONNX: updated Resize sizes:", ", ".join(resize_updates))
+    if removed_outputs:
+        print(f"Sanitized ONNX: removed unlinked outputs: {removed_outputs}")
+    if removed_inputs:
+        print(f"Sanitized ONNX: removed unlinked inputs: {removed_inputs}")
+    print(f"Sanitized ONNX saved to: {sanitized_path}")
+    return sanitized_path
+
+
+def get_int16_platform(target):
+    target = target.lower()
+    if target == "esp32s3":
+        return TargetPlatform.ESPDL_S3_INT16
+    if target == "esp32p4":
+        return TargetPlatform.ESPDL_INT16
+    if target == "c":
+        return TargetPlatform.ESPDL_C_INT16
+    return TargetPlatform.ESPDL_INT16
+
+
+def build_dispatching_override(onnx_model_path, patterns, target):
+    if not patterns:
+        return None
+    model = onnx.load(onnx_model_path)
+    platform = get_int16_platform(target)
+    override = {}
+    for node in model.graph.node:
+        if not node.name:
+            continue
+        for pattern in patterns:
+            if re.search(pattern, node.name):
+                override[node.name] = platform
+                break
+    if override:
+        print(f"Forcing int16 for {len(override)} ops via pattern match.")
+    else:
+        print("No ops matched int16 patterns.")
+    return override or None
 
 
 def _resolve_path(entry, image_dir, list_path):
@@ -109,6 +262,16 @@ def build_arg_parser():
         help="Optional path to a text file listing images to use.",
     )
     parser.add_argument(
+        "--export-anchors-wh-scale-dir",
+        default=None,
+        help="Directory to save anchors/wh_scale as .npy (optional).",
+    )
+    parser.add_argument(
+        "--expand-group-conv",
+        action="store_true",
+        help="Expand group conv (groups > 1) into group=1.",
+    )
+    parser.add_argument(
         "--img-size",
         type=int,
         default=64,
@@ -139,7 +302,7 @@ def build_arg_parser():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=1,
         help="Calibration batch size.",
     )
     parser.add_argument(
@@ -147,6 +310,17 @@ def build_arg_parser():
         type=int,
         default=32,
         help="Number of calibration steps.",
+    )
+    parser.add_argument(
+        "--calib-algorithm",
+        default="kl",
+        help="Calibration algorithm (e.g., kl, minmax, mse, percentile).",
+    )
+    parser.add_argument(
+        "--int16-op-pattern",
+        action="append",
+        default=[],
+        help="Regex pattern to force matched ops to int16 (repeatable).",
     )
     parser.add_argument(
         "--onnx-model",
@@ -188,6 +362,15 @@ def main():
     espdl_model_path = args.espdl_model
     target = args.target
     num_of_bits = args.num_of_bits
+    export_dir = args.export_anchors_wh_scale_dir
+    if export_dir is None:
+        export_dir = os.path.dirname(espdl_model_path) or "."
+    onnx_model_path = sanitize_onnx_model(
+        onnx_model_path,
+        export_dir=export_dir,
+        batch_size=args.batch_size,
+        expand_group_conv=args.expand_group_conv,
+    )
     if args.dataset_type == "yolo":
         class_ids = parse_class_ids(args.class_ids)
         dataset = YoloDataset(
@@ -215,6 +398,15 @@ def main():
     input_shape = [1, *sample_image.shape]
     calib_steps = min(args.calib_steps, len(dataloader))
 
+    setting = QuantizationSettingFactory.espdl_setting()
+    if args.calib_algorithm:
+        setting.quantize_activation_setting.calib_algorithm = args.calib_algorithm
+    dispatching_override = build_dispatching_override(
+        onnx_model_path,
+        args.int16_op_pattern,
+        target,
+    )
+
     quant_ppq_graph = espdl_quantize_onnx(
         onnx_import_file=onnx_model_path,
         espdl_export_file=espdl_model_path,
@@ -224,8 +416,9 @@ def main():
         inputs=None,
         target=target,  # Quantify target types
         num_of_bits=num_of_bits,  # Quantization bits
+        setting=setting,
         collate_fn=collate_fn,
-        dispatching_override=None,
+        dispatching_override=dispatching_override,
         device=DEVICE,
         error_report=True,
         skip_export=False,

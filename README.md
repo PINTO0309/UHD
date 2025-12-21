@@ -1893,7 +1893,12 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest_yuv422 \
 --onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl
+--espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
+--calib-algorithm kl \
+--int16-op-pattern "/model/backbone/block1/dw/conv/Conv" \
+--int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
+--int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
+--int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv"
 ```
 
 Notes:
@@ -1906,13 +1911,17 @@ Notes:
 - `--image-dir`: Directory containing calibration images.
 - `--dataset-type`: Calibration dataset type (`image` or `yolo`, default `image`).
 - `--list-path`: Optional text file listing images to use.
+- `--export-anchors-wh-scale-dir`: Directory to save `{onnx-model}_anchors.npy` and `{onnx-model}_wh_scale.npy` (default: same directory as `--espdl-model`).
+- `--expand-group-conv`: Expand `groups > 1` conv into group=1 (default: disabled).
 - `--img-size`: Square input size used for calibration (default `64`).
 - `--resize-mode`: Resize mode (default `opencv_inter_nearest_yuv422`).
 - `--class-ids`: Comma-separated class IDs to keep (yolo only, default `0`).
 - `--split`: Dataset split for calibration (`train`, `val`, `all`, default `all`).
 - `--val-split`: Validation split ratio (ignored when `--split all`, default `0.0`).
-- `--batch-size`: Calibration batch size (default `64`).
+- `--batch-size`: Calibration batch size (default `1`).
 - `--calib-steps`: Number of calibration steps (default `32`).
+- `--calib-algorithm`: Calibration algorithm (default `kl`; examples: `minmax`, `mse`, `percentile`).
+- `--int16-op-pattern`: Regex pattern to force matched ops to int16 (repeatable).
 - `--onnx-model`: Path to the input ONNX model (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx`).
 - `--espdl-model`: Path to the output `.espdl` file (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl`).
 - `--target`: Quantize target type (`c`, `esp32s3`, `esp32p4`, default `esp32s3`).

@@ -228,3 +228,7 @@ saved_model/
 *.jpeg
 *.JPG
 split_list.csv
+*.espdl
+*.info
+*.json
+*.npy
