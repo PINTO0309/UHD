@@ -176,21 +176,22 @@ gh release download onnx -R PINTO0309/UHD
     bh = anchor_h*softplus(th)*wh_scale
     boxes = (cx±bw/2, cy±bh/2)
     ```
+  - ONNX
 
-  |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
-  |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-  |R|0.13 M|0.01 G|0.22382|0.34 ms|863 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
-  |Y|0.29 M|0.03 G|0.29606|0.38 ms|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
-  |Z|0.51 M|0.05 G|0.36843|0.43 ms|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
-  |A|0.78 M|0.08 G|0.42872| ms|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
-  |F| M| G|| ms| MB|||||
-  |P| M| G|| ms| MB|||||
-  |N| M| G|| ms| MB|||||
-  |T| M| G|| ms| MB|||||
-  |S| M| G|| ms| MB|||||
-  |C| M| G|| ms| MB|||||
-  |M| M| G|| ms| MB|||||
-  |L|30.92 M|3.44 G|0.58642|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
+    |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
+    |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+    |R|0.13 M|0.01 G|0.22382|0.34 ms|863 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
+    |Y|0.29 M|0.03 G|0.29606|0.38 ms|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
+    |Z|0.51 M|0.05 G|0.36843|0.43 ms|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
+    |A|0.78 M|0.08 G|0.42872| ms|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
+    |F| M| G|| ms| MB|||||
+    |P| M| G|| ms| MB|||||
+    |N| M| G|| ms| MB|||||
+    |T| M| G|| ms| MB|||||
+    |S| M| G|| ms| MB|||||
+    |C| M| G|| ms| MB|||||
+    |M| M| G|| ms| MB|||||
+    |L|30.92 M|3.44 G|0.58642|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
 
 ## Inference
 
