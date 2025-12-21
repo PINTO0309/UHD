@@ -457,7 +457,39 @@ class UltraTinyODHead(nn.Module):
             bias=True,
         )
 
+        perm = self._build_raw_map_perm()
+        self.register_buffer("raw_map_perm", perm, persistent=False)
+
         self.reset_output_bias()
+
+    def _build_raw_map_perm(self) -> torch.Tensor:
+        """Build channel permutation to interleave anchor outputs without 5D reshapes."""
+        a = int(self.num_anchors)
+        nc = int(self.nc)
+        perm = []
+        if self.has_quality:
+            base_box = 0
+            base_obj = a * 4
+            base_quality = base_obj + a
+            base_cls = base_quality + a
+            for anchor in range(a):
+                base_box_anchor = base_box + anchor * 4
+                perm.extend([base_box_anchor + i for i in range(4)])
+                perm.append(base_obj + anchor)
+                perm.append(base_quality + anchor)
+                base_cls_anchor = base_cls + anchor * nc
+                perm.extend([base_cls_anchor + i for i in range(nc)])
+        else:
+            base_box = 0
+            base_obj = a * 4
+            base_cls = base_obj + a
+            for anchor in range(a):
+                base_box_anchor = base_box + anchor * 4
+                perm.extend([base_box_anchor + i for i in range(4)])
+                perm.append(base_obj + anchor)
+                base_cls_anchor = base_cls + anchor * nc
+                perm.extend([base_cls_anchor + i for i in range(nc)])
+        return torch.tensor(perm, dtype=torch.long)
 
     def set_anchors(self, anchors: torch.Tensor) -> None:
         """
@@ -517,6 +549,7 @@ class UltraTinyODHead(nn.Module):
             self.reset_output_bias()
             if not self.use_improved_head:
                 self.wh_scale = torch.ones(self.num_anchors, 2, device=anchor_tensor.device)
+            self.raw_map_perm = self._build_raw_map_perm().to(anchor_tensor.device)
         self.grid = None
 
     def reset_output_bias(self, p_obj: float = 0.01, p_cls: float = 0.01) -> None:
@@ -578,10 +611,10 @@ class UltraTinyODHead(nn.Module):
             box_feat = self.box_tower(x)
         else:
             box_feat = self.box_conv(x)
-        box = self.box_out(box_feat).view(b, self.num_anchors, 4, h, w)
+        box = self.box_out(box_feat)
         # obj ブランチ
         obj = self.obj_conv(x)
-        obj = self.obj_out(obj).view(b, self.num_anchors, 1, h, w)
+        obj = self.obj_out(obj)
         # quality ブランチ
         quality = None
         if self.has_quality:
@@ -589,21 +622,21 @@ class UltraTinyODHead(nn.Module):
                 quality_feat = self.quality_tower(x)
             else:
                 quality_feat = self.quality_conv(x)
-            quality = self.quality_out(quality_feat).view(b, self.num_anchors, 1, h, w)
+            quality = self.quality_out(quality_feat)
         # cls ブランチ
         if self.use_iou_aware_head:
             cls_feat = self.cls_tower(x)
         else:
             cls_feat = self.cls_reduce(x)
             cls_feat = self.cls_conv(cls_feat)
-        cls = self.cls_out(cls_feat).view(b, self.num_anchors, self.nc, h, w)
+        cls = self.cls_out(cls_feat)
 
         # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
         if self.has_quality and quality is not None:
-            pred = torch.cat([box, obj, quality, cls], dim=2)
+            pred = torch.cat([box, obj, quality, cls], dim=1)
         else:
-            pred = torch.cat([box, obj, cls], dim=2)
-        raw_map = pred.view(b, self.num_anchors * self.no, h, w)
+            pred = torch.cat([box, obj, cls], dim=1)
+        raw_map = pred.index_select(1, self.raw_map_perm)
 
         if not decode:
             return raw_map, None
