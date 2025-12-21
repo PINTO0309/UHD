@@ -207,10 +207,10 @@ gh release download onnx -R PINTO0309/UHD
 
 ## Inference
 
-<details><summary>use-improved-head</summary>
-
 > [!CAUTION]
 > If you preprocess your images and resize them to 64x64 with OpenCV or similar, use `Nearest` mode.
+
+<details><summary>Click to expand</summary>
 
 ```bash
 usage: demo_uhd.py
