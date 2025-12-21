@@ -1913,6 +1913,20 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
 --int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
 --int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv"
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_yuv422 \
+--onnx-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
+--espdl-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern "/model/head/context_res/context_res.0/dw/conv/Conv" \
+--int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
+--int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv" \
+--int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
+--int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv"
 ```
 
 Notes:
