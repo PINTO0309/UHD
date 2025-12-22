@@ -191,7 +191,7 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.07 M|0.34 G|0.57338|0.91 ms|12.3 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
     |L|30.92 M|3.44 G|0.58642|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
 
-  - Input image 480x360 -> OpenCV INTER_NEAREST -> YUV422 (packed: YUY2/YUYV) -> 64x64
+  - Input image 480x360 -> OpenCV INTER_NEAREST -> 64x64 -> YUV422 (packed: YUY2/YUYV)
 
     <img width="64" height="64" alt="resized_64x64_nearest" src="https://github.com/user-attachments/assets/fd4d0ee3-1d6a-4819-a324-05f406de999c" />
 
