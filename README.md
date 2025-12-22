@@ -169,7 +169,7 @@ gh release download onnx -R PINTO0309/UHD
 
     https://github.com/PINTO0309/UHD/blob/e0bbfe69afa0da4f83cf1f09b530a500bcd2d685/demo_uhd.py#L203-L301
 
-    score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)
+    score = sigmoid(obj) * (sigmoid(quality)) * sigmoid(cls)
     cx = (sigmoid(tx)+gx)/w
     cy = (sigmoid(ty)+gy)/h
     bw = anchor_w*softplus(tw)*wh_scale
