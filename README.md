@@ -193,7 +193,9 @@ gh release download onnx -R PINTO0309/UHD
 
   - Input image 480x360 -> OpenCV INTER_NEAREST -> 64x64 -> YUV422 (packed: YUY2/YUYV)
 
-    <img width="64" height="64" alt="resized_64x64_nearest" src="https://github.com/user-attachments/assets/fd4d0ee3-1d6a-4819-a324-05f406de999c" />
+    |100%|800% zoom|
+    |:-:|:-:|
+    |<img width="64" height="64" alt="resized_64x64_nearest" src="https://github.com/user-attachments/assets/fd4d0ee3-1d6a-4819-a324-05f406de999c" />|<img width="515" height="515" alt="image" src="https://github.com/user-attachments/assets/ec62913a-236b-4c94-8ce7-e20ff67b69f8" />|
 
   - `Y` detection sample
 
