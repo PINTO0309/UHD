@@ -193,6 +193,10 @@ gh release download onnx -R PINTO0309/UHD
     |M| M| G|| ms| MB|||||
     |L|30.92 M|3.44 G|0.58642|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_yuv422_distill_dynamic_nopost.onnx)|
 
+  - `Y` detection sample
+
+    <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/fa2ee106-4208-492e-a2be-4ecc91281129" />
+
   - `F` detection sample
 
     <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/f759800b-f70b-43a9-b7aa-4ac0650b37ec" />
