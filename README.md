@@ -203,6 +203,10 @@ gh release download onnx -R PINTO0309/UHD
 
     <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/c8a75dbd-2956-4de1-b42a-8d381f20dc07" />
 
+  - `S` detection sample
+
+    <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/9c01234d-6aab-4815-bd33-688effdc6c3a" />
+
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
   
     **I don't own an ESP32, so I haven't checked its operation.**
