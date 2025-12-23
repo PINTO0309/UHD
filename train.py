@@ -24,7 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
-from uhd.resize import YUV422_RESIZE_MODE, normalize_resize_mode
+from uhd.resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode
 
 
 class ModelEma:
@@ -87,7 +87,14 @@ def parse_args():
     resize_group = parser.add_mutually_exclusive_group()
     resize_group.add_argument(
         "--resize-mode",
-        choices=["torch_bilinear", "torch_nearest", "opencv_inter_linear", "opencv_inter_nearest", "opencv_inter_nearest_yuv422"],
+        choices=[
+            "torch_bilinear",
+            "torch_nearest",
+            "opencv_inter_linear",
+            "opencv_inter_nearest",
+            "opencv_inter_nearest_y",
+            "opencv_inter_nearest_yuv422",
+        ],
         dest="resize_mode",
         help="Resize mode used during training preprocessing.",
     )
@@ -118,6 +125,13 @@ def parse_args():
         action="store_const",
         const="opencv_inter_nearest",
         help="Shortcut for --resize-mode opencv_inter_nearest.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_nearest_y",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_nearest_y",
+        help="Shortcut for --resize-mode opencv_inter_nearest_y.",
     )
     resize_group.add_argument(
         "--opencv_inter_nearest_yuv422",
@@ -1618,9 +1632,14 @@ def main():
             f.write(existing_log)
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
-    input_channels = 2 if resize_mode == YUV422_RESIZE_MODE else 3
+    if resize_mode == YUV422_RESIZE_MODE:
+        input_channels = 2
+    elif resize_mode == Y_ONLY_RESIZE_MODE:
+        input_channels = 1
+    else:
+        input_channels = 3
     if input_channels != 3 and teacher_backbone:
-        raise ValueError("teacher-backbone requires 3-channel RGB input; disable it when using opencv_inter_nearest_yuv422.")
+        raise ValueError(f"teacher-backbone requires 3-channel RGB input; disable it when using {resize_mode}.")
 
     train_ds, val_ds = make_datasets(args, class_ids, aug_cfg, resize_mode=resize_mode)
     anchors_tensor = None

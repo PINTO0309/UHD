@@ -11,8 +11,10 @@ VALID_RESIZE_MODES = {
     "torch_nearest",
     "opencv_inter_linear",
     "opencv_inter_nearest",
+    "opencv_inter_nearest_y",
     "opencv_inter_nearest_yuv422",
 }
+Y_ONLY_RESIZE_MODE = "opencv_inter_nearest_y"
 YUV422_RESIZE_MODE = "opencv_inter_nearest_yuv422"
 
 
@@ -30,6 +32,10 @@ def is_yuv422_mode(mode: str) -> bool:
     return normalize_resize_mode(mode) == YUV422_RESIZE_MODE
 
 
+def is_y_only_mode(mode: str) -> bool:
+    return normalize_resize_mode(mode) == Y_ONLY_RESIZE_MODE
+
+
 def rgb_to_yuyv422(img: np.ndarray) -> np.ndarray:
     """Convert RGB float image [0,1] to YUYV422 packed 2-channel float [0,1] (Y, UV interleaved by x parity)."""
     if img.ndim != 3 or img.shape[2] != 3:
@@ -43,6 +49,17 @@ def rgb_to_yuyv422(img: np.ndarray) -> np.ndarray:
     return yuyv.astype(np.float32) / 255.0
 
 
+def rgb_to_y(img: np.ndarray) -> np.ndarray:
+    """Convert RGB float image [0,1] to a single-channel Y (luma) image [0,1]."""
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"Expected HWC RGB image, got shape {img.shape}")
+    img_u8 = np.clip(img * 255.0, 0.0, 255.0).astype(np.uint8)
+    img_u8 = np.ascontiguousarray(img_u8)
+    yuv = cv2.cvtColor(img_u8, cv2.COLOR_RGB2YUV)
+    y = yuv[..., 0:1]
+    return y.astype(np.float32) / 255.0
+
+
 def resize_input(x: torch.Tensor, size: Tuple[int, int], mode: str) -> torch.Tensor:
     """
     x    : torch.Tensor (N, C, H, W), float32
@@ -52,11 +69,14 @@ def resize_input(x: torch.Tensor, size: Tuple[int, int], mode: str) -> torch.Ten
         - torch_nearest
         - opencv_inter_linear
         - opencv_inter_nearest
+        - opencv_inter_nearest_y (handled in resize_image_numpy)
         - opencv_inter_nearest_yuv422 (handled in resize_image_numpy)
     """
 
     out_h, out_w = size
     mode = normalize_resize_mode(mode)
+    if mode == Y_ONLY_RESIZE_MODE:
+        mode = "opencv_inter_nearest"
 
     # --------------------------------------------------
     # Torch bilinear (ONNX linear + half_pixel 正解系)
@@ -138,6 +158,11 @@ def resize_image_numpy(img: np.ndarray, size: Tuple[int, int], mode: str) -> np.
     if mode == YUV422_RESIZE_MODE:
         resized = resize_image_numpy(img, size=size, mode="opencv_inter_nearest")
         return rgb_to_yuyv422(resized)
+    if mode == Y_ONLY_RESIZE_MODE:
+        resized = resize_image_numpy(img, size=size, mode="opencv_inter_nearest")
+        if resized.shape[2] == 1:
+            return resized
+        return rgb_to_y(resized)
     tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float()
     resized = resize_input(tensor, size=size, mode=mode)
     out = resized.squeeze(0).permute(1, 2, 0).cpu().numpy()

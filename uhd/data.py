@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
-from .resize import YUV422_RESIZE_MODE, normalize_resize_mode, resize_image_numpy, rgb_to_yuyv422
+from .resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, resize_image_numpy, rgb_to_y, rgb_to_yuyv422
 
 
 def _resolve_path(entry: str, image_dir: str, list_path: Optional[str]) -> Optional[str]:
@@ -75,8 +75,12 @@ class YoloDataset(Dataset):
         else:
             self.img_h = self.img_w = int(img_size)
         self.resize_mode_raw = normalize_resize_mode(resize_mode)
+        self.output_y_only = self.resize_mode_raw == Y_ONLY_RESIZE_MODE
         self.output_yuv422 = self.resize_mode_raw == YUV422_RESIZE_MODE
-        self.resize_mode = "opencv_inter_nearest" if self.output_yuv422 else self.resize_mode_raw
+        if self.output_yuv422 or self.output_y_only:
+            self.resize_mode = "opencv_inter_nearest"
+        else:
+            self.resize_mode = self.resize_mode_raw
         self.augment = augment
         self.class_ids = list(class_ids)
         if not self.class_ids:
@@ -186,6 +190,8 @@ class YoloDataset(Dataset):
 
             if self.output_yuv422:
                 img_np = rgb_to_yuyv422(img_np)
+            elif self.output_y_only:
+                img_np = rgb_to_y(img_np)
 
             img_np = np.ascontiguousarray(img_np)
             img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
