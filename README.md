@@ -229,6 +229,33 @@ gh release download onnx -R PINTO0309/UHD
     |T|2.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl_p4.tar.gz)|
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl_p4.tar.gz)|
 
+- `opencv_inter_nearest_y` + Optimized for Y (Luminance) only + Suitable for quantization
+
+  - ONNX
+
+    |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
+    |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+    |N|1.98 M|0.22 G||0.70 ms|8.0 MB|||||
+    |T|4.40 M|0.49 G||1.18 ms|17.7 MB|||||
+    |S|7.79 M|0.87 G||1.97 ms|31.2 MB|||||
+    |C|12.13 M|1.35 G||2.74 ms|48.6 MB|||||
+    |M|17.44 M|1.94 G||3.57 ms|69.8 MB|||||
+    |L|30.92 M|3.44 G|0.58164|7.16 ms|123.7 MB|||||
+
+  - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
+
+    |Var|ESPDL size|static w/o post<br>s3|static w/o post<br>p4|
+    |:-:|:-:|:-:|:-:|
+    |R|222.8 KB|||
+    |Y|389.0 KB|||
+    |Z|617.4 KB|||
+    |A|911.6 KB|||
+    |F|1.2 MB|||
+    |P|1.6 MB|||
+    |N|2.1 MB|||
+    |T|2.6 MB|||
+    |S|3.2 MB|||
+
 ## Inference
 
 > [!CAUTION]
