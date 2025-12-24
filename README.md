@@ -1605,6 +1605,13 @@ uv run python train.py \
 | `--train-split` | Fraction of data used for training. | `0.8` |
 | `--val-split` | Fraction of data used for validation. | `0.2` |
 | `--img-size` | Input size `HxW` (e.g., `64x64`). | `64x64` |
+| `--resize-mode` | Resize mode for training preprocessing: `torch_bilinear`, `torch_nearest`, `opencv_inter_linear`, `opencv_inter_nearest`, `opencv_inter_nearest_y`, `opencv_inter_nearest_yuv422`. | `torch_bilinear` |
+| `--torch_bilinear` | Shortcut for `--resize-mode torch_bilinear`. | `False` |
+| `--torch_nearest` | Shortcut for `--resize-mode torch_nearest`. | `False` |
+| `--opencv_inter_linear` | Shortcut for `--resize-mode opencv_inter_linear`. | `False` |
+| `--opencv_inter_nearest` | Shortcut for `--resize-mode opencv_inter_nearest`. | `False` |
+| `--opencv_inter_nearest_y` | Shortcut for `--resize-mode opencv_inter_nearest_y`. | `False` |
+| `--opencv_inter_nearest_yuv422` | Shortcut for `--resize-mode opencv_inter_nearest_yuv422`. | `False` |
 | `--exp-name` | Experiment name; logs saved under `runs/<exp-name>`. | `default` |
 | `--batch-size` | Batch size. | `64` |
 | `--epochs` | Number of epochs. | `100` |
@@ -1612,7 +1619,10 @@ uv run python train.py \
 | `--ckpt` | Initialize weights from checkpoint (no optimizer state). | `None` |
 | `--ckpt-non-strict` | Load `--ckpt` with `strict=False` (ignore missing/unexpected keys). | `False` |
 | `--val-only` | Run validation only with `--ckpt` or `--resume` weights and exit. | `False` |
+| `--val-count` | Limit number of validation images when using `--val-only`. | `None` |
 | `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
+| `--use-iou-aware-head` | UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers. | `False` |
+| `--quality-power` | Exponent for quality score when using IoU-aware head scoring. | `1.0` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
@@ -1633,6 +1643,7 @@ uv run python train.py \
 | `--distill-feat` | Feature-map distillation weight (CNN only). | `0.0` |
 | `--lr` | Learning rate. | `0.001` |
 | `--weight-decay` | Weight decay. | `0.0001` |
+| `--optimizer` | Optimizer (`adamw` or `sgd`). | `adamw` |
 | `--grad-clip-norm` | Global gradient norm clip; set `0` to disable. | `5.0` |
 | `--num-workers` | DataLoader workers. | `8` |
 | `--device` | Device: `cuda` or `cpu`. | `cuda` if available |
@@ -1661,6 +1672,13 @@ uv run python train.py \
 | `--backbone-fpn` | Enable a tiny FPN fusion inside custom backbones (ultratinyresnet). | `False` |
 | `--backbone-out-stride` | Override custom backbone output stride (e.g., `8` or `16`). | `None` |
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
+| `--utod-residual` | Enable residual skips inside the UltraTinyOD backbone. | `False` |
+| `--utod-head-ese` | UltraTinyOD head: apply lightweight eSE on shared features. | `False` |
+| `--utod-context-rfb` | UltraTinyOD head: add a receptive-field block (dilated + wide depthwise) before prediction layers. | `False` |
+| `--utod-context-dilation` | Dilation used in UltraTinyOD receptive-field block (only when `--utod-context-rfb`). | `2` |
+| `--utod-large-obj-branch` | UltraTinyOD head: add a downsampled large-object refinement branch (no FPN). | `False` |
+| `--utod-large-obj-depth` | Number of depthwise blocks in the large-object branch (only when `--utod-large-obj-branch`). | `2` |
+| `--utod-large-obj-ch-scale` | Channel scale for the large-object branch (relative to head channels). | `1.0` |
 | `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
 | `--anchors` | Anchor sizes as normalized `w,h` pairs (space separated). | `""` |
