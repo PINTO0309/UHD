@@ -235,11 +235,15 @@ gh release download onnx -R PINTO0309/UHD
 
     |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+    |R|0.13 M|0.01 G||0.34 ms|863 KB|||||
+    |Y|0.29 M|0.03 G||0.38 ms|1.2 MB|||||
+    |Z|0.51 M|0.05 G||0.43 ms|2.1 MB|||||
+    |A|0.78 M|0.08 G||0.48 ms|3.2 MB|||||
+    |F|1.12 M|0.12 G||0.54 ms|4.5 MB|||||
+    |P|1.52 M|0.17 G||0.63 ms|6.1 MB|||||
     |N|1.98 M|0.22 G||0.70 ms|8.0 MB|||||
-    |T|4.40 M|0.49 G||1.18 ms|17.7 MB|||||
-    |S|7.79 M|0.87 G||1.97 ms|31.2 MB|||||
-    |C|12.13 M|1.35 G||2.74 ms|48.6 MB|||||
-    |M|17.44 M|1.94 G||3.57 ms|69.8 MB|||||
+    |T|2.49 M|0.28 G||0.83 ms|10.0 MB|||||
+    |S|3.07 M|0.34 G||0.91 ms|12.3 MB|||||
     |L|30.92 M|3.44 G|0.58164|7.16 ms|123.7 MB|||||
 
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
