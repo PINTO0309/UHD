@@ -2036,6 +2036,7 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 | sort -u \
 | sed 's|.*|--int16-op-pattern "&" \\|'
 
+########## Step.1 outputs
 --int16-op-pattern "/model/backbone/block1/dw/conv/Conv" \
 --int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
 --int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
