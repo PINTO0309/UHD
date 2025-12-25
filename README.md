@@ -130,7 +130,7 @@ gh release download onnx -R PINTO0309/UHD
 
   </details>
 
-- `opencv_inter_nearest` + Optimized for OpenCV downsampling + Suitable for quantization
+- `opencv_inter_nearest` + Optimized for OpenCV RGB downsampling + Suitable for quantization
 
   |Var|Param|FLOPs|@0.5|Corei9<br>CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
