@@ -132,7 +132,7 @@ gh release download onnx -R PINTO0309/UHD
 
   |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
   |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-  |R|0.13 M|0.01 G|0.21230|0.34 ms|863 KB|||||
+  |R|0.13 M|0.01 G|0.21230|0.34 ms|863 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_dynamic_nopost.onnx)|
   |Y|0.29 M|0.03 G|0.28664|0.38 ms|1.2 MB|||||
   |Z|0.51 M|0.05 G|0.32722|0.43 ms|2.1 MB|||||
   |A|0.78 M|0.08 G|0.43661|0.48 ms|3.2 MB|||||
