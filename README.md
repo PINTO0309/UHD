@@ -3,6 +3,8 @@
 
 Ultra-lightweight human detection. The number of parameters does not correlate to inference speed. For limited use cases, an input image resolution of 64x64 is sufficient. High-level object detection architectures such as YOLO are overkill.
 
+**Please note that the dataset used to train this model is a custom-created, ultra-high-quality dataset derived from MS-COCO. Therefore, a simple comparison with the Val mAP values ​​of other object detection models is completely meaningless. In particular, please note that the mAP values ​​of other MS-COCO-based models are unnecessarily high and do not accurately assess actual performance.**
+
 This model is an experimental implementation and is not suitable for real-time inference using a USB camera, etc.
 
 https://github.com/user-attachments/assets/afca301a-9fe6-4ecd-af01-6bacbfa88e52
