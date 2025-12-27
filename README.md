@@ -1646,8 +1646,13 @@ uv run python train.py \
 --conf-thresh 0.15 \
 --ckpt runs/ultratinyod_res_anc8_w256_64x64_lr0.0003/best_utod_0297_map_0.44299.pt \
 --val-only \
---use-ema
+--use-ema \
+--with-heatmap-mean
 ```
+
+When `--with-heatmap-mean` or `--with-heatmap-sum` is set, validation sample outputs are written under
+`runs/<exp-name>/val_only/<sample_name>/`, containing the usual detection PNG plus per-layer heatmap PNGs
+overlayed on the detection image.
 
 </details>
 
@@ -1679,6 +1684,8 @@ uv run python train.py \
 | `--ckpt-non-strict` | Load `--ckpt` with `strict=False` (ignore missing/unexpected keys). | `False` |
 | `--val-only` | Run validation only with `--ckpt` or `--resume` weights and exit. | `False` |
 | `--val-count` | Limit number of validation images when using `--val-only`. | `None` |
+| `--with-heatmap-mean` | Save per-layer heatmaps using channel mean and overlay them on detection images. | `False` |
+| `--with-heatmap-sum` | Save per-layer heatmaps using channel sum and overlay them on detection images. | `False` |
 | `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
 | `--use-iou-aware-head` | UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers. | `False` |
 | `--quality-power` | Exponent for quality score when using IoU-aware head scoring. | `1.0` |

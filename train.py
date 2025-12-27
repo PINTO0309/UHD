@@ -208,7 +208,21 @@ def parse_args():
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument("--val-only", action="store_true", help="Run validation only using --ckpt or --resume weights and exit.")
     parser.add_argument("--val-count", type=int, default=None, help="Limit number of validation images when using --val-only.")
-    parser.add_argument("--with-heatmap", action="store_true", help="Save per-layer heatmap visualizations for sampled validation images.")
+    heatmap_group = parser.add_mutually_exclusive_group()
+    heatmap_group.add_argument(
+        "--with-heatmap-mean",
+        dest="heatmap_mode",
+        action="store_const",
+        const="mean",
+        help="Save per-layer heatmap visualizations (channel mean) for sampled validation images.",
+    )
+    heatmap_group.add_argument(
+        "--with-heatmap-sum",
+        dest="heatmap_mode",
+        action="store_const",
+        const="sum",
+        help="Save per-layer heatmap visualizations (channel sum) for sampled validation images.",
+    )
     parser.add_argument(
         "--use-improved-head",
         action="store_true",
@@ -1134,15 +1148,21 @@ def _sanitize_layer_name(name: str) -> str:
     return safe
 
 
-def _tensor_to_heatmap_image(tensor: torch.Tensor, out_size: Optional[Tuple[int, int]] = None) -> Optional[Image.Image]:
+def _tensor_to_heatmap_image(
+    tensor: torch.Tensor,
+    out_size: Optional[Tuple[int, int]] = None,
+    reduction: str = "mean",
+) -> Optional[Image.Image]:
     if not isinstance(tensor, torch.Tensor):
         return None
     t = tensor.detach().float()
     if t.dim() == 3:
+        if reduction not in ("mean", "sum"):
+            reduction = "mean"
         if t.shape[2] <= 4 and t.shape[0] > 4 and t.shape[1] > 4:
-            t = t.mean(dim=2)
+            t = t.mean(dim=2) if reduction == "mean" else t.sum(dim=2)
         else:
-            t = t.mean(dim=0)
+            t = t.mean(dim=0) if reduction == "mean" else t.sum(dim=0)
     elif t.dim() == 2:
         pass
     else:
@@ -1224,7 +1244,7 @@ def validate(
     sample_y_only: bool = False,
     sample_y_tri: bool = False,
     sample_y_bin: bool = False,
-    with_heatmap: bool = False,
+    heatmap_mode: Optional[str] = None,
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
@@ -1279,7 +1299,7 @@ def validate(
         if score_mode is None and hasattr(model.head, "score_mode"):
             score_mode = model.head.score_mode
         quality_power = getattr(model.head, "quality_power", quality_power)
-    enable_heatmap = bool(with_heatmap and sample_dir)
+    enable_heatmap = bool(heatmap_mode and sample_dir)
     heatmap_ctx = None
     heatmap_handles = []
     if enable_heatmap:
@@ -1342,7 +1362,11 @@ def validate(
         for layer_name, layer_tensor in heatmap_ctx["outputs"].items():
             if local_index >= layer_tensor.shape[0]:
                 continue
-            heatmap = _tensor_to_heatmap_image(layer_tensor[local_index], out_size=out_size)
+            heatmap = _tensor_to_heatmap_image(
+                layer_tensor[local_index],
+                out_size=out_size,
+                reduction=heatmap_mode or "mean",
+            )
             if heatmap is None:
                 continue
             if base_im is not None and base_im.size == heatmap.size:
@@ -2209,7 +2233,7 @@ def main():
             sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
             sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
             sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
-            with_heatmap=args.with_heatmap,
+            heatmap_mode=args.heatmap_mode,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
@@ -2302,7 +2326,7 @@ def main():
                 sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
                 sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
                 sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
-                with_heatmap=args.with_heatmap,
+                heatmap_mode=args.heatmap_mode,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,
