@@ -254,9 +254,6 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl_p4.tar.gz)|
 
 - `opencv_inter_nearest_y` + Optimized for Y (Luminance) only + Suitable for quantization
-  - `opencv_inter_nearest_y_bin` uses a fixed Y threshold (0.5) to binarize to 0.0/1.0.
-  - `opencv_inter_nearest_y_tri` uses fixed Y thresholds (1/3, 2/3) to quantize to 3 levels: 0.0, 0.5, 1.0.
-
   - ONNX
 
     |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
@@ -287,12 +284,14 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_y_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_y_static_nopost_espdl_p4.tar.gz)|
 
 - `opencv_inter_nearest_y_tri` + Optimized for Y (Luminance) only + Y ternarization + Suitable for quantization
+  - `opencv_inter_nearest_y_tri` uses fixed Y thresholds (1/3, 2/3) to quantize to 3 levels: 0.0, 0.5, 1.0.
 
   **WIP**
 
   <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/adebb29e-d310-4453-acde-ae88887ed4ef" />
 
 - `opencv_inter_nearest_y_bin` + Optimized for Y (Luminance) only + Y binarization + Suitable for quantization
+  - `opencv_inter_nearest_y_bin` uses a fixed Y threshold (0.5) to binarize to 0.0/1.0.
 
   **WIP**
 
