@@ -292,6 +292,8 @@ gh release download onnx -R PINTO0309/UHD
 
 - `opencv_inter_nearest_y_bin` + Optimized for Y (Luminance) only + Y binarization + Suitable for quantization
 
+  <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/973ca376-51c4-40bf-b9dc-aacec4bfdcf7" />
+
 ## Inference
 
 > [!CAUTION]
