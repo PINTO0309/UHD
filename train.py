@@ -24,7 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
-from uhd.resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, rgb_to_y
+from uhd.resize import Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, rgb_to_y, y_to_tri
 
 
 class ModelEma:
@@ -93,6 +93,7 @@ def parse_args():
             "opencv_inter_linear",
             "opencv_inter_nearest",
             "opencv_inter_nearest_y",
+            "opencv_inter_nearest_y_tri",
             "opencv_inter_nearest_yuv422",
         ],
         dest="resize_mode",
@@ -132,6 +133,13 @@ def parse_args():
         action="store_const",
         const="opencv_inter_nearest_y",
         help="Shortcut for --resize-mode opencv_inter_nearest_y.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_nearest_y_tri",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_nearest_y_tri",
+        help="Shortcut for --resize-mode opencv_inter_nearest_y_tri.",
     )
     resize_group.add_argument(
         "--opencv_inter_nearest_yuv422",
@@ -1093,6 +1101,7 @@ def validate(
     class_ids = None,
     sample_limit: int = 10,
     sample_y_only: bool = False,
+    sample_y_tri: bool = False,
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
@@ -1158,8 +1167,10 @@ def validate(
             if sample_y_only:
                 im_np = np.asarray(im, dtype=np.float32) / 255.0
                 y = rgb_to_y(im_np)
+                if sample_y_tri:
+                    y = y_to_tri(y)
                 y_u8 = np.clip(y[..., 0] * 255.0, 0.0, 255.0).astype(np.uint8)
-                im = Image.fromarray(y_u8, mode="L")
+                im = Image.fromarray(y_u8, mode="L").convert("RGB")
             draw = ImageDraw.Draw(im)
             w, h = im.size
             for score, cls, box in pred_list:
@@ -1178,8 +1189,6 @@ def validate(
                 if x2 <= x1 or y2 <= y1:
                     continue
                 color = colors[cls % len(colors)]
-                if sample_y_only:
-                    color = 255
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
                 draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
             im.save(save_path)
@@ -1642,7 +1651,7 @@ def main():
     use_amp = bool(args.use_amp and device.type == "cuda")
     if resize_mode == YUV422_RESIZE_MODE:
         input_channels = 2
-    elif resize_mode == Y_ONLY_RESIZE_MODE:
+    elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE):
         input_channels = 1
     else:
         input_channels = 3
@@ -2012,7 +2021,8 @@ def main():
             sample_dir=sample_dir,
             class_ids=class_ids,
             sample_limit=val_sample_limit,
-            sample_y_only=resize_mode == Y_ONLY_RESIZE_MODE,
+            sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE),
+            sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
@@ -2102,7 +2112,8 @@ def main():
                 sample_dir=epoch_dir,
                 class_ids=class_ids,
                 sample_limit=10,
-                sample_y_only=resize_mode == Y_ONLY_RESIZE_MODE,
+                sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE),
+                sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,

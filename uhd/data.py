@@ -9,7 +9,16 @@ import torch
 from torch.utils.data import Dataset
 
 from .augment import build_augmentation_pipeline
-from .resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, resize_image_numpy, rgb_to_y, rgb_to_yuyv422
+from .resize import (
+    Y_ONLY_RESIZE_MODE,
+    Y_TRI_RESIZE_MODE,
+    YUV422_RESIZE_MODE,
+    normalize_resize_mode,
+    resize_image_numpy,
+    rgb_to_y,
+    rgb_to_yuyv422,
+    y_to_tri,
+)
 
 
 def _resolve_path(entry: str, image_dir: str, list_path: Optional[str]) -> Optional[str]:
@@ -76,8 +85,9 @@ class YoloDataset(Dataset):
             self.img_h = self.img_w = int(img_size)
         self.resize_mode_raw = normalize_resize_mode(resize_mode)
         self.output_y_only = self.resize_mode_raw == Y_ONLY_RESIZE_MODE
+        self.output_y_tri = self.resize_mode_raw == Y_TRI_RESIZE_MODE
         self.output_yuv422 = self.resize_mode_raw == YUV422_RESIZE_MODE
-        if self.output_yuv422 or self.output_y_only:
+        if self.output_yuv422 or self.output_y_only or self.output_y_tri:
             self.resize_mode = "opencv_inter_nearest"
         else:
             self.resize_mode = self.resize_mode_raw
@@ -190,6 +200,8 @@ class YoloDataset(Dataset):
 
             if self.output_yuv422:
                 img_np = rgb_to_yuyv422(img_np)
+            elif self.output_y_tri:
+                img_np = y_to_tri(rgb_to_y(img_np))
             elif self.output_y_only:
                 img_np = rgb_to_y(img_np)
 

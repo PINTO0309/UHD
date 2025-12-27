@@ -254,6 +254,7 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl_p4.tar.gz)|
 
 - `opencv_inter_nearest_y` + Optimized for Y (Luminance) only + Suitable for quantization
+  - `opencv_inter_nearest_y_tri` uses fixed Y thresholds (1/3, 2/3) to quantize to 3 levels: 0.0, 0.5, 1.0.
 
   - ONNX
 
@@ -1660,12 +1661,13 @@ uv run python train.py \
 | `--train-split` | Fraction of data used for training. | `0.8` |
 | `--val-split` | Fraction of data used for validation. | `0.2` |
 | `--img-size` | Input size `HxW` (e.g., `64x64`). | `64x64` |
-| `--resize-mode` | Resize mode for training preprocessing: `torch_bilinear`, `torch_nearest`, `opencv_inter_linear`, `opencv_inter_nearest`, `opencv_inter_nearest_y`, `opencv_inter_nearest_yuv422`. | `torch_bilinear` |
+| `--resize-mode` | Resize mode for training preprocessing: `torch_bilinear`, `torch_nearest`, `opencv_inter_linear`, `opencv_inter_nearest`, `opencv_inter_nearest_y`, `opencv_inter_nearest_y_tri`, `opencv_inter_nearest_yuv422`. | `torch_bilinear` |
 | `--torch_bilinear` | Shortcut for `--resize-mode torch_bilinear`. | `False` |
 | `--torch_nearest` | Shortcut for `--resize-mode torch_nearest`. | `False` |
 | `--opencv_inter_linear` | Shortcut for `--resize-mode opencv_inter_linear`. | `False` |
 | `--opencv_inter_nearest` | Shortcut for `--resize-mode opencv_inter_nearest`. | `False` |
 | `--opencv_inter_nearest_y` | Shortcut for `--resize-mode opencv_inter_nearest_y`. | `False` |
+| `--opencv_inter_nearest_y_tri` | Shortcut for `--resize-mode opencv_inter_nearest_y_tri`. | `False` |
 | `--opencv_inter_nearest_yuv422` | Shortcut for `--resize-mode opencv_inter_nearest_yuv422`. | `False` |
 | `--exp-name` | Experiment name; logs saved under `runs/<exp-name>`. | `default` |
 | `--batch-size` | Batch size. | `64` |
