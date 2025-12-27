@@ -288,9 +288,13 @@ gh release download onnx -R PINTO0309/UHD
 
 - `opencv_inter_nearest_y_tri` + Optimized for Y (Luminance) only + Y ternarization + Suitable for quantization
 
+  **WIP**
+
   <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/adebb29e-d310-4453-acde-ae88887ed4ef" />
 
 - `opencv_inter_nearest_y_bin` + Optimized for Y (Luminance) only + Y binarization + Suitable for quantization
+
+  **WIP**
 
   <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/973ca376-51c4-40bf-b9dc-aacec4bfdcf7" />
 
