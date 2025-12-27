@@ -24,7 +24,16 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
-from uhd.resize import Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, rgb_to_y, y_to_tri
+from uhd.resize import (
+    Y_BIN_RESIZE_MODE,
+    Y_ONLY_RESIZE_MODE,
+    Y_TRI_RESIZE_MODE,
+    YUV422_RESIZE_MODE,
+    normalize_resize_mode,
+    rgb_to_y,
+    y_to_bin,
+    y_to_tri,
+)
 
 
 class ModelEma:
@@ -92,6 +101,7 @@ def parse_args():
             "torch_nearest",
             "opencv_inter_linear",
             "opencv_inter_nearest",
+            "opencv_inter_nearest_y_bin",
             "opencv_inter_nearest_y",
             "opencv_inter_nearest_y_tri",
             "opencv_inter_nearest_yuv422",
@@ -133,6 +143,13 @@ def parse_args():
         action="store_const",
         const="opencv_inter_nearest_y",
         help="Shortcut for --resize-mode opencv_inter_nearest_y.",
+    )
+    resize_group.add_argument(
+        "--opencv_inter_nearest_y_bin",
+        dest="resize_mode",
+        action="store_const",
+        const="opencv_inter_nearest_y_bin",
+        help="Shortcut for --resize-mode opencv_inter_nearest_y_bin.",
     )
     resize_group.add_argument(
         "--opencv_inter_nearest_y_tri",
@@ -1102,6 +1119,7 @@ def validate(
     sample_limit: int = 10,
     sample_y_only: bool = False,
     sample_y_tri: bool = False,
+    sample_y_bin: bool = False,
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
@@ -1169,6 +1187,8 @@ def validate(
                 y = rgb_to_y(im_np)
                 if sample_y_tri:
                     y = y_to_tri(y)
+                elif sample_y_bin:
+                    y = y_to_bin(y)
                 y_u8 = np.clip(y[..., 0] * 255.0, 0.0, 255.0).astype(np.uint8)
                 im = Image.fromarray(y_u8, mode="L").convert("RGB")
             draw = ImageDraw.Draw(im)
@@ -1651,7 +1671,7 @@ def main():
     use_amp = bool(args.use_amp and device.type == "cuda")
     if resize_mode == YUV422_RESIZE_MODE:
         input_channels = 2
-    elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE):
+    elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):
         input_channels = 1
     else:
         input_channels = 3
@@ -2021,8 +2041,9 @@ def main():
             sample_dir=sample_dir,
             class_ids=class_ids,
             sample_limit=val_sample_limit,
-            sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE),
+            sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
             sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
+            sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
@@ -2112,8 +2133,9 @@ def main():
                 sample_dir=epoch_dir,
                 class_ids=class_ids,
                 sample_limit=10,
-                sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE),
+                sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
                 sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
+                sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,

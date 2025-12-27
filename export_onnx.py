@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from uhd.ultratinyod import UltraTinyOD, UltraTinyODConfig
-from uhd.resize import Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode
+from uhd.resize import Y_BIN_RESIZE_MODE, Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -452,7 +452,7 @@ def main():
     if resize_mode == YUV422_RESIZE_MODE:
         input_channels = 2
         input_name = "input_yuv422"
-    elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE):
+    elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):
         input_channels = 1
         input_name = "input_y"
     else:

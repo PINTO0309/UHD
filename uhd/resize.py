@@ -11,13 +11,16 @@ VALID_RESIZE_MODES = {
     "torch_nearest",
     "opencv_inter_linear",
     "opencv_inter_nearest",
+    "opencv_inter_nearest_y_bin",
     "opencv_inter_nearest_y",
     "opencv_inter_nearest_y_tri",
     "opencv_inter_nearest_yuv422",
 }
+Y_BIN_RESIZE_MODE = "opencv_inter_nearest_y_bin"
 Y_ONLY_RESIZE_MODE = "opencv_inter_nearest_y"
 Y_TRI_RESIZE_MODE = "opencv_inter_nearest_y_tri"
 YUV422_RESIZE_MODE = "opencv_inter_nearest_yuv422"
+Y_BIN_THRESHOLD = 0.5
 Y_TRI_THRESHOLDS = (1.0 / 3.0, 2.0 / 3.0)
 
 
@@ -37,6 +40,10 @@ def is_yuv422_mode(mode: str) -> bool:
 
 def is_y_only_mode(mode: str) -> bool:
     return normalize_resize_mode(mode) == Y_ONLY_RESIZE_MODE
+
+
+def is_y_bin_mode(mode: str) -> bool:
+    return normalize_resize_mode(mode) == Y_BIN_RESIZE_MODE
 
 
 def is_y_tri_mode(mode: str) -> bool:
@@ -67,6 +74,16 @@ def rgb_to_y(img: np.ndarray) -> np.ndarray:
     return y.astype(np.float32) / 255.0
 
 
+def y_to_bin(img: np.ndarray, threshold: float = Y_BIN_THRESHOLD) -> np.ndarray:
+    """Binarize single-channel Y to 0.0/1.0 with a fixed threshold."""
+    if img.ndim != 3 or img.shape[2] != 1:
+        raise ValueError(f"Expected HWC single-channel Y image, got shape {img.shape}")
+    if not (0.0 <= threshold <= 1.0):
+        raise ValueError(f"Invalid binarization threshold: {threshold}")
+    y = np.clip(img, 0.0, 1.0)
+    return (y >= threshold).astype(np.float32)
+
+
 def y_to_tri(img: np.ndarray, thresholds: Tuple[float, float] = Y_TRI_THRESHOLDS) -> np.ndarray:
     """Quantize single-channel Y to 3 levels (0.0/0.5/1.0) with fixed thresholds."""
     if img.ndim != 3 or img.shape[2] != 1:
@@ -91,6 +108,7 @@ def resize_input(x: torch.Tensor, size: Tuple[int, int], mode: str) -> torch.Ten
         - torch_nearest
         - opencv_inter_linear
         - opencv_inter_nearest
+        - opencv_inter_nearest_y_bin (handled in resize_image_numpy)
         - opencv_inter_nearest_y (handled in resize_image_numpy)
         - opencv_inter_nearest_y_tri (handled in resize_image_numpy)
         - opencv_inter_nearest_yuv422 (handled in resize_image_numpy)
@@ -98,7 +116,7 @@ def resize_input(x: torch.Tensor, size: Tuple[int, int], mode: str) -> torch.Ten
 
     out_h, out_w = size
     mode = normalize_resize_mode(mode)
-    if mode in (Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE):
+    if mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):
         mode = "opencv_inter_nearest"
 
     # --------------------------------------------------
@@ -181,6 +199,11 @@ def resize_image_numpy(img: np.ndarray, size: Tuple[int, int], mode: str) -> np.
     if mode == YUV422_RESIZE_MODE:
         resized = resize_image_numpy(img, size=size, mode="opencv_inter_nearest")
         return rgb_to_yuyv422(resized)
+    if mode == Y_BIN_RESIZE_MODE:
+        resized = resize_image_numpy(img, size=size, mode="opencv_inter_nearest")
+        if resized.shape[2] != 1:
+            resized = rgb_to_y(resized)
+        return y_to_bin(resized)
     if mode == Y_ONLY_RESIZE_MODE:
         resized = resize_image_numpy(img, size=size, mode="opencv_inter_nearest")
         if resized.shape[2] == 1:
