@@ -286,6 +286,12 @@ gh release download onnx -R PINTO0309/UHD
     |T|2.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_y_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_y_static_nopost_espdl_p4.tar.gz)|
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_y_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_y_static_nopost_espdl_p4.tar.gz)|
 
+- `opencv_inter_nearest_y_tri` + Optimized for Y (Luminance) only + Y ternarization + Suitable for quantization
+
+  <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/adebb29e-d310-4453-acde-ae88887ed4ef" />
+
+- `opencv_inter_nearest_y_bin` + Optimized for Y (Luminance) only + Y binarization + Suitable for quantization
+
 ## Inference
 
 > [!CAUTION]
