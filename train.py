@@ -5,7 +5,7 @@ import os
 import random
 import math
 from copy import deepcopy
-from typing import Dict, Sequence, Optional
+from typing import Dict, Sequence, Optional, Tuple
 
 import numpy as np
 import torch
@@ -208,6 +208,7 @@ def parse_args():
     parser.add_argument("--coco-per-class", action="store_true", help="Log per-class COCO AP when COCO eval is enabled.")
     parser.add_argument("--val-only", action="store_true", help="Run validation only using --ckpt or --resume weights and exit.")
     parser.add_argument("--val-count", type=int, default=None, help="Limit number of validation images when using --val-only.")
+    parser.add_argument("--with-heatmap", action="store_true", help="Save per-layer heatmap visualizations for sampled validation images.")
     parser.add_argument(
         "--use-improved-head",
         action="store_true",
@@ -1104,6 +1105,109 @@ def train_one_epoch(
     return logs
 
 
+def _is_leaf_module(module: torch.nn.Module) -> bool:
+    for _ in module.children():
+        return False
+    return True
+
+
+def _flatten_output_tensors(output) -> Sequence[Tuple[str, torch.Tensor]]:
+    if isinstance(output, torch.Tensor):
+        return [("", output)]
+    if isinstance(output, (list, tuple)):
+        items = []
+        for idx, item in enumerate(output):
+            if isinstance(item, torch.Tensor):
+                items.append((f"_{idx}", item))
+        return items
+    if isinstance(output, dict):
+        items = []
+        for key, item in output.items():
+            if isinstance(item, torch.Tensor):
+                items.append((f"_{key}", item))
+        return items
+    return []
+
+
+def _sanitize_layer_name(name: str) -> str:
+    safe = name.replace(".", "_").replace("/", "_").replace("\\", "_").replace(":", "_")
+    return safe
+
+
+def _tensor_to_heatmap_image(tensor: torch.Tensor, out_size: Optional[Tuple[int, int]] = None) -> Optional[Image.Image]:
+    if not isinstance(tensor, torch.Tensor):
+        return None
+    t = tensor.detach().float()
+    if t.dim() == 3:
+        if t.shape[2] <= 4 and t.shape[0] > 4 and t.shape[1] > 4:
+            t = t.mean(dim=2)
+        else:
+            t = t.mean(dim=0)
+    elif t.dim() == 2:
+        pass
+    else:
+        return None
+    t = torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
+    t = t - t.min()
+    max_val = float(t.max().item())
+    if max_val > 0.0:
+        t = t / max_val
+    data = t.clamp(0.0, 1.0).cpu().numpy()
+    try:
+        from matplotlib import colormaps
+
+        cmap = colormaps.get_cmap("inferno")
+        colored = cmap(data)
+        rgb = (colored[..., :3] * 255).astype(np.uint8)
+    except Exception:
+        r = np.clip(data * 3.0, 0.0, 1.0)
+        g = np.clip(data * 3.0 - 1.0, 0.0, 1.0)
+        b = np.clip(data * 3.0 - 2.0, 0.0, 1.0)
+        rgb = (np.stack([r, g, b], axis=-1) * 255.0).astype(np.uint8)
+    im = Image.fromarray(rgb, mode="RGB")
+    if out_size is not None:
+        im = im.resize(out_size, resample=Image.BILINEAR)
+    return im
+
+
+def _register_heatmap_hooks(model: torch.nn.Module, ctx: Dict) -> Sequence:
+    handles = []
+    layer_idx = 0
+    for name, module in model.named_modules():
+        if not name:
+            continue
+        if not _is_leaf_module(module):
+            continue
+        layer_idx += 1
+
+        def _hook(_module, _inputs, output, layer_name=name, layer_index=layer_idx):
+            if not ctx.get("enabled", False):
+                return
+            outputs = _flatten_output_tensors(output)
+            if not outputs:
+                return
+            bsz = ctx.get("bsz", 0)
+            index_tensor = ctx.get("index_tensor")
+            if index_tensor is None:
+                return
+            for suffix, tensor in outputs:
+                if not isinstance(tensor, torch.Tensor):
+                    continue
+                if tensor.dim() < 3:
+                    continue
+                if tensor.shape[0] != bsz:
+                    continue
+                idx_tensor = index_tensor
+                if idx_tensor.device != tensor.device:
+                    idx_tensor = idx_tensor.to(tensor.device)
+                sliced = tensor.index_select(0, idx_tensor).detach().cpu()
+                layer_key = _sanitize_layer_name(f"{layer_index:04d}_{layer_name}{suffix}")
+                ctx["outputs"][layer_key] = sliced
+
+        handles.append(module.register_forward_hook(_hook))
+    return handles
+
+
 def validate(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -1120,6 +1224,7 @@ def validate(
     sample_y_only: bool = False,
     sample_y_tri: bool = False,
     sample_y_bin: bool = False,
+    with_heatmap: bool = False,
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
@@ -1174,6 +1279,19 @@ def validate(
         if score_mode is None and hasattr(model.head, "score_mode"):
             score_mode = model.head.score_mode
         quality_power = getattr(model.head, "quality_power", quality_power)
+    enable_heatmap = bool(with_heatmap and sample_dir)
+    heatmap_ctx = None
+    heatmap_handles = []
+    if enable_heatmap:
+        heatmap_ctx = {
+            "enabled": False,
+            "bsz": 0,
+            "indices": [],
+            "index_map": {},
+            "index_tensor": None,
+            "outputs": {},
+        }
+        heatmap_handles = _register_heatmap_hooks(model, heatmap_ctx)
 
     def render_sample(img_path, pred_list, save_path):
         try:
@@ -1212,129 +1330,176 @@ def validate(
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
                 draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
             im.save(save_path)
+            return im.size
 
-    with torch.no_grad():
-        pbar = tqdm(loader, total=len(loader), desc="Eval", ncols=120)
-        for imgs, targets in pbar:
-            imgs = imgs.to(device)
-            targets_cpu = move_targets(targets, torch.device("cpu"))
-            targets_dev = move_targets(targets, device)
-            with torch.autocast(
-                device_type=device.type,
-                dtype=torch.float16 if device.type == "cuda" else torch.bfloat16,
-                enabled=use_amp,
-            ):
+    def save_heatmaps(out_dir, out_size, local_index, base_path):
+        if heatmap_ctx is None:
+            return
+        try:
+            base_im = Image.open(base_path).convert("RGB")
+        except Exception:
+            base_im = None
+        for layer_name, layer_tensor in heatmap_ctx["outputs"].items():
+            if local_index >= layer_tensor.shape[0]:
+                continue
+            heatmap = _tensor_to_heatmap_image(layer_tensor[local_index], out_size=out_size)
+            if heatmap is None:
+                continue
+            if base_im is not None and base_im.size == heatmap.size:
+                heatmap = Image.blend(base_im, heatmap, alpha=0.6)
+            heatmap_path = os.path.join(out_dir, f"heatmap_{layer_name}.png")
+            heatmap.save(heatmap_path)
+
+    try:
+        with torch.no_grad():
+            pbar = tqdm(loader, total=len(loader), desc="Eval", ncols=120)
+            for imgs, targets in pbar:
+                imgs = imgs.to(device)
+                targets_cpu = move_targets(targets, torch.device("cpu"))
+                targets_dev = move_targets(targets, device)
+                if enable_heatmap and sample_count < sample_limit and heatmap_ctx is not None:
+                    remaining = sample_limit - sample_count
+                    max_in_batch = min(remaining, imgs.shape[0])
+                    indices = list(range(max_in_batch))
+                    heatmap_ctx["enabled"] = True
+                    heatmap_ctx["bsz"] = imgs.shape[0]
+                    heatmap_ctx["indices"] = indices
+                    heatmap_ctx["index_map"] = {idx: i for i, idx in enumerate(indices)}
+                    heatmap_ctx["index_tensor"] = torch.tensor(indices, device=imgs.device)
+                    heatmap_ctx["outputs"] = {}
+                elif heatmap_ctx is not None:
+                    heatmap_ctx["enabled"] = False
+                    heatmap_ctx["index_tensor"] = None
+                    heatmap_ctx["outputs"] = {}
+                with torch.autocast(
+                    device_type=device.type,
+                    dtype=torch.float16 if device.type == "cuda" else torch.bfloat16,
+                    enabled=use_amp,
+                ):
+                    if arch_cnn_like:
+                        outputs = model(imgs)
+                        if anchor_head:
+                            loss_dict = anchor_loss(
+                                outputs,
+                                targets_dev,
+                                anchors=anchors,
+                                num_classes=num_classes,
+                                iou_loss=iou_loss_type,
+                                assigner=anchor_assigner,
+                                cls_loss_type=anchor_cls_loss,
+                                simota_topk=simota_topk,
+                                use_quality=use_quality_head,
+                                wh_scale=wh_scale_tensor,
+                            )
+                            preds = decode_anchor(
+                                outputs,
+                                anchors=anchors,
+                                num_classes=num_classes,
+                                conf_thresh=conf_thresh,
+                                nms_thresh=0.5,
+                                has_quality=use_quality_head,
+                                wh_scale=wh_scale_tensor,
+                                score_mode=score_mode or "obj_quality_cls",
+                                quality_power=quality_power,
+                            )
+                        else:
+                            loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
+                            preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
+                    else:
+                        logits, box_pred = model(imgs)
+                        loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
+                        preds = decode_detr(logits, box_pred, conf_thresh=conf_thresh)
+                # accumulate losses
+                total_loss += float(loss_dict["loss"].item())
                 if arch_cnn_like:
-                    outputs = model(imgs)
                     if anchor_head:
-                        loss_dict = anchor_loss(
-                            outputs,
-                            targets_dev,
-                            anchors=anchors,
-                            num_classes=num_classes,
-                            iou_loss=iou_loss_type,
-                            assigner=anchor_assigner,
-                            cls_loss_type=anchor_cls_loss,
-                            simota_topk=simota_topk,
-                            use_quality=use_quality_head,
-                            wh_scale=wh_scale_tensor,
-                        )
-                        preds = decode_anchor(
-                            outputs,
-                            anchors=anchors,
-                            num_classes=num_classes,
-                            conf_thresh=conf_thresh,
-                            nms_thresh=0.5,
-                            has_quality=use_quality_head,
-                            wh_scale=wh_scale_tensor,
-                            score_mode=score_mode or "obj_quality_cls",
-                            quality_power=quality_power,
-                        )
+                        total_anchor_obj += float(loss_dict["obj"].item())
+                        total_anchor_cls += float(loss_dict["cls"].item())
+                        total_anchor_box += float(loss_dict["box"].item())
+                        if "quality" in loss_dict:
+                            total_anchor_quality += float(loss_dict["quality"].item())
                     else:
-                        loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
-                        preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
+                        total_hm += float(loss_dict["hm"].item())
+                        total_off += float(loss_dict["off"].item())
+                        total_wh += float(loss_dict["wh"].item())
                 else:
-                    logits, box_pred = model(imgs)
-                    loss_dict = detr_loss(logits, box_pred, targets_dev, num_classes=num_classes)
-                    preds = decode_detr(logits, box_pred, conf_thresh=conf_thresh)
-            # accumulate losses
-            total_loss += float(loss_dict["loss"].item())
-            if arch_cnn_like:
-                if anchor_head:
-                    total_anchor_obj += float(loss_dict["obj"].item())
-                    total_anchor_cls += float(loss_dict["cls"].item())
-                    total_anchor_box += float(loss_dict["box"].item())
-                    if "quality" in loss_dict:
-                        total_anchor_quality += float(loss_dict["quality"].item())
-                else:
-                    total_hm += float(loss_dict["hm"].item())
-                    total_off += float(loss_dict["off"].item())
-                    total_wh += float(loss_dict["wh"].item())
-            else:
-                total_cls += float(loss_dict["cls"].item())
-                total_l1 += float(loss_dict["l1"].item())
-                total_iou += float(loss_dict["iou"].item())
-            steps += 1
-            # move predictions to CPU for metric computation
-            preds_cpu = []
-            for p_img in preds:
-                preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
-            all_preds.extend(preds_cpu)
-            all_targets.extend(targets_cpu)
-            if sample_dir and sample_count < sample_limit:
-                for b_idx, pred_img in enumerate(preds):
-                    if sample_count >= sample_limit:
-                        break
-                    img_path = targets[b_idx]["image_id"]
-                    filename = os.path.basename(img_path)
-                    stem = os.path.splitext(filename)[0]
-                    save_name = f"{sample_count:02d}_" + stem + ".png"
-                    save_path = os.path.join(sample_dir, save_name)
-                    render_sample(img_path, pred_img, save_path)
-                    sample_count += 1
-            if coco_eval:
-                bsz = imgs.shape[0]
-                for b_idx in range(bsz):
-                    orig = targets_cpu[b_idx].get("orig_size")
-                    if orig:
-                        h, w = orig
-                    else:
-                        h, w = imgs.shape[2], imgs.shape[3]
-                    img_id = global_img_idx
-                    coco_images.append({"id": img_id, "width": w, "height": h})
-                    gt_boxes = targets_cpu[b_idx]["boxes"]
-                    gt_labels = targets_cpu[b_idx]["labels"]
-                    for j, (cx, cy, bw, bh) in enumerate(gt_boxes):
-                        x = (cx - bw / 2) * w
-                        y = (cy - bh / 2) * h
-                        bw_abs = bw * w
-                        bh_abs = bh * h
-                        coco_annos.append(
-                            {
-                                "id": anno_id,
-                                "image_id": img_id,
-                                "category_id": int(class_ids[int(gt_labels[j].item())]) if class_ids else int(gt_labels[j].item()),
-                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
-                                "area": float(max(bw_abs, 0) * max(bh_abs, 0)),
-                                "iscrowd": 0,
-                            }
-                        )
-                        anno_id += 1
-                    for score, cls, box in preds[b_idx]:
-                        cx, cy, bw, bh = box.tolist()
-                        x = (cx - bw / 2) * w
-                        y = (cy - bh / 2) * h
-                        bw_abs = bw * w
-                        bh_abs = bh * h
-                        coco_dets.append(
-                            {
-                                "image_id": img_id,
-                                "category_id": int(class_ids[cls]) if class_ids else int(cls),
-                                "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
-                                "score": float(score),
-                            }
-                        )
-                    global_img_idx += 1
+                    total_cls += float(loss_dict["cls"].item())
+                    total_l1 += float(loss_dict["l1"].item())
+                    total_iou += float(loss_dict["iou"].item())
+                steps += 1
+                # move predictions to CPU for metric computation
+                preds_cpu = []
+                for p_img in preds:
+                    preds_cpu.append([(score, cls, box.detach().cpu()) for score, cls, box in p_img])
+                all_preds.extend(preds_cpu)
+                all_targets.extend(targets_cpu)
+                if sample_dir and sample_count < sample_limit:
+                    for b_idx, pred_img in enumerate(preds):
+                        if sample_count >= sample_limit:
+                            break
+                        img_path = targets[b_idx]["image_id"]
+                        filename = os.path.basename(img_path)
+                        stem = os.path.splitext(filename)[0]
+                        save_stem = f"{sample_count:02d}_" + stem
+                        if enable_heatmap:
+                            sample_out_dir = os.path.join(sample_dir, save_stem)
+                            ensure_dir(sample_out_dir)
+                            save_path = os.path.join(sample_out_dir, f"{save_stem}.png")
+                        else:
+                            sample_out_dir = sample_dir
+                            save_path = os.path.join(sample_dir, f"{save_stem}.png")
+                        orig_size = render_sample(img_path, pred_img, save_path)
+                        if enable_heatmap and heatmap_ctx is not None:
+                            local_idx = heatmap_ctx["index_map"].get(b_idx)
+                            if local_idx is not None:
+                                save_heatmaps(sample_out_dir, orig_size, local_idx, save_path)
+                        sample_count += 1
+                if coco_eval:
+                    bsz = imgs.shape[0]
+                    for b_idx in range(bsz):
+                        orig = targets_cpu[b_idx].get("orig_size")
+                        if orig:
+                            h, w = orig
+                        else:
+                            h, w = imgs.shape[2], imgs.shape[3]
+                        img_id = global_img_idx
+                        coco_images.append({"id": img_id, "width": w, "height": h})
+                        gt_boxes = targets_cpu[b_idx]["boxes"]
+                        gt_labels = targets_cpu[b_idx]["labels"]
+                        for j, (cx, cy, bw, bh) in enumerate(gt_boxes):
+                            x = (cx - bw / 2) * w
+                            y = (cy - bh / 2) * h
+                            bw_abs = bw * w
+                            bh_abs = bh * h
+                            coco_annos.append(
+                                {
+                                    "id": anno_id,
+                                    "image_id": img_id,
+                                    "category_id": int(class_ids[int(gt_labels[j].item())]) if class_ids else int(gt_labels[j].item()),
+                                    "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                    "area": float(max(bw_abs, 0) * max(bh_abs, 0)),
+                                    "iscrowd": 0,
+                                }
+                            )
+                            anno_id += 1
+                        for score, cls, box in preds[b_idx]:
+                            cx, cy, bw, bh = box.tolist()
+                            x = (cx - bw / 2) * w
+                            y = (cy - bh / 2) * h
+                            bw_abs = bw * w
+                            bh_abs = bh * h
+                            coco_dets.append(
+                                {
+                                    "image_id": img_id,
+                                    "category_id": int(class_ids[cls]) if class_ids else int(cls),
+                                    "bbox": [float(x), float(y), float(bw_abs), float(bh_abs)],
+                                    "score": float(score),
+                                }
+                            )
+                        global_img_idx += 1
+    finally:
+        for handle in heatmap_handles:
+            handle.remove()
 
     metrics = evaluate_map(all_preds, all_targets, num_classes=num_classes, iou_thresh=iou_thresh)
     if steps > 0:
@@ -2044,6 +2209,7 @@ def main():
             sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
             sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
             sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
+            with_heatmap=args.with_heatmap,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
@@ -2136,6 +2302,7 @@ def main():
                 sample_y_only=resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE),
                 sample_y_tri=resize_mode == Y_TRI_RESIZE_MODE,
                 sample_y_bin=resize_mode == Y_BIN_RESIZE_MODE,
+                with_heatmap=args.with_heatmap,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,
