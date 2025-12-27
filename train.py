@@ -24,7 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
-from uhd.resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode
+from uhd.resize import Y_ONLY_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode, rgb_to_y
 
 
 class ModelEma:
@@ -1092,6 +1092,7 @@ def validate(
     sample_dir: str = None,
     class_ids = None,
     sample_limit: int = 10,
+    sample_y_only: bool = False,
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
@@ -1154,6 +1155,11 @@ def validate(
             font = ImageFont.load_default()
         with Image.open(img_path) as im:
             im = im.convert("RGB")
+            if sample_y_only:
+                im_np = np.asarray(im, dtype=np.float32) / 255.0
+                y = rgb_to_y(im_np)
+                y_u8 = np.clip(y[..., 0] * 255.0, 0.0, 255.0).astype(np.uint8)
+                im = Image.fromarray(y_u8, mode="L")
             draw = ImageDraw.Draw(im)
             w, h = im.size
             for score, cls, box in pred_list:
@@ -1172,6 +1178,8 @@ def validate(
                 if x2 <= x1 or y2 <= y1:
                     continue
                 color = colors[cls % len(colors)]
+                if sample_y_only:
+                    color = 255
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
                 draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
             im.save(save_path)
@@ -2004,6 +2012,7 @@ def main():
             sample_dir=sample_dir,
             class_ids=class_ids,
             sample_limit=val_sample_limit,
+            sample_y_only=resize_mode == Y_ONLY_RESIZE_MODE,
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
@@ -2093,6 +2102,7 @@ def main():
                 sample_dir=epoch_dir,
                 class_ids=class_ids,
                 sample_limit=10,
+                sample_y_only=resize_mode == Y_ONLY_RESIZE_MODE,
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,
