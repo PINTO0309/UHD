@@ -2277,4 +2277,5 @@ If you find this project useful, please consider citing:
 ## Ref
 
 - https://github.com/espressif/esp-dl
+- https://github.com/espressif/esp-who
 - https://github.com/espressif/esp-who/blob/master/docs/en/get-started/ESP32-S3-EYE_Getting_Started_Guide.md
