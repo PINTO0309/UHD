@@ -26,6 +26,7 @@ dependencies = [
     "pycocotools==2.0.8",
     "pillow==12.0.0",
     "esp-ppq==1.2.3",
+    "ai-edge-litert==2.1.0",
 ]
 [tool.uv]
 override-dependencies = [

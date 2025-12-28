@@ -26,6 +26,52 @@ def preprocess(img_bgr: np.ndarray, img_size: Tuple[int, int], dynamic_resize: b
     return chw[np.newaxis, ...]
 
 
+def _quantize_input(arr: np.ndarray, scale: float, zero_point: int, dtype: np.dtype) -> np.ndarray:
+    if scale <= 0.0:
+        return arr.astype(dtype)
+    q = np.round(arr / float(scale) + float(zero_point))
+    info = np.iinfo(np.dtype(dtype))
+    q = np.clip(q, info.min, info.max)
+    return q.astype(dtype)
+
+
+def _dequantize_output(arr: np.ndarray, scale: float, zero_point: int) -> np.ndarray:
+    if scale <= 0.0:
+        return arr.astype(np.float32)
+    return (arr.astype(np.float32) - float(zero_point)) * float(scale)
+
+
+def preprocess_litert(
+    img_bgr: np.ndarray,
+    img_size: Tuple[int, int],
+    input_details: dict,
+    dynamic_resize: bool,
+) -> np.ndarray:
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    if dynamic_resize:
+        arr = img_rgb.astype(np.float32) / 255.0
+    else:
+        resized = cv2.resize(img_rgb, img_size, interpolation=cv2.INTER_NEAREST)
+        arr = resized.astype(np.float32) / 255.0
+
+    input_shape = input_details.get("shape")
+    input_channels = int(input_shape[-1]) if input_shape is not None else 3
+    if input_channels == 1:
+        gray = cv2.cvtColor((arr * 255.0).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        arr = gray.astype(np.float32) / 255.0
+        arr = arr[..., None]
+    elif input_channels != 3:
+        raise ValueError(f"LiteRT input expects {input_channels} channels; only 1 or 3 are supported.")
+
+    dtype = input_details.get("dtype", np.float32)
+    scale, zero = input_details.get("quantization", (0.0, 0))
+    if np.issubdtype(dtype, np.integer):
+        arr = _quantize_input(arr, scale, int(zero), dtype)
+    else:
+        arr = arr.astype(dtype)
+    return arr[np.newaxis, ...]
+
+
 def postprocess(detections: np.ndarray, orig_shape: Tuple[int, int], conf_thresh: float) -> List[Tuple[float, int, float, float, float, float]]:
     h, w = orig_shape
     out: List[Tuple[float, int, float, float, float, float]] = []
@@ -109,7 +155,23 @@ def softplus_np(x: np.ndarray, cap: Optional[float] = None) -> np.ndarray:
 
 
 def _is_decoded_shape(shape) -> bool:
-    return bool(shape) and len(shape) >= 3 and shape[-1] == 6
+    if shape is None:
+        return False
+    try:
+        size = len(shape)
+    except TypeError:
+        return False
+    return size >= 3 and int(shape[-1]) == 6
+
+
+def _is_decoded_shape_litert(shape) -> bool:
+    if shape is None:
+        return False
+    try:
+        size = len(shape)
+    except TypeError:
+        return False
+    return size >= 2 and int(shape[-1]) == 6
 
 
 def _parse_anchor_hint_from_path(onnx_path: str) -> Optional[int]:
@@ -130,6 +192,35 @@ def _infer_anchor_count_from_channels(c: int) -> Optional[int]:
     for na in candidates:
         if c % na == 0 and (c // na) >= 6:
             return na
+    return None
+
+
+def _build_fallback_anchors(na: int) -> np.ndarray:
+    return np.stack(
+        [
+            np.linspace(0.08, 0.32, na, dtype=np.float32),
+            np.linspace(0.10, 0.40, na, dtype=np.float32),
+        ],
+        axis=1,
+    )
+
+
+def _strip_quant_suffix(stem: str) -> str:
+    for suffix in ("_integer_quant", "_full_integer_quant", "_float32"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def _load_litert_sidecar(path: Path, name: str) -> Optional[np.ndarray]:
+    stem = path.stem
+    candidates = [
+        path.with_name(f"{stem}_{name}.npy"),
+        path.with_name(f"{_strip_quant_suffix(stem)}_{name}.npy"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return np.load(str(candidate)).astype(np.float32)
     return None
 
 
@@ -196,6 +287,18 @@ def inspect_resize_info(onnx_path: str) -> dict:
                     info["resize_mode"] = "torch_bilinear" if coord == "half_pixel" else "opencv_inter_linear"
                 elif op_mode == "nearest":
                     info["resize_mode"] = "torch_nearest" if coord == "half_pixel" else "opencv_inter_nearest"
+            break
+    return info
+
+
+def inspect_tflite_resize_info(tflite_path: str) -> dict:
+    info = {"dynamic_resize": False, "resize_mode": None}
+    name = os.path.basename(tflite_path).lower()
+    if "dynamic" in name:
+        info["dynamic_resize"] = True
+    for mode in ("torch_bilinear", "torch_nearest", "opencv_inter_linear", "opencv_inter_nearest"):
+        if mode in name:
+            info["resize_mode"] = mode
             break
     return info
 
@@ -363,13 +466,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
             wh_scale = wh_scale if wh_scale is not None else wh_scale_f
             has_quality = has_quality or has_quality_f
         if anchors is None and anchor_hint:
-            anchors = np.stack(
-                [
-                    np.linspace(0.08, 0.32, anchor_hint, dtype=np.float32),
-                    np.linspace(0.10, 0.40, anchor_hint, dtype=np.float32),
-                ],
-                axis=1,
-            )
+            anchors = _build_fallback_anchors(anchor_hint)
             print(f"[INFO] Using anchors inferred from filename (anc{anchor_hint}).")
         if anchors is None:
             print("[WARN] Could not find anchors in ONNX; raw decode may fail.")
@@ -393,10 +490,101 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "raw_output": raw_output,
         "dynamic_resize": dynamic_resize,
         "resize_mode": resize_mode,
+        "backend": "onnx",
+        "window_title": "UHD ONNX",
     }
 
 
-def run_and_decode(
+def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
+    """Load LiteRT (TFLite) interpreter and infer whether outputs already include post-process."""
+    resize_info = inspect_tflite_resize_info(tflite_path)
+    dynamic_resize = bool(resize_info.get("dynamic_resize", False))
+    resize_mode = resize_info.get("resize_mode")
+    if dynamic_resize:
+        print(f"[INFO] Detected input Resize in LiteRT (mode={resize_mode or 'unknown'})")
+    else:
+        print("[INFO] No input Resize detected in LiteRT; preprocessing will resize with OpenCV.")
+
+    try:
+        from ai_edge_litert.interpreter import Interpreter
+    except Exception as exc:
+        raise RuntimeError("LiteRT interpreter not available. Install ai-edge-litert.") from exc
+
+    interpreter = Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()
+    anchor_hint = _parse_anchor_hint_from_path(tflite_path)
+
+    decoded_output = None
+    for o in output_details:
+        if _is_decoded_shape_litert(o.get("shape")):
+            decoded_output = o.get("index")
+            break
+
+    raw_channels = None
+    raw_output = None
+    if decoded_output is None:
+        for o in output_details:
+            shape = o.get("shape")
+            if shape is not None and len(shape) == 4:
+                raw_output = o.get("index")
+                raw_channels = int(shape[-1])
+                break
+        if raw_output is None and output_details:
+            raw_output = output_details[0].get("index")
+            shape = output_details[0].get("shape")
+            if shape is not None and len(shape) >= 1:
+                raw_channels = int(shape[-1])
+
+    sidecar_path = Path(tflite_path)
+    anchors = _load_litert_sidecar(sidecar_path, "anchors")
+    wh_scale = _load_litert_sidecar(sidecar_path, "wh_scale")
+
+    has_quality = wh_scale is not None
+    if raw_channels is not None:
+        na_hint = anchor_hint or _infer_anchor_count_from_channels(int(raw_channels))
+        if na_hint:
+            per_anchor = int(raw_channels) // int(na_hint)
+            if per_anchor >= 7:
+                has_quality = True
+
+    input_shape = input_details.get("shape")
+    input_hw = None
+    if input_shape is not None and len(input_shape) >= 3:
+        input_hw = (int(input_shape[1]), int(input_shape[2]))
+
+    kind = "decoded output" if decoded_output is not None else "raw output + demo post-process"
+    output_shape = None
+    if decoded_output is not None:
+        for o in output_details:
+            if o.get("index") == decoded_output:
+                output_shape = o.get("shape")
+                break
+    if output_shape is None and output_details:
+        output_shape = output_details[0].get("shape")
+    print(f"[INFO] Detected {kind} (output shape: {output_shape})")
+    return interpreter, {
+        "decoded": decoded_output is not None,
+        "anchors": anchors,
+        "wh_scale": wh_scale,
+        "has_quality": has_quality,
+        "raw_channels": raw_channels if decoded_output is None else None,
+        "anchor_hint": anchor_hint,
+        "input_details": input_details,
+        "output_details": output_details,
+        "input_index": input_details.get("index"),
+        "decoded_output": decoded_output,
+        "raw_output": raw_output,
+        "dynamic_resize": dynamic_resize,
+        "resize_mode": resize_mode,
+        "backend": "litert",
+        "window_title": "UHD LiteRT",
+        "input_hw": input_hw if input_hw else img_size,
+    }
+
+
+def run_and_decode_onnx(
     session: ort.InferenceSession,
     session_info: dict,
     inp: np.ndarray,
@@ -431,15 +619,6 @@ def run_and_decode(
     if raw is None:
         raw = run_outs[0]
 
-    def _build_fallback_anchors(na: int) -> np.ndarray:
-        return np.stack(
-            [
-                np.linspace(0.08, 0.32, na, dtype=np.float32),
-                np.linspace(0.10, 0.40, na, dtype=np.float32),
-            ],
-            axis=1,
-        )
-
     if anchors is None:
         c = raw.shape[1] if raw.ndim == 4 else raw.shape[-1]
         na_hint = session_info.get("anchor_hint")
@@ -461,8 +640,98 @@ def run_and_decode(
     )
 
 
+def run_and_decode_litert(
+    interpreter,
+    session_info: dict,
+    inp: np.ndarray,
+    conf_thresh: float,
+) -> np.ndarray:
+    interpreter.set_tensor(session_info["input_index"], inp)
+    interpreter.invoke()
+
+    output_details = session_info.get("output_details", [])
+    if session_info.get("decoded", False):
+        out_idx = session_info.get("decoded_output")
+        out_detail = next((o for o in output_details if o.get("index") == out_idx), output_details[0])
+        dets = interpreter.get_tensor(out_detail["index"])
+        scale, zero = out_detail.get("quantization", (0.0, 0))
+        if np.issubdtype(out_detail.get("dtype", np.float32), np.integer):
+            dets = _dequantize_output(dets, float(scale), int(zero))
+        return dets[0] if dets.ndim >= 3 else dets
+
+    anchors = session_info.get("anchors")
+    wh_scale = session_info.get("wh_scale")
+    raw = None
+    for detail in output_details:
+        val = interpreter.get_tensor(detail["index"])
+        scale, zero = detail.get("quantization", (0.0, 0))
+        if np.issubdtype(detail.get("dtype", np.float32), np.integer):
+            val = _dequantize_output(val, float(scale), int(zero))
+        if raw is None and val.ndim == 4:
+            raw = val
+        elif val.ndim == 2 and val.shape[1] == 2:
+            name_l = detail.get("name", "").lower()
+            if anchors is None and ("anchor" in name_l or True):
+                anchors = val.astype(np.float32)
+            if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
+                wh_scale = val.astype(np.float32)
+                session_info["has_quality"] = True
+
+    if raw is None and output_details:
+        detail = output_details[0]
+        raw = interpreter.get_tensor(detail["index"])
+        scale, zero = detail.get("quantization", (0.0, 0))
+        if np.issubdtype(detail.get("dtype", np.float32), np.integer):
+            raw = _dequantize_output(raw, float(scale), int(zero))
+
+    if raw is None:
+        raise RuntimeError("LiteRT output not found.")
+
+    if raw.ndim == 4:
+        raw = np.transpose(raw, (0, 3, 1, 2))
+    elif raw.ndim == 3:
+        raw = np.transpose(raw, (2, 0, 1))[None, ...]
+
+    if anchors is None:
+        c = raw.shape[1] if raw.ndim == 4 else raw.shape[-1]
+        na_hint = session_info.get("anchor_hint")
+        na_guess = _infer_anchor_count_from_channels(int(c))
+        na = na_hint if na_hint is not None else (na_guess if na_guess is not None else 3)
+        anchors = _build_fallback_anchors(na)
+        print(f"[WARN] Anchors not found in LiteRT; using fallback anchors (A={na}).")
+
+    session_info["anchors"] = anchors
+    if wh_scale is not None:
+        session_info["wh_scale"] = wh_scale
+
+    c = raw.shape[1] if raw.ndim == 4 else raw.shape[-1]
+    if anchors is not None and (c % anchors.shape[0] == 0):
+        per_anchor = int(c) // int(anchors.shape[0])
+        if per_anchor >= 7:
+            session_info["has_quality"] = True
+
+    return decode_ultratinyod_raw(
+        raw,
+        anchors=anchors,
+        conf_thresh=0.0,
+        has_quality=session_info.get("has_quality", False),
+        wh_scale=wh_scale,
+    )
+
+
+def run_and_decode(
+    session,
+    session_info: dict,
+    inp: np.ndarray,
+    conf_thresh: float,
+) -> np.ndarray:
+    if session_info.get("backend") == "litert":
+        return run_and_decode_litert(session, session_info, inp, conf_thresh)
+    return run_and_decode_onnx(session, session_info, inp, conf_thresh)
+
+
 def run_images(
-    session: ort.InferenceSession,
+    session,
     session_info: dict,
     img_dir: Path,
     out_dir: Path,
@@ -475,6 +744,7 @@ def run_images(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     dynamic_resize = bool(session_info.get("dynamic_resize", False))
+    backend = session_info.get("backend", "onnx")
     exts = {".jpg", ".jpeg", ".png", ".bmp"}
     images = [p for p in img_dir.iterdir() if p.suffix.lower() in exts]
     if not images:
@@ -488,7 +758,10 @@ def run_images(
             continue
         h, w = img_bgr.shape[:2]
         target_h, target_w = img_size if actual_size else (h, w)
-        inp = preprocess(img_bgr, img_size, dynamic_resize=dynamic_resize)
+        if backend == "litert":
+            inp = preprocess_litert(img_bgr, img_size, session_info["input_details"], dynamic_resize=dynamic_resize)
+        else:
+            inp = preprocess(img_bgr, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
@@ -504,7 +777,7 @@ def run_images(
 
 
 def run_camera(
-    session: ort.InferenceSession,
+    session,
     session_info: dict,
     camera_id: int,
     img_size: Tuple[int, int],
@@ -521,6 +794,8 @@ def run_camera(
     writer = None
     last_time = None
     dynamic_resize = bool(session_info.get("dynamic_resize", False))
+    backend = session_info.get("backend", "onnx")
+    window_title = session_info.get("window_title", "UHD Demo")
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -528,7 +803,10 @@ def run_camera(
         t0 = time.perf_counter()
         h, w = frame.shape[:2]
         target_h, target_w = img_size if actual_size else (h, w)
-        inp = preprocess(frame, img_size, dynamic_resize=dynamic_resize)
+        if backend == "litert":
+            inp = preprocess_litert(frame, img_size, session_info["input_details"], dynamic_resize=dynamic_resize)
+        else:
+            inp = preprocess(frame, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
@@ -581,7 +859,7 @@ def run_camera(
                 writer = cv2.VideoWriter(str(record_path), fourcc, fps, (w, h))
             writer.write(vis_out)
 
-        cv2.imshow("UHD ONNX (press q to quit)", vis_out)
+        cv2.imshow(f"{window_title} (press q to quit)", vis_out)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
     if writer is not None:
@@ -601,11 +879,13 @@ def parse_size(arg: str) -> Tuple[int, int]:
 
 
 def build_args():
-    parser = argparse.ArgumentParser(description="UltraTinyOD ONNX demo (CPU).")
+    parser = argparse.ArgumentParser(description="UltraTinyOD ONNX/LiteRT demo (CPU).")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--images", type=str, help="Directory with images to run batch inference.")
     mode.add_argument("--camera", type=int, help="USB camera id for realtime inference.")
-    parser.add_argument("--onnx", required=True, help="Path to ONNX model (CPU).")
+    model = parser.add_mutually_exclusive_group(required=True)
+    model.add_argument("--onnx", help="Path to ONNX model (CPU).")
+    model.add_argument("--tflite", help="Path to LiteRT (TFLite) model.")
     parser.add_argument("--output", type=str, default="demo_output", help="Output directory for image mode.")
     parser.add_argument("--img-size", type=str, default="64x64", help="Input size HxW, e.g., 64x64.")
     parser.add_argument("--conf-thresh", type=float, default=0.90, help="Confidence threshold.")
@@ -637,7 +917,14 @@ def build_args():
 def main():
     args = build_args().parse_args()
     img_size = parse_size(args.img_size)
-    session, session_info = load_session(args.onnx, img_size)
+    if args.onnx:
+        session, session_info = load_session(args.onnx, img_size)
+    else:
+        session, session_info = load_litert_session(args.tflite, img_size)
+        input_hw = session_info.get("input_hw")
+        if input_hw and not session_info.get("dynamic_resize", False) and img_size != input_hw:
+            print(f"[WARN] Overriding --img-size {img_size} to match LiteRT input {input_hw}.")
+            img_size = input_hw
 
     if args.images:
         run_images(

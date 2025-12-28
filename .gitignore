@@ -214,6 +214,7 @@ runs/
 feature_heatmaps/
 ablation_heatmaps/
 saved_model/
+*.tflite
 *.onnx
 *.pt
 *.pth
