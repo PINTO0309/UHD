@@ -130,6 +130,12 @@ gh release download onnx -R PINTO0309/UHD
 
   </details>
 
+- Variants
+  ```
+  R: ront, Y: yocto, Z: zepto, A: atto
+  F: femto, P: pico, N: nano, T: tiny
+  S: small, C: compact, M: medium, L: large
+  ```
 - `opencv_inter_nearest` + Optimized for OpenCV RGB downsampling + Suitable for quantization
 
   - ONNX
@@ -164,12 +170,6 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)|
 
 - `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
-  - Variants
-    ```
-    R: ront, Y: yocto, Z: zepto, A: atto
-    F: femto, P: pico, N: nano, T: tiny
-    S: small, C: compact, M: medium, L: large
-    ```
   - `YUV422`
     ```python
     img_u8 = np.ones([64,64,3], dtype=np.uint8)
