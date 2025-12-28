@@ -240,6 +240,25 @@ class UltraTinyODRawWithAnchors(nn.Module):
         return raw, anchors, wh_scale
 
 
+class UltraTinyODRawPartsWithAnchors(nn.Module):
+    """
+    Export raw head branches without concatenating box/obj/quality/cls.
+    """
+
+    def __init__(self, model: UltraTinyOD) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor):
+        feat = self.model.backbone(x)
+        box, obj, quality, cls = self.model.head.forward_raw_parts(feat)
+        anchors = self.model.head.anchors
+        wh_scale = self.model.head.wh_scale
+        if quality is None:
+            return box, obj, cls, anchors, wh_scale
+        return box, obj, quality, cls, anchors, wh_scale
+
+
 def _resize_attrs_from_mode(resize_mode: str):
     rm = normalize_resize_mode(resize_mode)
     if rm == "torch_bilinear":
@@ -427,6 +446,11 @@ def build_argparser():
     parser.set_defaults(use_ema=True)
     parser.add_argument("--no-merge-postprocess", dest="merge_postprocess", action="store_false", help="Export raw model only.")
     parser.set_defaults(merge_postprocess=True)
+    parser.add_argument(
+        "--noconcat_box_obj_quality_cls",
+        action="store_true",
+        help="When exporting raw model, do not concatenate box/obj/quality/cls into a single tensor.",
+    )
     parser.add_argument("--no-simplify", action="store_true", help="Skip onnx-simplifier.")
     parser.add_argument("--non-strict", action="store_true", help="Load weights with strict=False.")
     parser.add_argument("--verify", action="store_true", help="Run a quick ONNXRuntime vs PyTorch diff check.")
@@ -441,6 +465,8 @@ def build_argparser():
 def main():
     parser = build_argparser()
     args = parser.parse_args()
+    if args.noconcat_box_obj_quality_cls and args.merge_postprocess:
+        parser.error("--noconcat_box_obj_quality_cls requires --no-merge-postprocess.")
 
     ckpt_path = args.checkpoint or args.weights
     state, meta = load_checkpoint(ckpt_path, use_ema=bool(args.use_ema))
@@ -491,8 +517,15 @@ def main():
             model.head.set_anchors(anchors_tensor)
 
     if not args.merge_postprocess:
-        export_module = UltraTinyODRawWithAnchors(model)
-        output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
+        if args.noconcat_box_obj_quality_cls:
+            export_module = UltraTinyODRawPartsWithAnchors(model)
+            if getattr(model.head, "has_quality", False):
+                output_names = ["box", "obj", "quality", "cls", "anchors", "wh_scale"]
+            else:
+                output_names = ["box", "obj", "cls", "anchors", "wh_scale"]
+        else:
+            export_module = UltraTinyODRawWithAnchors(model)
+            output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
     else:
         export_module = UltraTinyODWithPost(model, topk=args.topk, conf_thresh=args.conf_thresh)
         output_names = ["score_classid_cxcywh"]
@@ -546,6 +579,7 @@ def main():
         {
             "resize_mode": resize_mode,
             "dynamic_resize": str(bool(args.dynamic_resize)).lower(),
+            "raw_concat": str(not args.noconcat_box_obj_quality_cls).lower() if not args.merge_postprocess else "true",
             "decode_score": "score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)",
             "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
             "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),

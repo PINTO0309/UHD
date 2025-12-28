@@ -205,6 +205,67 @@ def _build_fallback_anchors(na: int) -> np.ndarray:
     )
 
 
+def _detect_raw_parts(outputs_info) -> Optional[dict]:
+    name_map = {o.name.lower(): o.name for o in outputs_info}
+    if "box" in name_map and "obj" in name_map and "cls" in name_map:
+        return {
+            "box": name_map["box"],
+            "obj": name_map["obj"],
+            "quality": name_map.get("quality"),
+            "cls": name_map["cls"],
+        }
+    return None
+
+
+def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
+    name_map = {d.get("name", "").lower(): d for d in output_details}
+    if "box" in name_map and "obj" in name_map and "cls" in name_map:
+        return {
+            "box": name_map["box"]["index"],
+            "obj": name_map["obj"]["index"],
+            "quality": name_map.get("quality", {}).get("index") if "quality" in name_map else None,
+            "cls": name_map["cls"]["index"],
+        }
+    return None
+
+
+def _assemble_raw_from_parts(
+    box: np.ndarray,
+    obj: np.ndarray,
+    quality: Optional[np.ndarray],
+    cls: np.ndarray,
+) -> Tuple[np.ndarray, int]:
+    if box is None or obj is None or cls is None:
+        raise ValueError("Missing box/obj/cls output for raw parts assembly.")
+    if box.ndim != 4 or obj.ndim != 4 or cls.ndim != 4:
+        raise ValueError("Expected 4D tensors for box/obj/cls outputs.")
+    b, c_box, h, w = box.shape
+    _, c_obj, _, _ = obj.shape
+    na = int(c_obj)
+    if na <= 0:
+        raise ValueError("Invalid anchor count from obj output.")
+    if c_box != na * 4:
+        raise ValueError(f"Unexpected box channels: {c_box} (anchors={na})")
+    if cls.shape[1] % na != 0:
+        raise ValueError(f"Unexpected cls channels: {cls.shape[1]} (anchors={na})")
+    nc = int(cls.shape[1] // na)
+
+    box = box.reshape(b, na, 4, h, w)
+    obj = obj.reshape(b, na, 1, h, w)
+    parts = [box, obj]
+    if quality is not None:
+        if quality.ndim != 4 or quality.shape[1] != na:
+            raise ValueError(f"Unexpected quality shape: {quality.shape}")
+        quality = quality.reshape(b, na, 1, h, w)
+        parts.append(quality)
+    cls = cls.reshape(b, na, nc, h, w)
+    parts.append(cls)
+
+    merged = np.concatenate(parts, axis=2)
+    raw = merged.reshape(b, na * merged.shape[2], h, w)
+    return raw, nc
+
+
 def _strip_quant_suffix(stem: str) -> str:
     for suffix in ("_integer_quant", "_full_integer_quant", "_float32"):
         if stem.endswith(suffix):
@@ -212,12 +273,18 @@ def _strip_quant_suffix(stem: str) -> str:
     return stem
 
 
+def _candidate_sidecar_stems(stem: str) -> List[str]:
+    base = _strip_quant_suffix(stem)
+    stems = [stem, base]
+    for suffix in ("_nocat", "_noconcat"):
+        if base.endswith(suffix):
+            stems.append(base[: -len(suffix)])
+    return list(dict.fromkeys(stems))
+
+
 def _load_litert_sidecar(path: Path, name: str) -> Optional[np.ndarray]:
     stem = path.stem
-    candidates = [
-        path.with_name(f"{stem}_{name}.npy"),
-        path.with_name(f"{_strip_quant_suffix(stem)}_{name}.npy"),
-    ]
+    candidates = [path.with_name(f"{s}_{name}.npy") for s in _candidate_sidecar_stems(stem)]
     for candidate in candidates:
         if candidate.is_file():
             return np.load(str(candidate)).astype(np.float32)
@@ -417,12 +484,14 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     input_info = session.get_inputs()[0]
     outputs_info = session.get_outputs()
     anchor_hint = _parse_anchor_hint_from_path(onnx_path)
+    raw_parts = _detect_raw_parts(outputs_info)
 
     decoded_output = None
-    for o in outputs_info:
-        if _is_decoded_shape(o.shape):
-            decoded_output = o.name
-            break
+    if raw_parts is None:
+        for o in outputs_info:
+            if _is_decoded_shape(o.shape):
+                decoded_output = o.name
+                break
 
     anchors = None
     wh_scale = None
@@ -445,8 +514,9 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         w_probe = _dim_or_fallback(w_in, img_size[1])
         dummy = np.zeros((1, c_probe, h_probe, w_probe), dtype=np.float32)
         outs = session.run(None, {input_info.name: dummy})
+        out_map = {meta.name: val for meta, val in zip(outputs_info, outs)}
         for meta, val in zip(outputs_info, outs):
-            if val.ndim == 4 and raw_output is None:
+            if raw_parts is None and val.ndim == 4 and raw_output is None:
                 raw_output = meta.name
                 raw_channels = val.shape[1] if val.ndim == 4 else val.shape[-1]
             elif val.ndim == 2 and val.shape[1] == 2:
@@ -456,7 +526,22 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
                 if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
                     wh_scale = val.astype(np.float32)
                     has_quality = True
-        if raw_output is None and outputs_info:
+        if raw_parts is not None:
+            box = out_map.get(raw_parts["box"])
+            obj = out_map.get(raw_parts["obj"])
+            quality = out_map.get(raw_parts.get("quality") or "")
+            cls = out_map.get(raw_parts["cls"])
+            if obj is not None:
+                na = int(obj.shape[1])
+                if anchor_hint is None:
+                    anchor_hint = na
+                c_box = int(box.shape[1]) if box is not None else 0
+                c_obj = int(obj.shape[1])
+                c_quality = int(quality.shape[1]) if quality is not None else 0
+                c_cls = int(cls.shape[1]) if cls is not None else 0
+                raw_channels = c_box + c_obj + c_quality + c_cls
+                has_quality = has_quality or quality is not None or wh_scale is not None
+        if raw_output is None and raw_parts is None and outputs_info:
             raw_output = outputs_info[0].name
             raw_shape = outs[0].shape if outs else outputs_info[0].shape
             raw_channels = raw_shape[1] if isinstance(raw_shape, tuple) and len(raw_shape) >= 2 else None
@@ -471,12 +556,20 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         if anchors is None:
             print("[WARN] Could not find anchors in ONNX; raw decode may fail.")
         decoded = False
-        output_shape = outs[0].shape if outs else outputs_info[0].shape
+        if raw_parts is not None:
+            output_shape = {k: (out_map.get(v).shape if out_map.get(v) is not None else None) for k, v in raw_parts.items() if v}
+        else:
+            output_shape = outs[0].shape if outs else outputs_info[0].shape
     else:
         decoded = True
         output_shape = next(o.shape for o in outputs_info if o.name == decoded_output)
 
-    kind = "decoded output" if decoded else "raw output + demo post-process"
+    if decoded:
+        kind = "decoded output"
+    elif raw_parts is not None:
+        kind = "raw parts output + demo post-process"
+    else:
+        kind = "raw output + demo post-process"
     print(f"[INFO] Detected {kind} (output shape: {output_shape})")
     return session, {
         "decoded": decoded,
@@ -488,6 +581,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "input_name": input_info.name,
         "decoded_output": decoded_output,
         "raw_output": raw_output,
+        "raw_parts": raw_parts,
         "dynamic_resize": dynamic_resize,
         "resize_mode": resize_mode,
         "backend": "onnx",
@@ -515,16 +609,18 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
     input_details = interpreter.get_input_details()[0]
     output_details = interpreter.get_output_details()
     anchor_hint = _parse_anchor_hint_from_path(tflite_path)
+    raw_parts = _detect_raw_parts_litert(output_details)
 
     decoded_output = None
-    for o in output_details:
-        if _is_decoded_shape_litert(o.get("shape")):
-            decoded_output = o.get("index")
-            break
+    if raw_parts is None:
+        for o in output_details:
+            if _is_decoded_shape_litert(o.get("shape")):
+                decoded_output = o.get("index")
+                break
 
     raw_channels = None
     raw_output = None
-    if decoded_output is None:
+    if decoded_output is None and raw_parts is None:
         for o in output_details:
             shape = o.get("shape")
             if shape is not None and len(shape) == 4:
@@ -536,12 +632,26 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
             shape = output_details[0].get("shape")
             if shape is not None and len(shape) >= 1:
                 raw_channels = int(shape[-1])
+    elif raw_parts is not None:
+        detail_map = {d["index"]: d for d in output_details}
+        obj_detail = detail_map.get(raw_parts["obj"])
+        box_detail = detail_map.get(raw_parts["box"])
+        quality_detail = detail_map.get(raw_parts.get("quality")) if raw_parts.get("quality") is not None else None
+        cls_detail = detail_map.get(raw_parts["cls"])
+        if obj_detail and box_detail and cls_detail:
+            na = int(obj_detail.get("shape")[-1])
+            c_box = int(box_detail.get("shape")[-1])
+            c_quality = int(quality_detail.get("shape")[-1]) if quality_detail else 0
+            c_cls = int(cls_detail.get("shape")[-1])
+            if c_box != na * 4 and quality_detail and c_quality == na * 4:
+                c_box, c_quality = c_quality, c_box
+            raw_channels = c_box + na + c_quality + c_cls
 
     sidecar_path = Path(tflite_path)
     anchors = _load_litert_sidecar(sidecar_path, "anchors")
     wh_scale = _load_litert_sidecar(sidecar_path, "wh_scale")
 
-    has_quality = wh_scale is not None
+    has_quality = wh_scale is not None or (raw_parts is not None and raw_parts.get("quality") is not None)
     if raw_channels is not None:
         na_hint = anchor_hint or _infer_anchor_count_from_channels(int(raw_channels))
         if na_hint:
@@ -554,7 +664,12 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
     if input_shape is not None and len(input_shape) >= 3:
         input_hw = (int(input_shape[1]), int(input_shape[2]))
 
-    kind = "decoded output" if decoded_output is not None else "raw output + demo post-process"
+    if decoded_output is not None:
+        kind = "decoded output"
+    elif raw_parts is not None:
+        kind = "raw parts output + demo post-process"
+    else:
+        kind = "raw output + demo post-process"
     output_shape = None
     if decoded_output is not None:
         for o in output_details:
@@ -576,6 +691,7 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
         "input_index": input_details.get("index"),
         "decoded_output": decoded_output,
         "raw_output": raw_output,
+        "raw_parts": raw_parts,
         "dynamic_resize": dynamic_resize,
         "resize_mode": resize_mode,
         "backend": "litert",
@@ -590,6 +706,57 @@ def run_and_decode_onnx(
     inp: np.ndarray,
     conf_thresh: float,
 ) -> np.ndarray:
+    if session_info.get("raw_parts"):
+        parts = session_info["raw_parts"]
+        anchors = session_info.get("anchors")
+        wh_scale = session_info.get("wh_scale")
+
+        outputs = [parts["box"], parts["obj"], parts.get("quality"), parts["cls"]]
+        outputs = [o for o in outputs if o]
+        if anchors is None or wh_scale is None:
+            outputs = [o.name for o in session.get_outputs()]
+        run_outs = session.run(outputs, {session_info["input_name"]: inp})
+        out_map = {name: val for name, val in zip(outputs, run_outs)}
+
+        box = out_map.get(parts["box"])
+        obj = out_map.get(parts["obj"])
+        quality = out_map.get(parts.get("quality") or "")
+        cls = out_map.get(parts["cls"])
+
+        if box is None or obj is None or cls is None:
+            raise RuntimeError("Missing raw parts outputs from ONNX session.")
+
+        for name, val in out_map.items():
+            if val.ndim == 2 and val.shape[1] == 2:
+                name_l = name.lower()
+                if anchors is None and ("anchor" in name_l or True):
+                    anchors = val.astype(np.float32)
+                if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
+                    wh_scale = val.astype(np.float32)
+                    session_info["has_quality"] = True
+
+        raw, _ = _assemble_raw_from_parts(box, obj, quality, cls)
+
+        if anchors is None:
+            na = int(obj.shape[1])
+            na_hint = session_info.get("anchor_hint")
+            na = na_hint if na_hint is not None else na
+            anchors = _build_fallback_anchors(int(na))
+            print(f"[WARN] Anchors not found in ONNX; using fallback anchors (A={na}).")
+
+        session_info["anchors"] = anchors
+        if wh_scale is not None:
+            session_info["wh_scale"] = wh_scale
+
+        has_quality = quality is not None or session_info.get("has_quality", False) or wh_scale is not None
+        return decode_ultratinyod_raw(
+            raw,
+            anchors=anchors,
+            conf_thresh=0.0,
+            has_quality=has_quality,
+            wh_scale=wh_scale,
+        )
+
     if session_info.get("decoded", False):
         dets = session.run([session_info["decoded_output"]], {session_info["input_name"]: inp})[0]
         return dets[0] if dets.ndim >= 3 else dets
@@ -650,6 +817,63 @@ def run_and_decode_litert(
     interpreter.invoke()
 
     output_details = session_info.get("output_details", [])
+    detail_map = {d["index"]: d for d in output_details}
+    raw_parts = session_info.get("raw_parts")
+    if raw_parts:
+        def _get_tensor(idx: int) -> np.ndarray:
+            detail = detail_map.get(idx)
+            if detail is None:
+                raise RuntimeError(f"LiteRT output index {idx} not found.")
+            val = interpreter.get_tensor(idx)
+            scale, zero = detail.get("quantization", (0.0, 0))
+            if np.issubdtype(detail.get("dtype", np.float32), np.integer):
+                val = _dequantize_output(val, float(scale), int(zero))
+            return val
+
+        box = _get_tensor(raw_parts["box"])
+        obj = _get_tensor(raw_parts["obj"])
+        cls = _get_tensor(raw_parts["cls"])
+        quality = _get_tensor(raw_parts["quality"]) if raw_parts.get("quality") is not None else None
+
+        na = int(obj.shape[-1])
+        if box.shape[-1] != na * 4:
+            if quality is not None and quality.shape[-1] == na * 4:
+                print("[WARN] Swapping box/quality outputs based on channel size.")
+                box, quality = quality, box
+            elif cls.shape[-1] == na * 4:
+                print("[WARN] Swapping box/cls outputs based on channel size.")
+                box, cls = cls, box
+
+        def _nhwc_to_nchw(arr: np.ndarray) -> np.ndarray:
+            return np.transpose(arr, (0, 3, 1, 2))
+
+        raw_box = _nhwc_to_nchw(box)
+        raw_obj = _nhwc_to_nchw(obj)
+        raw_cls = _nhwc_to_nchw(cls)
+        raw_quality = _nhwc_to_nchw(quality) if quality is not None else None
+
+        raw, _ = _assemble_raw_from_parts(raw_box, raw_obj, raw_quality, raw_cls)
+
+        anchors = session_info.get("anchors")
+        wh_scale = session_info.get("wh_scale")
+        if anchors is None:
+            na_hint = session_info.get("anchor_hint")
+            na_use = na_hint if na_hint is not None else na
+            anchors = _build_fallback_anchors(int(na_use))
+            print(f"[WARN] Anchors not found in LiteRT; using fallback anchors (A={na_use}).")
+        session_info["anchors"] = anchors
+        if wh_scale is not None:
+            session_info["wh_scale"] = wh_scale
+
+        has_quality = quality is not None or session_info.get("has_quality", False) or wh_scale is not None
+        return decode_ultratinyod_raw(
+            raw,
+            anchors=anchors,
+            conf_thresh=0.0,
+            has_quality=has_quality,
+            wh_scale=wh_scale,
+        )
+
     if session_info.get("decoded", False):
         out_idx = session_info.get("decoded_output")
         out_detail = next((o for o in output_details if o.get("index") == out_idx), output_details[0])

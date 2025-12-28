@@ -592,6 +592,45 @@ class UltraTinyODHead(nn.Module):
         """
         b, c, h, w = x.shape
 
+        box, obj, quality, cls = self.forward_raw_parts(x)
+
+        # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
+        if self.has_quality and quality is not None:
+            pred = torch.cat([box, obj, quality, cls], dim=1)
+        else:
+            pred = torch.cat([box, obj, cls], dim=1)
+        raw_map = pred.index_select(1, self.raw_map_perm)
+
+        if not decode:
+            return raw_map, None
+
+        # decode は pipeline の decode_anchor と同じパラメータ化 (tx/ty sigmoid, tw/th softplus)
+        # anchor は正規化前提
+        anchor_tensor = self.anchors.to(raw_map.device)
+        try:
+            from .metrics import decode_anchor  # 遅延 import で循環を避ける
+        except ImportError:
+            from uhd.metrics import decode_anchor  # type: ignore
+
+        decoded = decode_anchor(
+            raw_map,
+            anchors=anchor_tensor,
+            num_classes=self.nc,
+            conf_thresh=conf_thresh,
+            nms_thresh=nms_thresh,
+            has_quality=self.has_quality,
+            wh_scale=self.wh_scale if self.use_improved_head else None,
+            score_mode=self.score_mode,
+            quality_power=self.quality_power,
+        )
+        return raw_map, decoded
+
+    def forward_raw_parts(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        """Return raw head outputs without concatenation (box, obj, quality, cls)."""
+        b, c, h, w = x.shape
+
         # 軽い文脈強調
         x = self.context(x).contiguous()
         if self.use_improved_head:
@@ -631,36 +670,7 @@ class UltraTinyODHead(nn.Module):
             cls_feat = self.cls_conv(cls_feat)
         cls = self.cls_out(cls_feat)
 
-        # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
-        if self.has_quality and quality is not None:
-            pred = torch.cat([box, obj, quality, cls], dim=1)
-        else:
-            pred = torch.cat([box, obj, cls], dim=1)
-        raw_map = pred.index_select(1, self.raw_map_perm)
-
-        if not decode:
-            return raw_map, None
-
-        # decode は pipeline の decode_anchor と同じパラメータ化 (tx/ty sigmoid, tw/th softplus)
-        # anchor は正規化前提
-        anchor_tensor = self.anchors.to(raw_map.device)
-        try:
-            from .metrics import decode_anchor  # 遅延 import で循環を避ける
-        except ImportError:
-            from uhd.metrics import decode_anchor  # type: ignore
-
-        decoded = decode_anchor(
-            raw_map,
-            anchors=anchor_tensor,
-            num_classes=self.nc,
-            conf_thresh=conf_thresh,
-            nms_thresh=nms_thresh,
-            has_quality=self.has_quality,
-            wh_scale=self.wh_scale if self.use_improved_head else None,
-            score_mode=self.score_mode,
-            quality_power=self.quality_power,
-        )
-        return raw_map, decoded
+        return box, obj, quality, cls
 
 
 class UltraTinyOD(nn.Module):
