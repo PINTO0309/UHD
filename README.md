@@ -2167,7 +2167,20 @@ This repository includes a calibration/quantization script for ESP-DL:
 
 ```bash
 ########## Step.1
-uv run python uhd/quantize_onnx_model_for_esp32.py --dataset-type image --image-dir data/wholebody34/obj_train_data --resize-mode opencv_inter_nearest --onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx --espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl --target esp32s3 --calib-algorithm kl 2>&1 | python -c 'import re,sys; t=sys.stdin.read().replace("\r",""); t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",t); p=sorted(set(re.findall(r"calculation result of the (/[^ ]+)\(type: Conv\)", t))); print("\n".join(f"--int16-op-pattern \"{x}\" \\" for x in p))'
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+2>&1 | python -c '\
+import re,sys;
+t=sys.stdin.read().replace("\r","");
+t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",t);
+p=sorted(set(re.findall(r"calculation result of the (/[^ ]+)\(type: Conv\)", t)));
+print("\n".join(f"--int16-op-pattern \"{x}\" \\" for x in p))'
 
 ########## Step.1 outputs
 --int16-op-pattern "/box_tower/box_tower.1/dw/conv/Conv" \
