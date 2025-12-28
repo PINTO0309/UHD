@@ -2408,3 +2408,5 @@ If you find this project useful, please consider citing:
 - [ESP32 - ESP-IDF](https://zenn.dev/pinto0309/scraps/6b985872ea9a89)
 
   https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
+
+- **[WIP]** ESP32 UHD: https://github.com/PINTO0309/esp-who
