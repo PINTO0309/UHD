@@ -2409,4 +2409,4 @@ If you find this project useful, please consider citing:
 
   https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
 
-- **[WIP]** ESP32 UHD: https://github.com/PINTO0309/esp-who
+- **[WIP]** ESP32 UHD: https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
