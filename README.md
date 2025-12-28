@@ -19,6 +19,7 @@ https://github.com/user-attachments/assets/afca301a-9fe6-4ecd-af01-6bacbfa88e52
 |<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/05280dce-4faf-46e1-817c-98e4df4a9d4c" />|<img width="383" height="640" alt="09_dist_000000074177" src="https://github.com/user-attachments/assets/628540af-6407-4e93-b41e-9057671f49ca" />|<img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/23d932d4-ce48-421e-9d1f-0dd8386852a3" />|<img width="500" height="500" alt="08_dist_000000039322" src="https://github.com/user-attachments/assets/64c744c4-4425-46da-a53b-ffab2fd52060" />|
 
 ## Download all ONNX files at once
+**I don't recommend it as it downloads a crazy amount of files.**
 
 ```bash
 sudo apt update && sudo apt install -y gh
