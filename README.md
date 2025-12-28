@@ -1967,7 +1967,8 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
       std  diff : 13.2463
     ```
 4. Accuracy and speed of each interpolation method when downsampling in OpenCV
-    - Accuracy: `INTER_NEAREST < INTER_LINEAR < INTER_AREA`, Speed: `INTER_NEAREST > INTER_LINEAR > INTER_AREA`
+    - Accuracy: `INTER_NEAREST < INTER_LINEAR < INTER_AREA`
+    - Speed: `INTER_NEAREST > INTER_LINEAR > INTER_AREA`
     ```
     === Resize benchmark ===
     INTER_NEAREST : 0.0061 ms
