@@ -945,8 +945,23 @@ def run_and_decode_litert(
         if session_info.get("swap_logit_range") and quality is not None and quality.shape == cls.shape and quality.shape[-1] == na:
             qmax = float(np.max(quality))
             cmax = float(np.max(cls))
-            if qmax > (cmax + 4.0):
-                print("[WARN] Swapping quality/cls outputs based on logit range.")
+            qhist = session_info.setdefault("swap_logit_qmax", [])
+            chist = session_info.setdefault("swap_logit_cmax", [])
+            qhist.append(qmax)
+            chist.append(cmax)
+            max_samples = int(session_info.get("swap_logit_samples", 5))
+            if len(qhist) > max_samples:
+                qhist.pop(0)
+                chist.pop(0)
+            if not session_info.get("swap_logit_decided") and len(qhist) >= max_samples:
+                avg_q = float(np.mean(qhist))
+                avg_c = float(np.mean(chist))
+                if avg_q > (avg_c + 4.0):
+                    print("[WARN] Swapping quality/cls outputs based on logit range (locked).")
+                    session_info["swap_logit_decided"] = "swap"
+                else:
+                    session_info["swap_logit_decided"] = "noswap"
+            if session_info.get("swap_logit_decided") == "swap":
                 quality, cls = cls, quality
 
         def _nhwc_to_nchw(arr: np.ndarray) -> np.ndarray:
@@ -1235,6 +1250,12 @@ def build_args():
         help="Score mode for raw outputs (decoded outputs ignore this).",
     )
     parser.add_argument(
+        "--swap-logit-samples",
+        type=int,
+        default=5,
+        help="Number of frames to decide quality/cls swap (integer_quant only).",
+    )
+    parser.add_argument(
         "--record",
         type=str,
         default="camera_record.mp4",
@@ -1271,6 +1292,7 @@ def main():
             print(f"[WARN] Overriding --img-size {img_size} to match LiteRT input {input_hw}.")
             img_size = input_hw
     session_info["score_mode"] = args.score_mode
+    session_info["swap_logit_samples"] = int(args.swap_logit_samples)
 
     if args.images:
         run_images(
