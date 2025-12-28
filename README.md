@@ -158,7 +158,7 @@ gh release download onnx -R PINTO0309/UHD
   
     **I don't own an ESP32, so I haven't checked its operation.**
 
-    |Var|ESPDL size|static w/o post<br>s3|latency|static w/o post<br>p4|latency|
+    |Var|ESPDL size|static w/o post<br>s3|s3<br>latency|static w/o post<br>p4|p4<br>latency|
     |:-:|:-:|:-:|:-:|:-:|:-:|
     |R|222.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)||[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
     |Y|389.0 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|29.56 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
