@@ -2406,3 +2406,5 @@ If you find this project useful, please consider citing:
 - https://github.com/espressif/esp-who
 - https://github.com/espressif/esp-who/blob/master/docs/en/get-started/ESP32-S3-EYE_Getting_Started_Guide.md
 - [ESP32 - ESP-IDF](https://zenn.dev/pinto0309/scraps/6b985872ea9a89)
+
+  https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
