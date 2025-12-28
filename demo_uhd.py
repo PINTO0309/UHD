@@ -220,13 +220,77 @@ def _detect_raw_parts(outputs_info) -> Optional[dict]:
 def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
     name_map = {d.get("name", "").lower(): d for d in output_details}
     if "box" in name_map and "obj" in name_map and "cls" in name_map:
-        return {
+        raw_parts = {
             "box": name_map["box"]["index"],
             "obj": name_map["obj"]["index"],
             "quality": name_map.get("quality", {}).get("index") if "quality" in name_map else None,
             "cls": name_map["cls"]["index"],
         }
+        detail_map = {d["index"]: d for d in output_details}
+        box_detail = detail_map.get(raw_parts["box"])
+        obj_detail = detail_map.get(raw_parts["obj"])
+        cls_detail = detail_map.get(raw_parts["cls"])
+        if not box_detail or not obj_detail or not cls_detail:
+            return None
+        box_shape = box_detail.get("shape")
+        obj_shape = obj_detail.get("shape")
+        cls_shape = cls_detail.get("shape")
+        if box_shape is None or obj_shape is None or cls_shape is None:
+            return None
+        a = int(obj_shape[-1])
+        if a <= 0 or int(box_shape[-1]) != 4 * a:
+            return None
+        if int(cls_shape[-1]) % a != 0:
+            return None
+        if raw_parts.get("quality") is not None:
+            quality_detail = detail_map.get(raw_parts["quality"])
+            quality_shape = quality_detail.get("shape") if quality_detail else None
+            if quality_shape is None or int(quality_shape[-1]) != a:
+                return None
+        return raw_parts
     return None
+
+
+def _infer_raw_parts_litert(
+    interpreter,
+    input_details: dict,
+    output_details: List[dict],
+) -> Optional[dict]:
+    candidates = [d for d in output_details if d.get("shape") is not None and len(d["shape"]) == 4]
+    if len(candidates) < 3:
+        return None
+    ordered = [(d["index"], int(d["shape"][-1])) for d in output_details if d.get("shape") is not None and len(d["shape"]) == 4]
+    a = min(ch for _, ch in ordered)
+    if a <= 0:
+        return None
+
+    box_idx = None
+    for idx, ch in ordered:
+        if ch == 4 * a:
+            box_idx = idx
+            break
+    if box_idx is None:
+        return None
+
+    a_candidates = [idx for idx, ch in ordered if ch == a and idx != box_idx]
+    cls_candidates = [idx for idx, ch in ordered if (ch % a == 0 and ch not in (a, 4 * a) and idx != box_idx)]
+
+    cls_idx = cls_candidates[0] if cls_candidates else None
+    obj_idx = a_candidates[0] if a_candidates else None
+    quality_idx = None
+    if len(a_candidates) >= 2:
+        quality_idx = a_candidates[1]
+    if cls_idx is None:
+        if len(a_candidates) >= 3:
+            cls_idx = a_candidates[2]
+        elif len(a_candidates) == 2:
+            cls_idx = a_candidates[1]
+            quality_idx = None
+
+    if obj_idx is None or cls_idx is None:
+        return None
+
+    return {"box": box_idx, "obj": obj_idx, "quality": quality_idx, "cls": cls_idx}
 
 
 def _assemble_raw_from_parts(
@@ -274,12 +338,27 @@ def _strip_quant_suffix(stem: str) -> str:
 
 
 def _candidate_sidecar_stems(stem: str) -> List[str]:
-    base = _strip_quant_suffix(stem)
-    stems = [stem, base]
-    for suffix in ("_nocat", "_noconcat"):
-        if base.endswith(suffix):
-            stems.append(base[: -len(suffix)])
-    return list(dict.fromkeys(stems))
+    suffixes = (
+        "_with_int16_act",
+        "_int16_act",
+        "_integer_quant",
+        "_full_integer_quant",
+        "_float32",
+        "_nocat",
+        "_noconcat",
+    )
+    stems = {stem, _strip_quant_suffix(stem)}
+    changed = True
+    while changed:
+        changed = False
+        for s in list(stems):
+            for suf in suffixes:
+                if s.endswith(suf):
+                    trimmed = s[: -len(suf)]
+                    if trimmed and trimmed not in stems:
+                        stems.add(trimmed)
+                        changed = True
+    return list(stems)
 
 
 def _load_litert_sidecar(path: Path, name: str) -> Optional[np.ndarray]:
@@ -376,6 +455,7 @@ def decode_ultratinyod_raw(
     conf_thresh: float,
     has_quality: bool = False,
     wh_scale: Optional[np.ndarray] = None,
+    score_mode: str = "obj_quality_cls",
     topk: int = 100,
 ) -> np.ndarray:
     """
@@ -404,9 +484,18 @@ def decode_ultratinyod_raw(
 
     obj_sig = sigmoid_np(obj)
     cls_sig = sigmoid_np(cls_logits)
-    score_base = obj_sig
-    if quality is not None:
-        score_base = score_base * sigmoid_np(quality)
+    quality_sig = sigmoid_np(quality) if quality is not None else None
+    mode = str(score_mode or "obj_quality_cls").lower()
+    if mode == "cls":
+        score_base = np.ones_like(obj_sig, dtype=np.float32)
+    elif mode == "quality_cls" and quality_sig is not None:
+        score_base = quality_sig
+    elif mode == "obj_cls":
+        score_base = obj_sig
+    else:
+        score_base = obj_sig
+        if quality_sig is not None:
+            score_base = score_base * quality_sig
     scores = score_base[..., None] * cls_sig  # [B, A, H, W, C]
 
     gy, gx = np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
@@ -610,6 +699,8 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
     output_details = interpreter.get_output_details()
     anchor_hint = _parse_anchor_hint_from_path(tflite_path)
     raw_parts = _detect_raw_parts_litert(output_details)
+    if raw_parts is None:
+        raw_parts = _infer_raw_parts_litert(interpreter, input_details, output_details)
 
     decoded_output = None
     if raw_parts is None:
@@ -663,6 +754,7 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
     input_hw = None
     if input_shape is not None and len(input_shape) >= 3:
         input_hw = (int(input_shape[1]), int(input_shape[2]))
+    swap_on_logit = ("_integer_quant" in Path(tflite_path).stem) and ("_full_integer_quant" not in Path(tflite_path).stem)
 
     if decoded_output is not None:
         kind = "decoded output"
@@ -676,6 +768,9 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
             if o.get("index") == decoded_output:
                 output_shape = o.get("shape")
                 break
+    if output_shape is None and raw_parts is not None:
+        detail_map = {d["index"]: d for d in output_details}
+        output_shape = detail_map.get(raw_parts["box"], {}).get("shape")
     if output_shape is None and output_details:
         output_shape = output_details[0].get("shape")
     print(f"[INFO] Detected {kind} (output shape: {output_shape})")
@@ -697,6 +792,7 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
         "backend": "litert",
         "window_title": "UHD LiteRT",
         "input_hw": input_hw if input_hw else img_size,
+        "swap_logit_range": swap_on_logit,
     }
 
 
@@ -706,6 +802,7 @@ def run_and_decode_onnx(
     inp: np.ndarray,
     conf_thresh: float,
 ) -> np.ndarray:
+    score_mode = session_info.get("score_mode", "obj_quality_cls")
     if session_info.get("raw_parts"):
         parts = session_info["raw_parts"]
         anchors = session_info.get("anchors")
@@ -755,6 +852,7 @@ def run_and_decode_onnx(
             conf_thresh=0.0,
             has_quality=has_quality,
             wh_scale=wh_scale,
+            score_mode=score_mode,
         )
 
     if session_info.get("decoded", False):
@@ -804,6 +902,7 @@ def run_and_decode_onnx(
         conf_thresh=0.0,  # avoid double-thresholding; postprocess will apply user conf
         has_quality=session_info.get("has_quality", False),
         wh_scale=wh_scale,
+        score_mode=score_mode,
     )
 
 
@@ -813,6 +912,7 @@ def run_and_decode_litert(
     inp: np.ndarray,
     conf_thresh: float,
 ) -> np.ndarray:
+    score_mode = session_info.get("score_mode", "obj_quality_cls")
     interpreter.set_tensor(session_info["input_index"], inp)
     interpreter.invoke()
 
@@ -837,12 +937,17 @@ def run_and_decode_litert(
 
         na = int(obj.shape[-1])
         if box.shape[-1] != na * 4:
-            if quality is not None and quality.shape[-1] == na * 4:
-                print("[WARN] Swapping box/quality outputs based on channel size.")
-                box, quality = quality, box
-            elif cls.shape[-1] == na * 4:
-                print("[WARN] Swapping box/cls outputs based on channel size.")
-                box, cls = cls, box
+            raise ValueError(f"Unexpected box channels {box.shape[-1]} for anchors={na}.")
+        if quality is not None and quality.shape[-1] != na:
+            raise ValueError(f"Unexpected quality channels {quality.shape[-1]} for anchors={na}.")
+        if cls.shape[-1] % na != 0:
+            raise ValueError(f"Unexpected cls channels {cls.shape[-1]} for anchors={na}.")
+        if session_info.get("swap_logit_range") and quality is not None and quality.shape == cls.shape and quality.shape[-1] == na:
+            qmax = float(np.max(quality))
+            cmax = float(np.max(cls))
+            if qmax > (cmax + 4.0):
+                print("[WARN] Swapping quality/cls outputs based on logit range.")
+                quality, cls = cls, quality
 
         def _nhwc_to_nchw(arr: np.ndarray) -> np.ndarray:
             return np.transpose(arr, (0, 3, 1, 2))
@@ -872,6 +977,7 @@ def run_and_decode_litert(
             conf_thresh=0.0,
             has_quality=has_quality,
             wh_scale=wh_scale,
+            score_mode=score_mode,
         )
 
     if session_info.get("decoded", False):
@@ -940,6 +1046,7 @@ def run_and_decode_litert(
         conf_thresh=0.0,
         has_quality=session_info.get("has_quality", False),
         wh_scale=wh_scale,
+        score_mode=score_mode,
     )
 
 
@@ -1121,6 +1228,13 @@ def build_args():
     parser.add_argument("--img-size", type=str, default="64x64", help="Input size HxW, e.g., 64x64.")
     parser.add_argument("--conf-thresh", type=float, default=0.45, help="Confidence threshold.")
     parser.add_argument(
+        "--score-mode",
+        type=str,
+        default="obj_quality_cls",
+        choices=["obj_quality_cls", "quality_cls", "obj_cls", "cls"],
+        help="Score mode for raw outputs (decoded outputs ignore this).",
+    )
+    parser.add_argument(
         "--record",
         type=str,
         default="camera_record.mp4",
@@ -1156,6 +1270,7 @@ def main():
         if input_hw and not session_info.get("dynamic_resize", False) and img_size != input_hw:
             print(f"[WARN] Overriding --img-size {img_size} to match LiteRT input {input_hw}.")
             img_size = input_hw
+    session_info["score_mode"] = args.score_mode
 
     if args.images:
         run_images(
