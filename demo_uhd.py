@@ -763,17 +763,19 @@ def run_images(
         else:
             inp = preprocess(img_bgr, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
+        used_thresh = conf_thresh
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
+            used_thresh = fallback_thresh
         if use_nms:
             boxes = non_max_suppression(boxes, nms_iou)
         base = cv2.resize(img_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR) if actual_size else img_bgr
         vis_out = draw_boxes(base, boxes, (0, 0, 255))
         save_path = out_dir / img_path.name
         cv2.imwrite(str(save_path), vis_out)
-        print(f"Saved {save_path} (detections: {len(boxes)})")
+        print(f"Saved {save_path} (detections: {len(boxes)}, conf_thresh={used_thresh:.2f})")
 
 
 def run_camera(
@@ -808,10 +810,12 @@ def run_camera(
         else:
             inp = preprocess(frame, img_size, dynamic_resize=dynamic_resize)
         dets = run_and_decode(session, session_info, inp, conf_thresh)
+        used_thresh = conf_thresh
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
         if not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
+            used_thresh = fallback_thresh
         if use_nms:
             boxes = non_max_suppression(boxes, nms_iou)
         base = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR) if actual_size else frame
@@ -859,6 +863,9 @@ def run_camera(
                 writer = cv2.VideoWriter(str(record_path), fourcc, fps, (w, h))
             writer.write(vis_out)
 
+        if boxes:
+            print(f"[INFO] detections={len(boxes)} conf_thresh={used_thresh:.2f}")
+
         cv2.imshow(f"{window_title} (press q to quit)", vis_out)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
@@ -888,7 +895,7 @@ def build_args():
     model.add_argument("--tflite", help="Path to LiteRT (TFLite) model.")
     parser.add_argument("--output", type=str, default="demo_output", help="Output directory for image mode.")
     parser.add_argument("--img-size", type=str, default="64x64", help="Input size HxW, e.g., 64x64.")
-    parser.add_argument("--conf-thresh", type=float, default=0.90, help="Confidence threshold.")
+    parser.add_argument("--conf-thresh", type=float, default=0.45, help="Confidence threshold.")
     parser.add_argument(
         "--record",
         type=str,
