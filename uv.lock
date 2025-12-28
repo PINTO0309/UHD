@@ -892,6 +892,15 @@ wheels = [
 ]
 
 [[package]]
+name = "onnx2tf"
+version = "1.28.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/d5/5395094d968387cdd1c9aa977f8cb679aaf6513bbdbe491f08b149c3d8c9/onnx2tf-1.28.8.tar.gz", hash = "sha256:6e51c2de4f7ea5c326a152fa7abfc0b4e4164e10e5b843a7e63501644414e868", size = 361970, upload-time = "2025-12-28T13:42:05.991Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/0b/332cb01941fbbebc76efc965e6ca3118b02672cf443f19c4107d917b7d0a/onnx2tf-1.28.8-py3-none-any.whl", hash = "sha256:a332ae4c8d9c23636c4ccdb3ae1c9537075c0fe8d81b33f031b9bdc7cd36f878", size = 469211, upload-time = "2025-12-28T13:42:04.384Z" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.23.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1402,6 +1411,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "onnx" },
+    { name = "onnx2tf" },
     { name = "onnxruntime-gpu" },
     { name = "onnxsim" },
     { name = "opencv-python" },
@@ -1428,6 +1438,7 @@ requires-dist = [
     { name = "matplotlib", specifier = "==3.10.7" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "onnx", specifier = "==1.19.0" },
+    { name = "onnx2tf", specifier = "==1.28.8" },
     { name = "onnxruntime-gpu", specifier = "==1.23.0" },
     { name = "onnxsim", specifier = "==0.4.30" },
     { name = "opencv-python", specifier = "==4.11.0.86" },
