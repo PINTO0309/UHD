@@ -254,6 +254,37 @@ gh release download onnx -R PINTO0309/UHD
     |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_yuv422_distill_static_nopost_espdl_p4.tar.gz)|
 
 - `opencv_inter_nearest_y` + Optimized for Y (Luminance) only + Suitable for quantization
+  - `Y`
+    ```python
+    img_u8 = np.ones([64,64,3], dtype=np.uint8)
+    yuv = cv2.cvtColor(img_u8, cv2.COLOR_RGB2YUV)
+    y = yuv[..., 0:1]
+    print(y.shape)
+    (64, 64, 1)
+    ```
+  - With post-process model
+    ```
+    input_name.1: input_y shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: score_classid_cxcywh shape: [1, 100, 6] dtype: float32
+    ```
+  - Without post-process model
+    ```
+    input_name.1: input_yuv422 shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float32
+    output_name.2: anchors shape: [8, 2] dtype: float32
+    output_name.3: wh_scale shape: [8, 2] dtype: float32
+
+    https://github.com/PINTO0309/UHD/blob/e0bbfe69afa0da4f83cf1f09b530a500bcd2d685/demo_uhd.py#L203-L301
+
+    score = sigmoid(obj) * (sigmoid(quality)) * sigmoid(cls)
+    cx = (sigmoid(tx)+gx)/w
+    cy = (sigmoid(ty)+gy)/h
+    bw = anchor_w*softplus(tw)*wh_scale
+    bh = anchor_h*softplus(th)*wh_scale
+    boxes = (cx±bw/2, cy±bh/2)
+    ```
   - ONNX
 
     |Var|Param|FLOPs|@0.5|CPU<br>latency|ONNX<br>size|static|w/o post|dynamic|w/o post|
@@ -285,6 +316,43 @@ gh release download onnx -R PINTO0309/UHD
 
 - `opencv_inter_nearest_y_tri` + Optimized for Y (Luminance) only + Y ternarization + Suitable for quantization
   - `opencv_inter_nearest_y_tri` uses fixed Y thresholds (1/3, 2/3) to quantize to 3 levels: 0.0, 0.5, 1.0.
+  - `Y_TRI`
+    ```python
+    img_u8 = np.ones([64,64,3], dtype=np.uint8)
+    yuv = cv2.cvtColor(img_u8, cv2.COLOR_RGB2YUV)
+    y = yuv[..., 0:1]
+    y = y / 255.0
+    y = np.clip(y, 0.0, 1.0)
+    out = np.zeros_like(y, dtype=np.float32)
+    mid_mask = (y >= t1) & (y < t2)
+    out[mid_mask] = 0.5
+    out[y >= t2] = 1.0
+    print(out.shape)
+    (64, 64, 1)
+    ```
+  - With post-process model
+    ```
+    input_name.1: input_y_tri shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: score_classid_cxcywh shape: [1, 100, 6] dtype: float32
+    ```
+  - Without post-process model
+    ```
+    input_name.1: input_y_tri shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float32
+    output_name.2: anchors shape: [8, 2] dtype: float32
+    output_name.3: wh_scale shape: [8, 2] dtype: float32
+
+    https://github.com/PINTO0309/UHD/blob/e0bbfe69afa0da4f83cf1f09b530a500bcd2d685/demo_uhd.py#L203-L301
+
+    score = sigmoid(obj) * (sigmoid(quality)) * sigmoid(cls)
+    cx = (sigmoid(tx)+gx)/w
+    cy = (sigmoid(ty)+gy)/h
+    bw = anchor_w*softplus(tw)*wh_scale
+    bh = anchor_h*softplus(th)*wh_scale
+    boxes = (cx±bw/2, cy±bh/2)
+    ```
 
   **WIP**
 
@@ -292,6 +360,40 @@ gh release download onnx -R PINTO0309/UHD
 
 - `opencv_inter_nearest_y_bin` + Optimized for Y (Luminance) only + Y binarization + Suitable for quantization
   - `opencv_inter_nearest_y_bin` uses a fixed Y threshold (0.5) to binarize to 0.0/1.0.
+  - `Y_BIN`
+    ```python
+    img_u8 = np.ones([64,64,3], dtype=np.uint8)
+    yuv = cv2.cvtColor(img_u8, cv2.COLOR_RGB2YUV)
+    y = yuv[..., 0:1]
+    y = y / 255.0
+    y = np.clip(y, 0.0, 1.0)
+    out = (y >= threshold).astype(np.float32)
+    print(out.shape)
+    (64, 64, 1)
+    ```
+  - With post-process model
+    ```
+    input_name.1: input_y_bin shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: score_classid_cxcywh shape: [1, 100, 6] dtype: float32
+    ```
+  - Without post-process model
+    ```
+    input_name.1: input_y_bin shape: [1, 1, 64, 64] dtype: float32
+
+    output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float32
+    output_name.2: anchors shape: [8, 2] dtype: float32
+    output_name.3: wh_scale shape: [8, 2] dtype: float32
+
+    https://github.com/PINTO0309/UHD/blob/e0bbfe69afa0da4f83cf1f09b530a500bcd2d685/demo_uhd.py#L203-L301
+
+    score = sigmoid(obj) * (sigmoid(quality)) * sigmoid(cls)
+    cx = (sigmoid(tx)+gx)/w
+    cy = (sigmoid(ty)+gy)/h
+    bw = anchor_w*softplus(tw)*wh_scale
+    bh = anchor_h*softplus(th)*wh_scale
+    boxes = (cx±bw/2, cy±bh/2)
+    ```
 
   **WIP**
 
