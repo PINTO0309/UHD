@@ -2412,7 +2412,11 @@ If you find this project useful, please consider citing:
 - https://github.com/espressif/esp-who
 - https://github.com/espressif/esp-who/blob/master/docs/en/get-started/ESP32-S3-EYE_Getting_Started_Guide.md
 - [ESP32 - ESP-IDF](https://zenn.dev/pinto0309/scraps/6b985872ea9a89)
+  - ESP-WHO + human_face_recognition
 
-  https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
+    https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
 
 - **[WIP]** ESP32 UHD: https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
+  - `opencv_inter_nearest` + `Z`, 33ms/pred
+
+    https://github.com/user-attachments/assets/191894fe-fc70-4158-a8f2-474ba18942ab
