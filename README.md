@@ -160,15 +160,13 @@ gh release download onnx -R PINTO0309/UHD
 
     |Var|ESPDL size|static w/o post<br>s3|s3<br>latency|static w/o post<br>p4|p4<br>latency|
     |:-:|:-:|:-:|:-:|:-:|:-:|
-    |R|222.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|11.28 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |Y|389.0 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|26.15 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |Z|617.4 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|33.66 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |A|911.6 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)| ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)| ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)| ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)| ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |T|2.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|-|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
-    |S|3.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_static_nopost_espdl.tar.gz)|-|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w80_64x64_opencv_inter_nearest_static_nopost_espdl_p4.tar.gz)||
+    |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|11.28 ms|||
+    |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|26.15 ms|||
+    |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|33.66 ms|||
+    |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|127.51 ms|||
+    |F| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
+    |P| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
+    |N| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
 
 - `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
   - `YUV422`
