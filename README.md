@@ -2004,13 +2004,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
 
   SIZE=64x64
   ANCHOR=8
@@ -2030,13 +2032,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
 
   SIZE=64x64
   ANCHOR=8
@@ -2056,13 +2060,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
 
   SIZE=64x64
   ANCHOR=8
@@ -2082,13 +2088,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
 
   SIZE=64x64
   ANCHOR=8
@@ -2108,13 +2116,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
 
   SIZE=64x64
   ANCHOR=8
@@ -2134,13 +2144,15 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
   --opset 17 \
-  --no-merge-postprocess
+  --no-merge-postprocess \
+  --noconcat_box_obj_quality_cls
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
   --output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_dynamic_nopost.onnx \
   --opset 17 \
   --no-merge-postprocess \
-  --dynamic-resize
+  --dynamic-resize \
+  --noconcat_box_obj_quality_cls
   ```
 
 </details>
