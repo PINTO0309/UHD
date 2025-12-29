@@ -68,7 +68,14 @@ class ModelEma:
         ema_buffers = dict(self.ema.named_buffers())
         model_buffers = dict(model.named_buffers())
         for k, ema_b in ema_buffers.items():
-            model_b = model_buffers[k]
+            model_b = model_buffers.get(k)
+            if model_b is None:
+                continue
+            if ema_b.shape != model_b.shape:
+                if not hasattr(self, "_warned_shape_mismatch"):
+                    print("[WARN] EMA skipped buffers with shape mismatch (likely QAT observers).")
+                    self._warned_shape_mismatch = True
+                continue
             if model_b.dtype.is_floating_point:
                 if self.device is not None:
                     model_b = model_b.to(self.device)
@@ -87,11 +94,17 @@ def prepare_qat(model: torch.nn.Module, backend: str, fuse: bool) -> None:
     torch.backends.quantized.engine = backend
     if fuse:
         if hasattr(model, "fuse_model"):
-            model.fuse_model()
+            model.fuse_model(qat=True)
         else:
             print("[WARN] Requested QAT fusion, but fuse_model is not implemented for this architecture.")
     model.qconfig = quant.get_default_qat_qconfig(backend)
     quant.prepare_qat(model, inplace=True)
+
+
+def freeze_bn_stats(model: torch.nn.Module) -> None:
+    for module in model.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
 
 
 def step_qat_schedule(model: torch.nn.Module, epoch: int, disable_obs_epoch: int, freeze_bn_epoch: int) -> None:
@@ -100,7 +113,11 @@ def step_qat_schedule(model: torch.nn.Module, epoch: int, disable_obs_epoch: int
     if disable_obs_epoch and (epoch + 1) == disable_obs_epoch:
         quant.disable_observer(model)
     if freeze_bn_epoch and (epoch + 1) == freeze_bn_epoch:
-        quant.freeze_bn_stats(model)
+        if hasattr(quant, "freeze_bn_stats"):
+            quant.freeze_bn_stats(model)
+        else:
+            freeze_bn_stats(model)
+        model._qat_freeze_bn = True
 
 
 def parse_args():
@@ -760,8 +777,11 @@ def train_one_epoch(
     anchor_assigner: str = "legacy",
     anchor_cls_loss: str = "bce",
     simota_topk: int = 10,
+    qat_freeze_bn: bool = False,
 ) -> Dict[str, float]:
     model.train()
+    if qat_freeze_bn:
+        freeze_bn_stats(model)
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     anchor_head = bool(use_anchor or arch == "ultratinyod")
     total_loss = 0.0
@@ -2346,6 +2366,7 @@ def main():
             anchor_assigner=anchor_assigner,
             anchor_cls_loss=anchor_cls_loss,
             simota_topk=simota_topk,
+            qat_freeze_bn=bool(getattr(model, "_qat_freeze_bn", False)),
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
         train_msg = f"epoch {epoch+1}/{args.epochs} train: {fmt_train}"

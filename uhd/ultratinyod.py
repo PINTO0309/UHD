@@ -83,15 +83,16 @@ class ConvBNAct(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.conv(x)))
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         try:
             import torch.ao.quantization as quant
         except Exception:
             return
+        fuser = quant.fuse_modules_qat if qat else quant.fuse_modules
         if isinstance(self.act, nn.ReLU):
-            quant.fuse_modules(self, ["conv", "bn", "act"], inplace=True)
+            fuser(self, ["conv", "bn", "act"], inplace=True)
         else:
-            quant.fuse_modules(self, ["conv", "bn"], inplace=True)
+            fuser(self, ["conv", "bn"], inplace=True)
 
 
 class DWConv(nn.Module):
@@ -141,11 +142,11 @@ class DWConv(nn.Module):
         x = self.pw(x)
         return x
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.dw, "fuse_model"):
-            self.dw.fuse_model()
+            self.dw.fuse_model(qat=qat)
         if hasattr(self.pw, "fuse_model"):
-            self.pw.fuse_model()
+            self.pw.fuse_model(qat=qat)
 
 
 class EfficientSE(nn.Module):
@@ -184,11 +185,12 @@ class ReceptiveFieldEnhancer(nn.Module):
         b2 = self.branch_wide(x)
         return x + self.fuse(torch.cat([b1, b2], dim=1))
 
-    def _fuse_branch(self, seq: nn.Sequential) -> None:
+    def _fuse_branch(self, seq: nn.Sequential, qat: bool) -> None:
         try:
             import torch.ao.quantization as quant
         except Exception:
             return
+        fuser = quant.fuse_modules_qat if qat else quant.fuse_modules
         if not isinstance(seq, nn.Sequential):
             return
         if len(seq) < 2:
@@ -196,15 +198,15 @@ class ReceptiveFieldEnhancer(nn.Module):
         if not isinstance(seq[0], nn.Conv2d) or not isinstance(seq[1], nn.BatchNorm2d):
             return
         if len(seq) >= 3 and isinstance(seq[2], nn.ReLU):
-            quant.fuse_modules(seq, ["0", "1", "2"], inplace=True)
+            fuser(seq, ["0", "1", "2"], inplace=True)
         else:
-            quant.fuse_modules(seq, ["0", "1"], inplace=True)
+            fuser(seq, ["0", "1"], inplace=True)
 
-    def fuse_model(self) -> None:
-        self._fuse_branch(self.branch_dilated)
-        self._fuse_branch(self.branch_wide)
+    def fuse_model(self, qat: bool = False) -> None:
+        self._fuse_branch(self.branch_dilated, qat)
+        self._fuse_branch(self.branch_wide, qat)
         if hasattr(self.fuse, "fuse_model"):
-            self.fuse.fuse_model()
+            self.fuse.fuse_model(qat=qat)
 
 
 class SPPFmin(nn.Module):
@@ -232,11 +234,11 @@ class SPPFmin(nn.Module):
         x = self.cv2(x)
         return x
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.cv1, "fuse_model"):
-            self.cv1.fuse_model()
+            self.cv1.fuse_model(qat=qat)
         if hasattr(self.cv2, "fuse_model"):
-            self.cv2.fuse_model()
+            self.cv2.fuse_model(qat=qat)
 
 
 # ============================================================
@@ -302,17 +304,17 @@ class UltraTinyODBackbone(nn.Module):
         x = self.sppf(x4)
         return x
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.stem, "fuse_model"):
-            self.stem.fuse_model()
+            self.stem.fuse_model(qat=qat)
         for block in (self.block1, self.block2, self.block3, self.block4):
             if hasattr(block, "fuse_model"):
-                block.fuse_model()
+                block.fuse_model(qat=qat)
         if self.use_residual:
             if hasattr(self.block3_skip, "fuse_model"):
-                self.block3_skip.fuse_model()
+                self.block3_skip.fuse_model(qat=qat)
         if hasattr(self.sppf, "fuse_model"):
-            self.sppf.fuse_model()
+            self.sppf.fuse_model(qat=qat)
 
 
 @dataclass
@@ -608,60 +610,61 @@ class UltraTinyODHead(nn.Module):
             self.raw_map_perm = self._build_raw_map_perm().to(anchor_tensor.device)
         self.grid = None
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.context, "fuse_model"):
-            self.context.fuse_model()
+            self.context.fuse_model(qat=qat)
         if self.use_improved_head and self.context_res is not None:
             for layer in self.context_res:
                 if hasattr(layer, "fuse_model"):
-                    layer.fuse_model()
+                    layer.fuse_model(qat=qat)
         if self.head_rfb is not None and hasattr(self.head_rfb, "fuse_model"):
-            self.head_rfb.fuse_model()
+            self.head_rfb.fuse_model(qat=qat)
         if self.large_obj_down is not None:
             try:
                 import torch.ao.quantization as quant
             except Exception:
                 quant = None
-            if quant is not None and isinstance(self.large_obj_down, nn.Sequential) and len(self.large_obj_down) >= 2:
+            fuser = quant.fuse_modules_qat if (quant is not None and qat) else (quant.fuse_modules if quant is not None else None)
+            if fuser is not None and isinstance(self.large_obj_down, nn.Sequential) and len(self.large_obj_down) >= 2:
                 if isinstance(self.large_obj_down[0], nn.Conv2d) and isinstance(self.large_obj_down[1], nn.BatchNorm2d):
                     if len(self.large_obj_down) >= 3 and isinstance(self.large_obj_down[2], nn.ReLU):
-                        quant.fuse_modules(self.large_obj_down, ["0", "1", "2"], inplace=True)
+                        fuser(self.large_obj_down, ["0", "1", "2"], inplace=True)
                     else:
-                        quant.fuse_modules(self.large_obj_down, ["0", "1"], inplace=True)
+                        fuser(self.large_obj_down, ["0", "1"], inplace=True)
             if len(self.large_obj_down) >= 4 and hasattr(self.large_obj_down[3], "fuse_model"):
-                self.large_obj_down[3].fuse_model()
+                self.large_obj_down[3].fuse_model(qat=qat)
         if self.large_obj_blocks is not None:
             for layer in self.large_obj_blocks:
                 if hasattr(layer, "fuse_model"):
-                    layer.fuse_model()
+                    layer.fuse_model(qat=qat)
         if hasattr(self.large_obj_fuse, "fuse_model"):
-            self.large_obj_fuse.fuse_model()
+            self.large_obj_fuse.fuse_model(qat=qat)
         if self.use_iou_aware_head:
             for layer in self.box_tower:
                 if hasattr(layer, "fuse_model"):
-                    layer.fuse_model()
+                    layer.fuse_model(qat=qat)
         else:
             if hasattr(self.box_conv, "fuse_model"):
-                self.box_conv.fuse_model()
+                self.box_conv.fuse_model(qat=qat)
         if self.has_quality:
             if self.use_iou_aware_head:
                 for layer in self.quality_tower:
                     if hasattr(layer, "fuse_model"):
-                        layer.fuse_model()
+                        layer.fuse_model(qat=qat)
             else:
                 if hasattr(self.quality_conv, "fuse_model"):
-                    self.quality_conv.fuse_model()
+                    self.quality_conv.fuse_model(qat=qat)
         if hasattr(self.obj_conv, "fuse_model"):
-            self.obj_conv.fuse_model()
+            self.obj_conv.fuse_model(qat=qat)
         if self.use_iou_aware_head:
             for layer in self.cls_tower:
                 if hasattr(layer, "fuse_model"):
-                    layer.fuse_model()
+                    layer.fuse_model(qat=qat)
         else:
             if hasattr(self.cls_reduce, "fuse_model"):
-                self.cls_reduce.fuse_model()
+                self.cls_reduce.fuse_model(qat=qat)
             if hasattr(self.cls_conv, "fuse_model"):
-                self.cls_conv.fuse_model()
+                self.cls_conv.fuse_model(qat=qat)
 
     def reset_output_bias(self, p_obj: float = 0.01, p_cls: float = 0.01) -> None:
         """Set conservative initial biases to reduce early false positives."""
@@ -924,11 +927,11 @@ class UltraTinyOD(nn.Module):
         self.anchors = self.head.anchors
         self.num_anchors = self.head.num_anchors
 
-    def fuse_model(self) -> None:
+    def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.backbone, "fuse_model"):
-            self.backbone.fuse_model()
+            self.backbone.fuse_model(qat=qat)
         if hasattr(self.head, "fuse_model"):
-            self.head.fuse_model()
+            self.head.fuse_model(qat=qat)
 
 
 # ============================================================
