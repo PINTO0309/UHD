@@ -2187,6 +2187,24 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl \
 --target esp32p4 \
 --calib-algorithm kl
+
+### WIP
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
+--int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /backbone/block3_skip/conv/Conv
 ```
 
 <details><summary>Click to expand</summary>
