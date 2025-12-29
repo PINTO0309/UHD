@@ -81,6 +81,28 @@ class ModelEma:
         model.load_state_dict(self.ema.state_dict())
 
 
+def prepare_qat(model: torch.nn.Module, backend: str, fuse: bool) -> None:
+    import torch.ao.quantization as quant
+
+    torch.backends.quantized.engine = backend
+    if fuse:
+        if hasattr(model, "fuse_model"):
+            model.fuse_model()
+        else:
+            print("[WARN] Requested QAT fusion, but fuse_model is not implemented for this architecture.")
+    model.qconfig = quant.get_default_qat_qconfig(backend)
+    quant.prepare_qat(model, inplace=True)
+
+
+def step_qat_schedule(model: torch.nn.Module, epoch: int, disable_obs_epoch: int, freeze_bn_epoch: int) -> None:
+    import torch.ao.quantization as quant
+
+    if disable_obs_epoch and (epoch + 1) == disable_obs_epoch:
+        quant.disable_observer(model)
+    if freeze_bn_epoch and (epoch + 1) == freeze_bn_epoch:
+        quant.freeze_bn_stats(model)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Ultra-lightweight detection trainer (CNN/Transformer).")
     parser.add_argument("--arch", choices=["cnn", "transformer", "ultratinyod"], default="cnn")
@@ -201,6 +223,11 @@ def parse_args():
     parser.add_argument("--conf-thresh", type=float, default=0.3)
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
+    parser.add_argument("--qat", action="store_true", help="Enable QAT via torch.ao.quantization.")
+    parser.add_argument("--qat-backend", choices=["fbgemm", "qnnpack"], default="fbgemm", help="Quantization backend for QAT.")
+    parser.add_argument("--qat-fuse", action="store_true", help="Fuse Conv+BN(+ReLU) before QAT.")
+    parser.add_argument("--qat-disable-observer-epoch", type=int, default=2, help="Epoch (1-based) to disable observers (0 to skip).")
+    parser.add_argument("--qat-freeze-bn-epoch", type=int, default=3, help="Epoch (1-based) to freeze BN stats (0 to skip).")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
     parser.add_argument("--use-ema", action="store_true", help="Enable EMA of model weights for evaluation/checkpointing.")
     parser.add_argument("--ema-decay", type=float, default=0.9998, help="EMA decay factor (ignored if EMA disabled).")
@@ -1858,6 +1885,9 @@ def main():
             f.write(existing_log)
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
+    if args.qat and use_amp:
+        print("[WARN] QAT with AMP is not supported reliably; disabling AMP.")
+        use_amp = False
     if resize_mode == YUV422_RESIZE_MODE:
         input_channels = 2
     elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):
@@ -1944,6 +1974,8 @@ def main():
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
     ema_helper = None
+    pending_ema_state = None
+    pending_ema_updates = 0
     teacher_backbone_model = None
     teacher_feature_dim = None
     feature_adapter = None
@@ -1957,18 +1989,22 @@ def main():
             label=f"ckpt model ({'strict' if not args.ckpt_non_strict else 'non-strict'})",
         )
         if use_ema:
-            ema_helper = ModelEma(model, decay=ema_decay, device=device)
-            if "ema" in pretrain_meta and pretrain_meta["ema"] is not None:
-                _load_with_log(
-                    ema_helper.ema,
-                    pretrain_meta["ema"],
-                    strict=not args.ckpt_non_strict,
-                    label=f"ckpt ema ({'strict' if not args.ckpt_non_strict else 'non-strict'})",
-                )
-                if "ema_updates" in pretrain_meta:
-                    ema_helper.updates = int(pretrain_meta["ema_updates"])
+            if args.qat:
+                pending_ema_state = pretrain_meta.get("ema")
+                pending_ema_updates = int(pretrain_meta.get("ema_updates", 0) or 0)
             else:
-                ema_helper.ema.load_state_dict(model.state_dict())
+                ema_helper = ModelEma(model, decay=ema_decay, device=device)
+                if "ema" in pretrain_meta and pretrain_meta["ema"] is not None:
+                    _load_with_log(
+                        ema_helper.ema,
+                        pretrain_meta["ema"],
+                        strict=not args.ckpt_non_strict,
+                        label=f"ckpt ema ({'strict' if not args.ckpt_non_strict else 'non-strict'})",
+                    )
+                    if "ema_updates" in pretrain_meta:
+                        ema_helper.updates = int(pretrain_meta["ema_updates"])
+                else:
+                    ema_helper.ema.load_state_dict(model.state_dict())
         print(f"Initialized model weights from {args.ckpt}")
     backbone_cfg = None
     if arch_cnn_like and distill_feat > 0 and teacher_backbone:
@@ -1991,6 +2027,12 @@ def main():
             teacher_backbone_model = None
             feature_adapter = None
             distill_feat = 0.0
+    if args.qat:
+        if args.arch != "ultratinyod":
+            raise ValueError("QAT is currently supported only for arch=ultratinyod.")
+        if str(activation).lower() != "relu":
+            print(f"[WARN] QAT is most stable with ReLU; current activation={activation}.")
+        prepare_qat(model, backend=args.qat_backend, fuse=args.qat_fuse)
     params = list(model.parameters())
     if feature_adapter is not None and len(list(feature_adapter.parameters())) > 0:
         params += list(feature_adapter.parameters())
@@ -2014,7 +2056,10 @@ def main():
 
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
-        model.load_state_dict(ckpt["model"])
+        if args.qat:
+            _load_with_log(model, ckpt["model"], strict=False, label="resume model (qat)")
+        else:
+            model.load_state_dict(ckpt["model"])
         if feature_adapter is not None and "feat_adapter" in ckpt and ckpt["feat_adapter"] is not None:
             try:
                 feature_adapter.load_state_dict(ckpt["feat_adapter"])
@@ -2030,7 +2075,10 @@ def main():
             if ema_helper is None:
                 ema_helper = ModelEma(model, decay=ema_decay, device=device)
             if "ema" in ckpt and ckpt["ema"] is not None:
-                ema_helper.ema.load_state_dict(ckpt["ema"])
+                if args.qat:
+                    _load_with_log(ema_helper.ema, ckpt["ema"], strict=False, label="resume ema (qat)")
+                else:
+                    ema_helper.ema.load_state_dict(ckpt["ema"])
                 if "ema_updates" in ckpt:
                     ema_helper.updates = int(ckpt["ema_updates"])
             else:
@@ -2042,6 +2090,11 @@ def main():
 
     if use_ema and ema_helper is None:
         ema_helper = ModelEma(model, decay=ema_decay, device=device)
+        if pending_ema_state is not None:
+            _load_with_log(ema_helper.ema, pending_ema_state, strict=False, label="ckpt ema (qat)")
+            ema_helper.updates = int(pending_ema_updates)
+        else:
+            ema_helper.ema.load_state_dict(model.state_dict())
 
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -2259,6 +2312,8 @@ def main():
         return
 
     for epoch in range(start_epoch, args.epochs):
+        if args.qat:
+            step_qat_schedule(model, epoch, args.qat_disable_observer_epoch, args.qat_freeze_bn_epoch)
         train_logs = train_one_epoch(
             model,
             train_loader,

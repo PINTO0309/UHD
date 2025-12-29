@@ -83,6 +83,16 @@ class ConvBNAct(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.conv(x)))
 
+    def fuse_model(self) -> None:
+        try:
+            import torch.ao.quantization as quant
+        except Exception:
+            return
+        if isinstance(self.act, nn.ReLU):
+            quant.fuse_modules(self, ["conv", "bn", "act"], inplace=True)
+        else:
+            quant.fuse_modules(self, ["conv", "bn"], inplace=True)
+
 
 class DWConv(nn.Module):
     """
@@ -131,6 +141,12 @@ class DWConv(nn.Module):
         x = self.pw(x)
         return x
 
+    def fuse_model(self) -> None:
+        if hasattr(self.dw, "fuse_model"):
+            self.dw.fuse_model()
+        if hasattr(self.pw, "fuse_model"):
+            self.pw.fuse_model()
+
 
 class EfficientSE(nn.Module):
     """軽量eSE (squeeze + 1x1 conv)。"""
@@ -168,6 +184,28 @@ class ReceptiveFieldEnhancer(nn.Module):
         b2 = self.branch_wide(x)
         return x + self.fuse(torch.cat([b1, b2], dim=1))
 
+    def _fuse_branch(self, seq: nn.Sequential) -> None:
+        try:
+            import torch.ao.quantization as quant
+        except Exception:
+            return
+        if not isinstance(seq, nn.Sequential):
+            return
+        if len(seq) < 2:
+            return
+        if not isinstance(seq[0], nn.Conv2d) or not isinstance(seq[1], nn.BatchNorm2d):
+            return
+        if len(seq) >= 3 and isinstance(seq[2], nn.ReLU):
+            quant.fuse_modules(seq, ["0", "1", "2"], inplace=True)
+        else:
+            quant.fuse_modules(seq, ["0", "1"], inplace=True)
+
+    def fuse_model(self) -> None:
+        self._fuse_branch(self.branch_dilated)
+        self._fuse_branch(self.branch_wide)
+        if hasattr(self.fuse, "fuse_model"):
+            self.fuse.fuse_model()
+
 
 class SPPFmin(nn.Module):
     """
@@ -193,6 +231,12 @@ class SPPFmin(nn.Module):
         x = torch.cat([x, y], dim=1)
         x = self.cv2(x)
         return x
+
+    def fuse_model(self) -> None:
+        if hasattr(self.cv1, "fuse_model"):
+            self.cv1.fuse_model()
+        if hasattr(self.cv2, "fuse_model"):
+            self.cv2.fuse_model()
 
 
 # ============================================================
@@ -257,6 +301,18 @@ class UltraTinyODBackbone(nn.Module):
             x4 = x4 + self.block4_skip(x4_in)
         x = self.sppf(x4)
         return x
+
+    def fuse_model(self) -> None:
+        if hasattr(self.stem, "fuse_model"):
+            self.stem.fuse_model()
+        for block in (self.block1, self.block2, self.block3, self.block4):
+            if hasattr(block, "fuse_model"):
+                block.fuse_model()
+        if self.use_residual:
+            if hasattr(self.block3_skip, "fuse_model"):
+                self.block3_skip.fuse_model()
+        if hasattr(self.sppf, "fuse_model"):
+            self.sppf.fuse_model()
 
 
 @dataclass
@@ -552,6 +608,61 @@ class UltraTinyODHead(nn.Module):
             self.raw_map_perm = self._build_raw_map_perm().to(anchor_tensor.device)
         self.grid = None
 
+    def fuse_model(self) -> None:
+        if hasattr(self.context, "fuse_model"):
+            self.context.fuse_model()
+        if self.use_improved_head and self.context_res is not None:
+            for layer in self.context_res:
+                if hasattr(layer, "fuse_model"):
+                    layer.fuse_model()
+        if self.head_rfb is not None and hasattr(self.head_rfb, "fuse_model"):
+            self.head_rfb.fuse_model()
+        if self.large_obj_down is not None:
+            try:
+                import torch.ao.quantization as quant
+            except Exception:
+                quant = None
+            if quant is not None and isinstance(self.large_obj_down, nn.Sequential) and len(self.large_obj_down) >= 2:
+                if isinstance(self.large_obj_down[0], nn.Conv2d) and isinstance(self.large_obj_down[1], nn.BatchNorm2d):
+                    if len(self.large_obj_down) >= 3 and isinstance(self.large_obj_down[2], nn.ReLU):
+                        quant.fuse_modules(self.large_obj_down, ["0", "1", "2"], inplace=True)
+                    else:
+                        quant.fuse_modules(self.large_obj_down, ["0", "1"], inplace=True)
+            if len(self.large_obj_down) >= 4 and hasattr(self.large_obj_down[3], "fuse_model"):
+                self.large_obj_down[3].fuse_model()
+        if self.large_obj_blocks is not None:
+            for layer in self.large_obj_blocks:
+                if hasattr(layer, "fuse_model"):
+                    layer.fuse_model()
+        if hasattr(self.large_obj_fuse, "fuse_model"):
+            self.large_obj_fuse.fuse_model()
+        if self.use_iou_aware_head:
+            for layer in self.box_tower:
+                if hasattr(layer, "fuse_model"):
+                    layer.fuse_model()
+        else:
+            if hasattr(self.box_conv, "fuse_model"):
+                self.box_conv.fuse_model()
+        if self.has_quality:
+            if self.use_iou_aware_head:
+                for layer in self.quality_tower:
+                    if hasattr(layer, "fuse_model"):
+                        layer.fuse_model()
+            else:
+                if hasattr(self.quality_conv, "fuse_model"):
+                    self.quality_conv.fuse_model()
+        if hasattr(self.obj_conv, "fuse_model"):
+            self.obj_conv.fuse_model()
+        if self.use_iou_aware_head:
+            for layer in self.cls_tower:
+                if hasattr(layer, "fuse_model"):
+                    layer.fuse_model()
+        else:
+            if hasattr(self.cls_reduce, "fuse_model"):
+                self.cls_reduce.fuse_model()
+            if hasattr(self.cls_conv, "fuse_model"):
+                self.cls_conv.fuse_model()
+
     def reset_output_bias(self, p_obj: float = 0.01, p_cls: float = 0.01) -> None:
         """Set conservative initial biases to reduce early false positives."""
         obj_bias = float(math.log(p_obj / (1.0 - p_obj)))
@@ -812,6 +923,12 @@ class UltraTinyOD(nn.Module):
         self.head.set_anchors(anchors)
         self.anchors = self.head.anchors
         self.num_anchors = self.head.num_anchors
+
+    def fuse_model(self) -> None:
+        if hasattr(self.backbone, "fuse_model"):
+            self.backbone.fuse_model()
+        if hasattr(self.head, "fuse_model"):
+            self.head.fuse_model()
 
 
 # ============================================================
