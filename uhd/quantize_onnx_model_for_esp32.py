@@ -157,19 +157,43 @@ def get_int16_platform(target):
     return TargetPlatform.ESPDL_INT16
 
 
-def build_dispatching_override(onnx_model_path, patterns, target):
-    if not patterns:
+def build_dispatching_override(onnx_model_path, patterns, target, auto_int16_depthwiseconv=False):
+    if not patterns and not auto_int16_depthwiseconv:
         return None
     model = onnx.load(onnx_model_path)
     platform = get_int16_platform(target)
     override = {}
+    matched = set()
     for node in model.graph.node:
         if not node.name:
             continue
         for pattern in patterns:
             if re.search(pattern, node.name):
-                override[node.name] = platform
+                matched.add(node.name)
                 break
+    for name in matched:
+        override[name] = platform
+    if auto_int16_depthwiseconv:
+        depthwise_prefix = "/depthwiseconv/"
+        consumers = {}
+        for node in model.graph.node:
+            for inp in node.input:
+                consumers.setdefault(inp, []).append(node)
+        unary_ops = {"Relu", "Clip", "Sigmoid", "HardSigmoid", "LeakyRelu", "PRelu", "Elu"}
+        bn_ops = {"BatchNormalization"}
+        for node in model.graph.node:
+            if not node.name or not node.name.startswith(depthwise_prefix):
+                continue
+            override[node.name] = platform
+            for out_name in node.output:
+                for consumer in consumers.get(out_name, []):
+                    if consumer.name and consumer.op_type in unary_ops.union(bn_ops):
+                        override[consumer.name] = platform
+                    if consumer.op_type in bn_ops:
+                        for out_bn in consumer.output:
+                            for consumer2 in consumers.get(out_bn, []):
+                                if consumer2.name and consumer2.op_type in unary_ops:
+                                    override[consumer2.name] = platform
     if override:
         print(f"Forcing int16 for {len(override)} ops via pattern match.")
     else:
@@ -323,6 +347,11 @@ def build_arg_parser():
         help="Regex pattern to force matched ops to int16 (repeatable).",
     )
     parser.add_argument(
+        "--auto-int16-depthwiseconv",
+        action="store_true",
+        help="Force depthwise conv blocks (/depthwiseconv/, /dw/bn/, /dw/act/) to int16.",
+    )
+    parser.add_argument(
         "--onnx-model",
         default=DEFAULT_ONNX_MODEL_PATH,
         help="Path to the input ONNX model.",
@@ -401,12 +430,22 @@ def main():
     setting = QuantizationSettingFactory.espdl_setting()
     if args.calib_algorithm:
         setting.quantize_activation_setting.calib_algorithm = args.calib_algorithm
+    if args.auto_int16_depthwiseconv:
+        depthwise_patterns = [
+            r"^/depthwiseconv/",
+            r"/dw/bn/",
+            r"/dw/act/",
+        ]
+        for pattern in depthwise_patterns:
+            if pattern not in args.int16_op_pattern:
+                args.int16_op_pattern.append(pattern)
     # Mixed precision quantization
     # https://docs.espressif.com/projects/esp-dl/en/latest/tutorials/how_to_deploy_mobilenetv2.html#mixed-precision-quantization
     dispatching_override = build_dispatching_override(
         onnx_model_path,
         args.int16_op_pattern,
         target,
+        auto_int16_depthwiseconv=args.auto_int16_depthwiseconv,
     )
     # Layerwise equalization quantization
     # https://docs.espressif.com/projects/esp-dl/en/latest/tutorials/how_to_deploy_mobilenetv2.html#layerwise-equalization-quantization

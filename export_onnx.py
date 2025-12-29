@@ -357,6 +357,7 @@ def export_onnx(
     )
     if simplify:
         simplify_onnx_path(output_path)
+    rename_depthwise_conv_nodes(output_path)
 
 
 def simplify_onnx_path(output_path: str) -> bool:
@@ -373,6 +374,59 @@ def simplify_onnx_path(output_path: str) -> bool:
         print("[WARN] onnx-simplifier check failed; keeping original export.")
         return False
     onnx.save(model_simplified, output_path)
+    return True
+
+
+def rename_depthwise_conv_nodes(onnx_path: str, prefix: str = "/depthwiseconv") -> bool:
+    try:
+        import onnx
+        from onnx import numpy_helper
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"[WARN] Failed to import onnx for depthwise rename: {exc}")
+        return False
+    try:
+        model = onnx.load(onnx_path)
+    except Exception as exc:  # pragma: no cover - IO failure
+        print(f"[WARN] Failed to load ONNX for depthwise rename: {exc}")
+        return False
+    init_by_name = {init.name: init for init in model.graph.initializer}
+    existing_names = {node.name for node in model.graph.node if node.name}
+    prefix = prefix.rstrip("/")
+    if not prefix.startswith("/"):
+        prefix = "/" + prefix
+    changed = 0
+    for idx, node in enumerate(model.graph.node):
+        if node.op_type != "Conv":
+            continue
+        attrs = {attr.name: onnx.helper.get_attribute_value(attr) for attr in node.attribute}
+        groups = int(attrs.get("group", 1) or 1)
+        if groups <= 1:
+            continue
+        if len(node.input) < 2:
+            continue
+        weight_init = init_by_name.get(node.input[1])
+        if weight_init is None:
+            continue
+        weight = numpy_helper.to_array(weight_init)
+        if weight.ndim != 4 or weight.shape[1] != 1:
+            continue
+        if node.name and (node.name == prefix or node.name.startswith(prefix + "/")):
+            continue
+        base = node.name or (node.output[0] if node.output else f"conv_{idx}")
+        base = base.lstrip("/")
+        candidate = f"{prefix}/{base}"
+        unique = candidate
+        suffix = 1
+        while unique in existing_names:
+            unique = f"{candidate}_{suffix}"
+            suffix += 1
+        node.name = unique
+        existing_names.add(unique)
+        changed += 1
+    if not changed:
+        return False
+    onnx.save(model, onnx_path)
+    print(f"Updated ONNX: depthwise conv node prefixes: {changed}")
     return True
 
 
