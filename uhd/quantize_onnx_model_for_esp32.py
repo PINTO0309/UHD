@@ -401,11 +401,20 @@ def main():
     setting = QuantizationSettingFactory.espdl_setting()
     if args.calib_algorithm:
         setting.quantize_activation_setting.calib_algorithm = args.calib_algorithm
+    # Mixed precision quantization
+    # https://docs.espressif.com/projects/esp-dl/en/latest/tutorials/how_to_deploy_mobilenetv2.html#mixed-precision-quantization
     dispatching_override = build_dispatching_override(
         onnx_model_path,
         args.int16_op_pattern,
         target,
     )
+    # Layerwise equalization quantization
+    # https://docs.espressif.com/projects/esp-dl/en/latest/tutorials/how_to_deploy_mobilenetv2.html#layerwise-equalization-quantization
+    setting.equalization = True
+    setting.equalization_setting.iterations = 4
+    setting.equalization_setting.value_threshold = .4
+    setting.equalization_setting.opt_level = 2
+    setting.equalization_setting.interested_layers = None
 
     quant_ppq_graph = espdl_quantize_onnx(
         onnx_import_file=onnx_model_path,
