@@ -1808,6 +1808,8 @@ overlayed on the detection image.
 | `--teacher-backbone-norm` | Teacher backbone input normalization. | `imagenet` |
 | `--distill-kl` | KL distillation weight (transformer). | `0.0` |
 | `--distill-box-l1` | Box L1 distillation weight (transformer). | `0.0` |
+| `--distill-obj` | Objectness distillation weight (anchor head). | `0.0` |
+| `--distill-quality` | Quality-score distillation weight (anchor head). | `0.0` |
 | `--distill-cosine` | Cosine ramp-up of distillation weights. | `False` |
 | `--distill-temperature` | Teacher logits temperature. | `1.0` |
 | `--distill-feat` | Feature-map distillation weight (CNN only). | `0.0` |

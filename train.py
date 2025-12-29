@@ -225,6 +225,8 @@ def parse_args():
     parser.add_argument("--teacher-backbone-norm", default="imagenet", choices=["imagenet", "none"], help="Normalization applied to teacher backbone input.")
     parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
     parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
+    parser.add_argument("--distill-obj", type=float, default=0.0, help="Weight for objectness distillation (anchor head).")
+    parser.add_argument("--distill-quality", type=float, default=0.0, help="Weight for quality-score distillation (anchor head).")
     parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
     parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for teacher logits in distillation.")
     parser.add_argument("--distill-feat", type=float, default=0.0, help="Weight for feature-map distillation from teacher backbone (CNN only).")
@@ -768,6 +770,8 @@ def train_one_epoch(
     teacher_backbone_norm: str = "imagenet",
     distill_kl: float = 0.0,
     distill_box_l1: float = 0.0,
+    distill_obj: float = 0.0,
+    distill_quality: float = 0.0,
     distill_cosine: bool = False,
     distill_temperature: float = 1.0,
     distill_feat: float = 0.0,
@@ -798,9 +802,11 @@ def train_one_epoch(
     total_distill_kl = 0.0
     total_distill_l1 = 0.0
     total_distill_feat = 0.0
+    total_distill_obj = 0.0
+    total_distill_quality = 0.0
     steps = 0
     distill_scale = 1.0
-    if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0):
+    if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0 or distill_obj > 0 or distill_quality > 0):
         distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
     use_quality_head = bool(getattr(model, "has_quality_head", getattr(model, "use_improved_head", False)))
     score_mode = getattr(model, "score_mode", None)
@@ -831,6 +837,8 @@ def train_one_epoch(
         ty = pred[:, :, 1]
         tw = pred[:, :, 2]
         th = pred[:, :, 3]
+        obj_logit = pred[:, :, 4]
+        quality_logit = pred[:, :, 5] if has_quality else None
         cls_logit = pred[:, :, (5 + extra):]
         # grid
         gy, gx = torch.meshgrid(torch.arange(h, device=pred_raw.device), torch.arange(w, device=pred_raw.device), indexing="ij")
@@ -847,7 +855,7 @@ def train_one_epoch(
         bh = ph * torch.clamp(torch.nn.functional.softplus(th), max=4.0)
         boxes = torch.stack([cx, cy, bw, bh], dim=-1)  # B x A x H x W x 4
         cls_logits = cls_logit.permute(0, 1, 3, 4, 2)  # B x A x H x W x C
-        return boxes, cls_logits, h, w
+        return boxes, cls_logits, obj_logit, quality_logit, h, w
 
     def _interp_anchor_map(tensor_map: torch.Tensor, target_hw):
         # tensor_map: B x A x H x W x F
@@ -855,6 +863,13 @@ def train_one_epoch(
         tensor_map = tensor_map.reshape(b, a * f, h, w)
         tensor_map = torch.nn.functional.interpolate(tensor_map, size=target_hw, mode="bilinear", align_corners=False)
         tensor_map = tensor_map.view(b, a, target_hw[0], target_hw[1], f)
+        return tensor_map
+
+    def _interp_anchor_scores(tensor_map: torch.Tensor, target_hw):
+        b, a, h, w = tensor_map.shape
+        tensor_map = tensor_map.reshape(b * a, 1, h, w)
+        tensor_map = torch.nn.functional.interpolate(tensor_map, size=target_hw, mode="bilinear", align_corners=False)
+        tensor_map = tensor_map.view(b, a, target_hw[0], target_hw[1])
         return tensor_map
     pbar = tqdm(loader, total=len(loader), desc=f"Train {epoch+1}/{total_epochs}", ncols=120, dynamic_ncols=True)
     warn_anchor_mismatch = False
@@ -957,14 +972,14 @@ def train_one_epoch(
                                     getattr(teacher_model, "has_quality_head", getattr(teacher_model, "use_improved_head", False))
                                 )
                                 s_has_quality = use_quality_head
-                                t_boxes, t_cls_logits, th, tw = _decode_anchor_pred(
+                                t_boxes, t_cls_logits, t_obj_logit, t_quality_logit, th, tw = _decode_anchor_pred(
                                     teacher_anchor_pred,
                                     teacher_anchors.to(device),
                                     t_nc,
                                     has_quality=t_has_quality,
                                     wh_scale=getattr(teacher_model.head, "wh_scale", None) if t_has_quality and hasattr(teacher_model, "head") else None,
                                 )
-                                s_boxes, s_cls_logits, sh, sw = _decode_anchor_pred(
+                                s_boxes, s_cls_logits, s_obj_logit, s_quality_logit, sh, sw = _decode_anchor_pred(
                                     outputs,
                                     anchors,
                                     num_classes,
@@ -974,25 +989,71 @@ def train_one_epoch(
                                 if (th, tw) != (sh, sw):
                                     t_boxes = _interp_anchor_map(t_boxes, (sh, sw))
                                     t_cls_logits = _interp_anchor_map(t_cls_logits, (sh, sw))
+                                    t_obj_logit = _interp_anchor_scores(t_obj_logit, (sh, sw))
+                                    if t_quality_logit is not None:
+                                        t_quality_logit = _interp_anchor_scores(t_quality_logit, (sh, sw))
                                 if distill_kl > 0:
                                     temp = max(distill_temperature, 1e-6)
-                                    t_prob = torch.nan_to_num(
-                                        (t_cls_logits.detach() / temp).softmax(dim=-1), nan=0.0, posinf=1.0, neginf=0.0
-                                    )
-                                    s_logprob = torch.nan_to_num(
-                                        (s_cls_logits / temp).log_softmax(dim=-1), nan=0.0, posinf=0.0, neginf=0.0
-                                    )
-                                    kl = torch.nn.functional.kl_div(
-                                        s_logprob.reshape(-1, num_classes),
-                                        t_prob.reshape(-1, num_classes),
-                                        reduction="batchmean",
-                                    ) * (temp * temp)
+                                    if num_classes == 1:
+                                        with torch.amp.autocast(device_type=device.type, enabled=False):
+                                            t_prob = torch.sigmoid(torch.nan_to_num(t_cls_logits.detach() / temp))
+                                            s_logit = torch.nan_to_num(s_cls_logits / temp)
+                                            kl = torch.nn.functional.binary_cross_entropy_with_logits(
+                                                s_logit.reshape(-1),
+                                                t_prob.reshape(-1),
+                                                reduction="mean",
+                                            ) * (temp * temp)
+                                    else:
+                                        t_prob = torch.nan_to_num(
+                                            (t_cls_logits.detach() / temp).softmax(dim=-1), nan=0.0, posinf=1.0, neginf=0.0
+                                        )
+                                        s_logprob = torch.nan_to_num(
+                                            (s_cls_logits / temp).log_softmax(dim=-1), nan=0.0, posinf=0.0, neginf=0.0
+                                        )
+                                        kl = torch.nn.functional.kl_div(
+                                            s_logprob.reshape(-1, num_classes),
+                                            t_prob.reshape(-1, num_classes),
+                                            reduction="batchmean",
+                                        ) * (temp * temp)
                                     if torch.isfinite(kl):
                                         loss_dict["loss"] = loss_dict["loss"] + (distill_kl * distill_scale) * kl
                                         loss_dict["distill_kl"] = kl
                                     elif not warn_nonfinite_kl:
                                         print("Non-finite anchor KL distill value; skipping this term for stability.")
                                         warn_nonfinite_kl = True
+                                if distill_obj > 0:
+                                    temp = max(distill_temperature, 1e-6)
+                                    with torch.amp.autocast(device_type=device.type, enabled=False):
+                                        t_prob = torch.sigmoid(torch.nan_to_num(t_obj_logit.detach() / temp))
+                                        s_logit = torch.nan_to_num(s_obj_logit / temp)
+                                        obj_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                                            s_logit.reshape(-1),
+                                            t_prob.reshape(-1),
+                                            reduction="mean",
+                                        ) * (temp * temp)
+                                    if torch.isfinite(obj_loss):
+                                        loss_dict["loss"] = loss_dict["loss"] + (distill_obj * distill_scale) * obj_loss
+                                        loss_dict["distill_obj"] = obj_loss
+                                    elif not warn_nonfinite_kl:
+                                        print("Non-finite anchor obj distill value; skipping this term for stability.")
+                                        warn_nonfinite_kl = True
+                                if distill_quality > 0 and s_has_quality and t_has_quality:
+                                    if t_quality_logit is not None and s_quality_logit is not None:
+                                        temp = max(distill_temperature, 1e-6)
+                                        with torch.amp.autocast(device_type=device.type, enabled=False):
+                                            t_prob = torch.sigmoid(torch.nan_to_num(t_quality_logit.detach() / temp))
+                                            s_logit = torch.nan_to_num(s_quality_logit / temp)
+                                            qual_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                                                s_logit.reshape(-1),
+                                                t_prob.reshape(-1),
+                                                reduction="mean",
+                                            ) * (temp * temp)
+                                        if torch.isfinite(qual_loss):
+                                            loss_dict["loss"] = loss_dict["loss"] + (distill_quality * distill_scale) * qual_loss
+                                            loss_dict["distill_quality"] = qual_loss
+                                        elif not warn_nonfinite_kl:
+                                            print("Non-finite anchor quality distill value; skipping this term for stability.")
+                                            warn_nonfinite_kl = True
                                 if distill_box_l1 > 0:
                                     l1d = torch.nn.functional.l1_loss(
                                         torch.nan_to_num(s_boxes),
@@ -1086,6 +1147,10 @@ def train_one_epoch(
                 total_distill_feat += float(loss_dict["distill_feat"].item())
             if "distill_kl" in loss_dict:
                 total_distill_kl += float(loss_dict["distill_kl"].item())
+            if "distill_obj" in loss_dict:
+                total_distill_obj += float(loss_dict["distill_obj"].item())
+            if "distill_quality" in loss_dict:
+                total_distill_quality += float(loss_dict["distill_quality"].item())
             if "distill_box_l1" in loss_dict:
                 total_distill_l1 += float(loss_dict["distill_box_l1"].item())
         else:
@@ -1094,6 +1159,10 @@ def train_one_epoch(
             total_iou += float(loss_dict["iou"].item())
             if "distill_kl" in loss_dict:
                 total_distill_kl += float(loss_dict["distill_kl"].item())
+            if "distill_obj" in loss_dict:
+                total_distill_obj += float(loss_dict["distill_obj"].item())
+            if "distill_quality" in loss_dict:
+                total_distill_quality += float(loss_dict["distill_quality"].item())
             if "distill_box_l1" in loss_dict:
                 total_distill_l1 += float(loss_dict["distill_box_l1"].item())
         steps += 1
@@ -1149,6 +1218,10 @@ def train_one_epoch(
             logs["distill_feat"] = total_distill_feat / steps if steps else 0.0
         if distill_kl > 0:
             logs["distill_kl"] = total_distill_kl / steps if steps else 0.0
+        if distill_obj > 0:
+            logs["distill_obj"] = total_distill_obj / steps if steps else 0.0
+        if distill_quality > 0:
+            logs["distill_quality"] = total_distill_quality / steps if steps else 0.0
         if distill_box_l1 > 0:
             logs["distill_box_l1"] = total_distill_l1 / steps if steps else 0.0
     else:
@@ -1161,6 +1234,10 @@ def train_one_epoch(
         )
         if distill_kl > 0:
             logs["distill_kl"] = total_distill_kl / steps if steps else 0.0
+        if distill_obj > 0:
+            logs["distill_obj"] = total_distill_obj / steps if steps else 0.0
+        if distill_quality > 0:
+            logs["distill_quality"] = total_distill_quality / steps if steps else 0.0
         if distill_box_l1 > 0:
             logs["distill_box_l1"] = total_distill_l1 / steps if steps else 0.0
     return logs
@@ -1629,6 +1706,8 @@ def main():
     use_fpn = bool(args.use_fpn)
     distill_kl = float(args.distill_kl)
     distill_box_l1 = float(args.distill_box_l1)
+    distill_obj = float(args.distill_obj)
+    distill_quality = float(args.distill_quality)
     distill_temperature = float(args.distill_temperature)
     distill_cosine = bool(args.distill_cosine)
     distill_feat = float(args.distill_feat)
@@ -1707,7 +1786,7 @@ def main():
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
         nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
-        nonlocal distill_kl, distill_box_l1, distill_temperature, distill_cosine, distill_feat
+        nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
         nonlocal last_se, last_width_scale, output_stride
         if "cnn_width" in meta:
@@ -1861,6 +1940,10 @@ def main():
                 distill_kl = float(meta["distill_kl"])
             if "distill_box_l1" in meta:
                 distill_box_l1 = float(meta["distill_box_l1"])
+            if "distill_obj" in meta:
+                distill_obj = float(meta["distill_obj"])
+            if "distill_quality" in meta:
+                distill_quality = float(meta["distill_quality"])
             if "distill_temperature" in meta:
                 distill_temperature = float(meta["distill_temperature"])
             if "distill_cosine" in meta:
@@ -2357,6 +2440,8 @@ def main():
             teacher_backbone_norm=teacher_backbone_norm,
             distill_kl=distill_kl,
             distill_box_l1=distill_box_l1,
+            distill_obj=distill_obj,
+            distill_quality=distill_quality,
             distill_cosine=distill_cosine,
             distill_temperature=distill_temperature,
             distill_feat=distill_feat if arch_cnn_like else 0.0,
@@ -2377,7 +2462,23 @@ def main():
             writer,
             "train",
             train_logs,
-            ordered_keys=["loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou", "distill_feat", "distill_kl", "distill_box_l1"],
+            ordered_keys=[
+                "loss",
+                "obj",
+                "cls",
+                "box",
+                "quality",
+                "hm",
+                "off",
+                "wh",
+                "l1",
+                "iou",
+                "distill_feat",
+                "distill_kl",
+                "distill_obj",
+                "distill_quality",
+                "distill_box_l1",
+            ],
             step=epoch + 1,
         )
 
@@ -2497,6 +2598,8 @@ def main():
                     "teacher_backbone_norm": teacher_backbone_norm,
                     "distill_kl": distill_kl,
                     "distill_box_l1": distill_box_l1,
+                    "distill_obj": distill_obj,
+                    "distill_quality": distill_quality,
                     "distill_temperature": distill_temperature,
                     "distill_cosine": distill_cosine,
                     "teacher_backbone": teacher_backbone,
@@ -2579,6 +2682,8 @@ def main():
             "teacher_backbone_norm": teacher_backbone_norm,
             "distill_kl": distill_kl,
             "distill_box_l1": distill_box_l1,
+            "distill_obj": distill_obj,
+            "distill_quality": distill_quality,
             "distill_temperature": distill_temperature,
             "distill_cosine": distill_cosine,
             "teacher_backbone": teacher_backbone,
