@@ -164,7 +164,7 @@ gh release download onnx -R PINTO0309/UHD
     |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|26.15 ms|||
     |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|33.66 ms|||
     |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|127.51 ms|||
-    |F| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
+    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|292.63 ms|||
     |P| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
     |N| MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)| ms|||
 
