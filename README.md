@@ -166,6 +166,8 @@ gh release download onnx -R PINTO0309/UHD
     |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_nocat_espdl.tar_nocat.gz)|545.65 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_nocat_espdl_highacc.tar_nocat_espdl_highacc.gz)||||
     |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_nocat_espdl.tar_nocat.gz)|808.49 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_nocat_espdl_highacc.tar_nocat_espdl_highacc.gz)||||
 
+    https://github.com/user-attachments/assets/ad417641-0c06-4307-9224-a1bdb9402dbd
+
 - `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
   - `YUV422`
     ```python
