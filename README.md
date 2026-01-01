@@ -2188,6 +2188,7 @@ Note that DepthwiseConv significantly reduces accuracy if per-channel quantizati
 <details><summary>Click to expand</summary>
 
 ```bash
+# per-channel quantization
 uv add tensorflow==2.19.0
 uv run onnx2tf \
 -i ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_dynamic_nopost.onnx \
