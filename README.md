@@ -2155,6 +2155,24 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 </details>
 
+## ONNX ONNX simple benchmark
+
+```bash
+uv run sit4onnx \
+-if ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_dynamic_nopost.onnx \
+-fs 1 3 480 640
+
+INFO: file: ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_dynamic_nopost.onnx
+INFO: providers: ['CPUExecutionProvider']
+INFO: input_name.1: input_rgb shape: [1, 3, 480, 640] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  3.634929656982422 ms
+INFO: avg elapsed time per pred:  0.3634929656982422 ms
+INFO: output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float32
+INFO: output_name.2: anchors shape: [8, 2] dtype: float32
+INFO: output_name.3: wh_scale shape: [8, 2] dtype: float32
+```
+
 ## LiteRT (TFLite) quantization
 
 <details><summary>Click to expand</summary>
