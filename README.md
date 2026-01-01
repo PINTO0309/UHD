@@ -2183,6 +2183,8 @@ INFO: output_name.3: wh_scale shape: [8, 2] dtype: float32
 
 ## LiteRT (TFLite) quantization
 
+Note that DepthwiseConv significantly reduces accuracy if per-channel quantization is not selected. Layerwise quantization is not suitable for this model.
+
 <details><summary>Click to expand</summary>
 
 ```bash
