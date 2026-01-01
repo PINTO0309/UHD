@@ -2436,7 +2436,7 @@ If you find this project useful, please consider citing:
 
     https://github.com/user-attachments/assets/f67c0470-f74a-4a70-9e14-213bfc141064
 
-- **[WIP]** ESP32 UHD: https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
-  - `opencv_inter_nearest` + `Z`, 33ms/pred
+- ESP32 UHD: https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
+  - ESP32-S3-EYE - Emphasis on precision `R`
 
-    https://github.com/user-attachments/assets/191894fe-fc70-4158-a8f2-474ba18942ab
+    https://github.com/user-attachments/assets/ad417641-0c06-4307-9224-a1bdb9402dbd
