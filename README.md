@@ -2155,7 +2155,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 </details>
 
-## ONNX ONNX simple benchmark
+## ONNX simple benchmark
 
 ```bash
 uv run sit4onnx \
