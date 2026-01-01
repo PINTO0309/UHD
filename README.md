@@ -155,6 +155,8 @@ gh release download onnx -R PINTO0309/UHD
     |L|30.92 M|3.44 G|0.58399|7.16 ms|123.7 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_static_nopost.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic.onnx)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_opencv_inter_nearest_dynamic_nopost.onnx)|
 
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
+
+    https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
   
     |Var|ESPDL size|s3<br>Emphasis<br>on speed|s3<br>latency|s3<br>Emphasis<br>on precision|s3<br>latency|p4<br>static<br>w/o post|p4<br>latency|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
