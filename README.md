@@ -407,16 +407,18 @@ gh release download onnx -R PINTO0309/UHD
 usage: demo_uhd.py
 [-h]
 (--images IMAGES | --camera CAMERA)
---onnx ONNX
+(--onnx ONNX | --tflite TFLITE)
 [--output OUTPUT]
 [--img-size IMG_SIZE]
 [--conf-thresh CONF_THRESH]
+[--score-mode {obj_quality_cls,quality_cls,obj_cls,cls}]
+[--swap-logit-samples SWAP_LOGIT_SAMPLES]
 [--record RECORD]
 [--actual-size]
 [--use-nms]
 [--nms-iou NMS_IOU]
 
-UltraTinyOD ONNX demo (CPU).
+UltraTinyOD ONNX/LiteRT demo (CPU).
 
 options:
   -h, --help
@@ -427,12 +429,18 @@ options:
    USB camera id for realtime inference.
   --onnx ONNX
    Path to ONNX model (CPU).
+  --tflite TFLITE
+   Path to LiteRT (TFLite) model.
   --output OUTPUT
    Output directory for image mode.
   --img-size IMG_SIZE
    Input size HxW, e.g., 64x64.
   --conf-thresh CONF_THRESH
    Confidence threshold. Default: 0.90
+  --score-mode {obj_quality_cls,quality_cls,obj_cls,cls}
+   Score mode for raw outputs (decoded outputs ignore this).
+  --swap-logit-samples SWAP_LOGIT_SAMPLES
+   Number of frames to decide quality/cls swap (integer_quant only).
   --record RECORD
    MP4 path for automatic recording when --camera is used.
   --actual-size
