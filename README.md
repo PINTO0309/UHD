@@ -2160,8 +2160,9 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 <details><summary>Click to expand</summary>
 
 ```bash
+uv add tensorflow==2.19.0
 uv run onnx2tf \
--i ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
+-i ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_dynamic_nopost.onnx \
 -cotof \
 -oiqt \
 -qnm "[[[[0.0, 0.0, 0.0]]]]" \
