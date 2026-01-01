@@ -156,15 +156,15 @@ gh release download onnx -R PINTO0309/UHD
 
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
   
-    |Var|ESPDL size|s3<br>static<br>w/o post|s3<br>latency|p4<br>static<br>w/o post|p4<br>latency|
-    |:-:|:-:|:-:|:-:|:-:|:-:|
-    |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|11.28 ms|||
-    |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|26.15 ms|||
-    |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|33.66 ms|||
-    |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|127.51 ms|||
-    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|292.63 ms|||
-    |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|545.65 ms|||
-    |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|808.49 ms|||
+    |Var|ESPDL size|s3<br>Emphasis<br>on speed|s3<br>latency|s3<br>Emphasis<br>on precision|s3<br>latency|p4<br>static<br>w/o post|p4<br>latency|
+    |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+    |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|11.28 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_espdl_nocat_highacc.tar.gz)||||
+    |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|26.15 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_static_nopost_espdl_nocat_highacc.tar.gz)||||
+    |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|33.66 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_espdl_nocat_highacc.tar.gz)||||
+    |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_nocat.tar.gz)|127.51 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_static_nopost_espdl_nocat_highacc.tar.gz)||||
+    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|292.63 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat_highacc.gz)||||
+    |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|545.65 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat_highacc.gz)||||
+    |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat.gz)|808.49 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_static_nopost_espdl.tar_nocat_highacc.gz)||||
 
 - `opencv_inter_nearest_yuv422` + Optimized for YUV422 + Suitable for quantization
   - `YUV422`
