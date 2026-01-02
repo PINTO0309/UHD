@@ -1872,7 +1872,7 @@ overlayed on the detection image.
 | `--num-anchors` | Number of anchors to use when auto-computing. | `3` |
 | `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
 | `--anchor-assigner` | Anchor assigner strategy (`legacy`, `simota`). | `legacy` |
-| `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`). | `bce` |
+| `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`, `ce`). | `bce` |
 | `--simota-topk` | Top-K IoUs for dynamic-k in SimOTA. | `10` |
 | `--last-se` | Apply SE/eSE only on the last CNN block. | `none` |
 | `--use-batchnorm` | Enable BatchNorm layers during training/export. | `False` |
@@ -1919,7 +1919,7 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 
 - `loss`: total anchor loss (`box + obj + cls` [+ `quality`] when `--use-improved-head`)
 - `obj`: BCE on objectness for each anchor location (positive vs. background)
-- `cls`: BCE on per-class logits for positive anchors (one-hot over target classes)
+- `cls`: Classification loss on per-class logits for positive anchors (BCE/VFL/CE per `--anchor-cls-loss`)
 - `box`: (1 - IoU/GIoU/CIoU) on decoded boxes for positive anchors; IoU flavor set by `--iou-loss`
 - `quality` (improved head only): BCE on IoU-linked quality logit; obj targetもIoUでスケールされる
 
