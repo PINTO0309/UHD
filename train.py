@@ -357,7 +357,12 @@ def parse_args():
     parser.add_argument("--num-anchors", type=int, default=3, help="Number of anchors to use when auto-computing.")
     parser.add_argument("--iou-loss", choices=["iou", "giou", "ciou"], default="giou", help="IoU loss type for anchor head.")
     parser.add_argument("--anchor-assigner", choices=["legacy", "simota"], default="legacy", help="Anchor assigner strategy.")
-    parser.add_argument("--anchor-cls-loss", choices=["bce", "vfl"], default="bce", help="Classification loss for anchor head.")
+    parser.add_argument(
+        "--anchor-cls-loss",
+        choices=["bce", "vfl", "ce"],
+        default="bce",
+        help="Classification loss for anchor head.",
+    )
     parser.add_argument("--simota-topk", type=int, default=10, help="Top-K IoUs for dynamic-k in SimOTA.")
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
     parser.add_argument("--use-batchnorm", action="store_true", help="Enable BatchNorm layers (default: off).")

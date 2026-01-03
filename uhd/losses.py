@@ -388,6 +388,15 @@ def anchor_loss(
             t = torch.zeros_like(cls_logit)
             t[pos_mask] = target_cls[pos_mask].to(t.dtype)
             cls_loss = varifocal_loss(cls_logit, t, alpha=0.75, gamma=2.0)
+        elif cls_loss_type == "ce":
+            if num_classes <= 1:
+                cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+            else:
+                cls_targets = target_cls[pos_mask]
+                cls_target_idx = cls_targets.argmax(dim=-1)
+                cls_weight = cls_targets.max(dim=-1).values
+                ce = F.cross_entropy(cls_logit[pos_mask], cls_target_idx, reduction="none")
+                cls_loss = (ce * cls_weight.to(ce.dtype)).sum() / max(1, num_pos)
         else:
             cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
     else:
