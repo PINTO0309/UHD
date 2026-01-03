@@ -20,6 +20,7 @@ raw_out, decoded = model(x, decode=True)
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -448,6 +449,13 @@ class UltraTinyODConfig:
     large_obj_branch_expansion: float = 1.0
     w_bits: int = 0
     a_bits: int = 0
+    quant_target: str = "both"
+    lowbit_quant_target: str = "both"
+    lowbit_w_bits: int = 0
+    lowbit_a_bits: int = 0
+    highbit_quant_target: str = "none"
+    highbit_w_bits: int = 8
+    highbit_a_bits: int = 8
 
     def __post_init__(self):
         if self.anchors is None:
@@ -476,6 +484,19 @@ class UltraTinyODConfig:
         self.large_obj_branch_expansion = float(max(0.25, self.large_obj_branch_expansion))
         self.w_bits = _normalize_bits(self.w_bits)
         self.a_bits = _normalize_bits(self.a_bits)
+        self.quant_target = str(self.quant_target or "both").lower()
+        if self.quant_target not in ("backbone", "head", "both", "none"):
+            self.quant_target = "both"
+        self.lowbit_quant_target = str(self.lowbit_quant_target or self.quant_target).lower()
+        if self.lowbit_quant_target not in ("backbone", "head", "both", "none"):
+            self.lowbit_quant_target = self.quant_target
+        self.highbit_quant_target = str(self.highbit_quant_target or "none").lower()
+        if self.highbit_quant_target not in ("backbone", "head", "both", "none"):
+            self.highbit_quant_target = "none"
+        self.lowbit_w_bits = _normalize_bits(self.lowbit_w_bits or self.w_bits)
+        self.lowbit_a_bits = _normalize_bits(self.lowbit_a_bits or self.a_bits)
+        self.highbit_w_bits = _normalize_bits(self.highbit_w_bits)
+        self.highbit_a_bits = _normalize_bits(self.highbit_a_bits)
 
 
 class UltraTinyODHead(nn.Module):
@@ -967,8 +988,56 @@ class UltraTinyOD(nn.Module):
                 config.w_bits = 0
             if not hasattr(config, "a_bits"):
                 config.a_bits = 0
+            if not hasattr(config, "quant_target"):
+                config.quant_target = "both"
+            if not hasattr(config, "lowbit_quant_target"):
+                config.lowbit_quant_target = config.quant_target
+            if not hasattr(config, "lowbit_w_bits"):
+                config.lowbit_w_bits = config.w_bits
+            if not hasattr(config, "lowbit_a_bits"):
+                config.lowbit_a_bits = config.a_bits
+            if not hasattr(config, "highbit_quant_target"):
+                config.highbit_quant_target = "none"
+            if not hasattr(config, "highbit_w_bits"):
+                config.highbit_w_bits = 8
+            if not hasattr(config, "highbit_a_bits"):
+                config.highbit_a_bits = 8
 
         act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
+
+        low_target = str(getattr(config, "lowbit_quant_target", getattr(config, "quant_target", "both")) or "both").lower()
+        high_target = str(getattr(config, "highbit_quant_target", "none") or "none").lower()
+        if low_target not in ("backbone", "head", "both", "none"):
+            low_target = "both"
+        if high_target not in ("backbone", "head", "both", "none"):
+            high_target = "none"
+        if low_target != "none" and high_target != "none":
+            if (low_target in ("backbone", "both") and high_target in ("backbone", "both")) or (
+                low_target in ("head", "both") and high_target in ("head", "both")
+            ):
+                raise ValueError("lowbit-quant-target and highbit-quant-target overlap; choose non-overlapping targets.")
+        low_w = _normalize_bits(getattr(config, "lowbit_w_bits", getattr(config, "w_bits", 0)))
+        low_a = _normalize_bits(getattr(config, "lowbit_a_bits", getattr(config, "a_bits", 0)))
+        high_w = _normalize_bits(getattr(config, "highbit_w_bits", 0))
+        high_a = _normalize_bits(getattr(config, "highbit_a_bits", 0))
+
+        backbone_w_bits = 0
+        backbone_a_bits = 0
+        if high_target in ("backbone", "both"):
+            backbone_w_bits = high_w
+            backbone_a_bits = high_a
+        elif low_target in ("backbone", "both"):
+            backbone_w_bits = low_w
+            backbone_a_bits = low_a
+
+        head_w_bits = 0
+        head_a_bits = 0
+        if high_target in ("head", "both"):
+            head_w_bits = high_w
+            head_a_bits = high_a
+        elif low_target in ("head", "both"):
+            head_w_bits = low_w
+            head_a_bits = low_a
 
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
@@ -976,10 +1045,13 @@ class UltraTinyOD(nn.Module):
             use_residual=use_residual,
             out_stride=int(config.stride),
             activation=act_name,
-            w_bits=getattr(config, "w_bits", 0),
-            a_bits=getattr(config, "a_bits", 0),
+            w_bits=backbone_w_bits,
+            a_bits=backbone_a_bits,
         )
-        self.head = UltraTinyODHead(self.backbone.out_channels, config, activation=act_name)
+        head_cfg = deepcopy(config)
+        head_cfg.w_bits = head_w_bits
+        head_cfg.a_bits = head_a_bits
+        self.head = UltraTinyODHead(self.backbone.out_channels, head_cfg, activation=act_name)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
         self.use_improved_head = bool(getattr(config, "use_improved_head", False))

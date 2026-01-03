@@ -820,6 +820,13 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         utod_activation = kwargs.get("activation", "swish")
         w_bits = int(kwargs.get("w_bits", 0) or 0)
         a_bits = int(kwargs.get("a_bits", 0) or 0)
+        quant_target = str(kwargs.get("quant_target", "both") or "both")
+        lowbit_quant_target = str(kwargs.get("lowbit_quant_target", quant_target) or quant_target)
+        lowbit_w_bits = int(kwargs.get("lowbit_w_bits", w_bits) or 0)
+        lowbit_a_bits = int(kwargs.get("lowbit_a_bits", a_bits) or 0)
+        highbit_quant_target = str(kwargs.get("highbit_quant_target", "none") or "none")
+        highbit_w_bits = int(kwargs.get("highbit_w_bits", 8) or 8)
+        highbit_a_bits = int(kwargs.get("highbit_a_bits", 8) or 8)
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
@@ -834,8 +841,15 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_large_obj_branch=bool(kwargs.get("utod_large_obj_branch", False)),
             large_obj_branch_depth=int(kwargs.get("utod_large_obj_depth", 1)),
             large_obj_branch_expansion=float(kwargs.get("utod_large_obj_ch_scale", 1.0)),
-            w_bits=w_bits,
-            a_bits=a_bits,
+            w_bits=lowbit_w_bits,
+            a_bits=lowbit_a_bits,
+            quant_target=quant_target,
+            lowbit_quant_target=lowbit_quant_target,
+            lowbit_w_bits=lowbit_w_bits,
+            lowbit_a_bits=lowbit_a_bits,
+            highbit_quant_target=highbit_quant_target,
+            highbit_w_bits=highbit_w_bits,
+            highbit_a_bits=highbit_a_bits,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(

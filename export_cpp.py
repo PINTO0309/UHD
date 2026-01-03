@@ -124,7 +124,10 @@ def _collect_activation_scales(
     size: Tuple[int, int],
     resize_mode: str,
     batch_size: int,
-    bits: int,
+    lowbit_quant_target: str,
+    lowbit_a_bits: int,
+    highbit_quant_target: str,
+    highbit_a_bits: int,
 ) -> List[Dict[str, object]]:
     max_abs: Dict[str, float] = {}
     hooks = []
@@ -143,8 +146,19 @@ def _collect_activation_scales(
                 max_abs[name] = val
         return _fn
 
+    bits_map: Dict[str, int] = {}
     for name, module in model.named_modules():
-        if isinstance(module, ConvBNAct):
+        if not isinstance(module, ConvBNAct):
+            continue
+        bit_val = _quant_bits_for_name(
+            name,
+            lowbit_quant_target,
+            highbit_quant_target,
+            lowbit_a_bits,
+            highbit_a_bits,
+        )
+        if bit_val >= 2:
+            bits_map[name] = int(bit_val)
             hooks.append(module.register_forward_hook(_hook(name)))
 
     model.eval()
@@ -169,15 +183,46 @@ def _collect_activation_scales(
         handle.remove()
 
     scales: List[Dict[str, object]] = []
-    bits = int(bits)
-    qmax = (1 << (bits - 1)) - 1 if bits >= 2 else 0
     for name, amax in sorted(max_abs.items()):
+        bit_val = int(bits_map.get(name, 0))
+        qmax = (1 << (bit_val - 1)) - 1 if bit_val >= 2 else 0
         if qmax > 0:
             scale = float(amax) / float(qmax) if amax > 0 else 1.0
         else:
             scale = float(amax)
-        scales.append({"name": name, "amax": float(amax), "scale": float(scale), "bits": bits})
+        scales.append({"name": name, "amax": float(amax), "scale": float(scale), "bits": bit_val})
     return scales
+
+
+def _match_quant_target(name: str, quant_target: str) -> bool:
+    quant_target = str(quant_target or "both").lower()
+    if quant_target == "both":
+        return name.startswith("backbone.") or name.startswith("head.")
+    if quant_target == "backbone":
+        return name.startswith("backbone.")
+    if quant_target == "head":
+        return name.startswith("head.")
+    if quant_target == "none":
+        return False
+    return name.startswith("backbone.") or name.startswith("head.")
+
+
+def _quant_bits_for_name(
+    name: str,
+    lowbit_target: str,
+    highbit_target: str,
+    low_bits: int,
+    high_bits: int,
+) -> int:
+    in_low = _match_quant_target(name, lowbit_target)
+    in_high = _match_quant_target(name, highbit_target)
+    if in_low and in_high:
+        raise ValueError("lowbit-quant-target and highbit-quant-target overlap for module: " + name)
+    if in_high:
+        return int(high_bits)
+    if in_low:
+        return int(low_bits)
+    return 0
 
 
 def _quantize_weights(
@@ -186,10 +231,18 @@ def _quantize_weights(
     per_channel: bool = True,
     ch_axis: int = 0,
     eps: float = 1e-8,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, str]:
     bits = int(bits)
     if bits < 2:
         raise ValueError("bits must be >= 2 for quantization.")
+    if bits <= 8:
+        q_dtype = np.int8
+        dtype_str = "UHD_I8"
+    elif bits <= 16:
+        q_dtype = np.int16
+        dtype_str = "UHD_I16"
+    else:
+        raise ValueError("bits > 16 not supported for weight quantization.")
     qmax = (1 << (bits - 1)) - 1
     if per_channel:
         max_val = np.max(np.abs(arr), axis=tuple(i for i in range(arr.ndim) if i != ch_axis), keepdims=True)
@@ -198,10 +251,10 @@ def _quantize_weights(
     scale = max_val / float(qmax)
     scale = np.maximum(scale, eps)
     q = np.round(arr / scale)
-    q = np.clip(q, -qmax, qmax).astype(np.int8)
+    q = np.clip(q, -qmax, qmax).astype(q_dtype)
     if per_channel:
         scale = np.squeeze(scale, axis=tuple(i for i in range(scale.ndim) if i != ch_axis))
-    return q, scale.astype(np.float32)
+    return q, scale.astype(np.float32), dtype_str
 
 
 def _quantize_bias(
@@ -363,6 +416,31 @@ def main() -> None:
         cfg.w_bits = int(meta["w_bits"])
     if "a_bits" in meta:
         cfg.a_bits = int(meta["a_bits"])
+    lowbit_quant_target = str(meta.get("lowbit_quant_target", meta.get("quant_target", "both")) or "both").lower()
+    if lowbit_quant_target not in ("backbone", "head", "both", "none"):
+        lowbit_quant_target = "both"
+    highbit_quant_target = str(meta.get("highbit_quant_target", "none") or "none").lower()
+    if highbit_quant_target not in ("backbone", "head", "both", "none"):
+        highbit_quant_target = "none"
+    lowbit_w_bits = int(meta.get("lowbit_w_bits", meta.get("w_bits", 0) or 0))
+    lowbit_a_bits = int(meta.get("lowbit_a_bits", meta.get("a_bits", 0) or 0))
+    highbit_w_bits = int(meta.get("highbit_w_bits", 8))
+    highbit_a_bits = int(meta.get("highbit_a_bits", 8))
+    cfg.lowbit_quant_target = lowbit_quant_target
+    cfg.lowbit_w_bits = lowbit_w_bits
+    cfg.lowbit_a_bits = lowbit_a_bits
+    cfg.highbit_quant_target = highbit_quant_target
+    cfg.highbit_w_bits = highbit_w_bits
+    cfg.highbit_a_bits = highbit_a_bits
+    if lowbit_quant_target != "none" and highbit_quant_target != "none":
+        if (lowbit_quant_target in ("backbone", "both") and highbit_quant_target in ("backbone", "both")) or (
+            lowbit_quant_target in ("head", "both") and highbit_quant_target in ("head", "both")
+        ):
+            raise ValueError("lowbit-quant-target and highbit-quant-target overlap in checkpoint metadata.")
+    if highbit_quant_target != "none":
+        quant_target = "mixed" if lowbit_quant_target != "none" else highbit_quant_target
+    else:
+        quant_target = lowbit_quant_target
 
     input_channels = _infer_input_channels(meta)
     model = UltraTinyOD(
@@ -404,7 +482,10 @@ def main() -> None:
             size=img_size,
             resize_mode=normalize_resize_mode(meta.get("resize_mode") or "opencv_inter_nearest"),
             batch_size=int(args.calib_batch_size),
-            bits=int(getattr(cfg, "a_bits", 0)),
+            lowbit_quant_target=lowbit_quant_target,
+            lowbit_a_bits=lowbit_a_bits,
+            highbit_quant_target=highbit_quant_target,
+            highbit_a_bits=highbit_a_bits,
         )
 
     output_dir = args.output_dir
@@ -420,14 +501,14 @@ def main() -> None:
     quant_only = bool(args.quant_only)
     quant_bias = not bool(args.no_quant_bias)
     bias_bits = int(args.bias_bits)
-    if quant_only and w_bits < 2:
+    if quant_only and max(lowbit_w_bits, highbit_w_bits) < 2:
         print("[WARN] --quant-only specified but w_bits < 2; float weights will be exported.")
     if quant_bias and bias_bits < 2:
         print("[WARN] bias-bits < 2 disables bias quantization.")
         quant_bias = False
 
     skip_float = set()
-    if w_bits >= 2:
+    if max(lowbit_w_bits, highbit_w_bits) >= 2 and (lowbit_quant_target != "none" or highbit_quant_target != "none"):
         for name, tensor in tensors.items():
             arr, dtype = _tensor_to_numpy(tensor)
             if arr.ndim == 0:
@@ -435,15 +516,24 @@ def main() -> None:
             is_weight = dtype == "UHD_F32" and arr.ndim == 4 and name.endswith(".weight")
             if not is_weight:
                 continue
-            q_arr, scale = _quantize_weights(arr.astype(np.float32), w_bits, per_channel=True, ch_axis=0)
+            bits = _quant_bits_for_name(
+                name,
+                lowbit_quant_target,
+                highbit_quant_target,
+                lowbit_w_bits,
+                highbit_w_bits,
+            )
+            if bits < 2:
+                continue
+            q_arr, scale, q_dtype = _quantize_weights(arr.astype(np.float32), bits, per_channel=True, ch_axis=0)
             q_data_name = _sanitize_identifier(f"qdata_{name}", used_names)
             q_scale_name = _sanitize_identifier(f"qscale_{name}", used_names)
             q_shape_name = _sanitize_identifier(f"qshape_{name}", used_names)
             q_entries.append(
                 {
                     "name": name,
-                    "bits": w_bits,
-                    "dtype": "UHD_I8",
+                    "bits": bits,
+                    "dtype": q_dtype,
                     "data_name": q_data_name,
                     "scale_name": q_scale_name,
                     "shape_name": q_shape_name,
@@ -555,6 +645,13 @@ def main() -> None:
         h.write("    int32_t has_act_scales;\n")
         h.write("    int32_t bin_output;\n")
         h.write("    const char* bin_path;\n")
+        h.write("    const char* quant_target;\n")
+        h.write("    const char* lowbit_quant_target;\n")
+        h.write("    int32_t lowbit_w_bits;\n")
+        h.write("    int32_t lowbit_a_bits;\n")
+        h.write("    const char* highbit_quant_target;\n")
+        h.write("    int32_t highbit_w_bits;\n")
+        h.write("    int32_t highbit_a_bits;\n")
         h.write("    const char* activation;\n")
         h.write("    const char* resize_mode;\n")
         h.write("    const float* anchors;\n")
@@ -747,6 +844,13 @@ def main() -> None:
         c.write(f"    {1 if act_scales else 0},\n")
         c.write(f"    {1 if bin_output else 0},\n")
         c.write(f'    "{bin_path_cfg}",\n')
+        c.write(f'    "{quant_target}",\n')
+        c.write(f'    "{lowbit_quant_target}",\n')
+        c.write(f"    {int(lowbit_w_bits)},\n")
+        c.write(f"    {int(lowbit_a_bits)},\n")
+        c.write(f'    "{highbit_quant_target}",\n')
+        c.write(f"    {int(highbit_w_bits)},\n")
+        c.write(f"    {int(highbit_a_bits)},\n")
         c.write(f'    "{activation}",\n')
         c.write(f'    "{resize_mode}",\n')
         c.write("    kUhdAnchors,\n")
