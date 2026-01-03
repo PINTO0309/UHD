@@ -818,6 +818,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
     elif arch == "ultratinyod":
         use_head_ese = bool(kwargs.get("use_head_ese", kwargs.get("utod_head_ese", False)))
         utod_activation = kwargs.get("activation", "swish")
+        w_bits = int(kwargs.get("w_bits", 0) or 0)
+        a_bits = int(kwargs.get("a_bits", 0) or 0)
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             stride=kwargs.get("output_stride", 8) or 8,
@@ -832,6 +834,8 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_large_obj_branch=bool(kwargs.get("utod_large_obj_branch", False)),
             large_obj_branch_depth=int(kwargs.get("utod_large_obj_depth", 1)),
             large_obj_branch_expansion=float(kwargs.get("utod_large_obj_ch_scale", 1.0)),
+            w_bits=w_bits,
+            a_bits=a_bits,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(
