@@ -273,6 +273,32 @@ def _quantize_bias(
     return q, np.array([scale], dtype=np.float32)
 
 
+def _pack_quantized(q_arr: np.ndarray, bits: int) -> Tuple[np.ndarray, int]:
+    bits = int(bits)
+    if bits not in (2, 4):
+        return q_arr, 0
+    qmax = (1 << (bits - 1)) - 1
+    offset = qmax
+    flat = q_arr.reshape(-1).astype(np.int16) + offset
+    if bits == 4:
+        if flat.size % 2:
+            flat = np.concatenate([flat, np.zeros(1, dtype=flat.dtype)])
+        lo = flat[0::2] & 0x0F
+        hi = (flat[1::2] & 0x0F) << 4
+        packed = (lo | hi).astype(np.uint8)
+        return packed, bits
+    # bits == 2
+    pad = (-flat.size) % 4
+    if pad:
+        flat = np.concatenate([flat, np.zeros(pad, dtype=flat.dtype)])
+    v0 = (flat[0::4] & 0x03)
+    v1 = (flat[1::4] & 0x03) << 2
+    v2 = (flat[2::4] & 0x03) << 4
+    v3 = (flat[3::4] & 0x03) << 6
+    packed = (v0 | v1 | v2 | v3).astype(np.uint8)
+    return packed, bits
+
+
 def _fold_conv_bn(
     weight: torch.Tensor,
     bias: torch.Tensor,
@@ -393,6 +419,11 @@ def parse_args() -> argparse.Namespace:
         help="Embed tensor data directly into the C++ source.",
     )
     parser.set_defaults(bin_output=True)
+    parser.add_argument(
+        "--no-pack-lowbit",
+        action="store_true",
+        help="Disable bit-packing for low-bit weights (default: pack 2/4-bit).",
+    )
     parser.add_argument("--bin-path", default=None, help="Output binary file path (default: <prefix>.bin).")
     parser.add_argument("--export-act-scale", action="store_true", help="Export activation scale estimates.")
     parser.add_argument("--calib-image-dir", default=None, help="Directory of images for activation calibration.")
@@ -501,6 +532,7 @@ def main() -> None:
     quant_only = bool(args.quant_only)
     quant_bias = not bool(args.no_quant_bias)
     bias_bits = int(args.bias_bits)
+    pack_lowbit = not bool(args.no_pack_lowbit)
     if quant_only and max(lowbit_w_bits, highbit_w_bits) < 2:
         print("[WARN] --quant-only specified but w_bits < 2; float weights will be exported.")
     if quant_bias and bias_bits < 2:
@@ -526,6 +558,14 @@ def main() -> None:
             if bits < 2:
                 continue
             q_arr, scale, q_dtype = _quantize_weights(arr.astype(np.float32), bits, per_channel=True, ch_axis=0)
+            orig_shape = arr.shape
+            orig_ndim = arr.ndim
+            packed_bits = 0
+            if pack_lowbit:
+                q_arr_packed, packed_bits = _pack_quantized(q_arr, bits)
+                if packed_bits:
+                    q_arr = q_arr_packed
+                    q_dtype = "UHD_U8"
             q_data_name = _sanitize_identifier(f"qdata_{name}", used_names)
             q_scale_name = _sanitize_identifier(f"qscale_{name}", used_names)
             q_shape_name = _sanitize_identifier(f"qshape_{name}", used_names)
@@ -534,13 +574,14 @@ def main() -> None:
                     "name": name,
                     "bits": bits,
                     "dtype": q_dtype,
+                    "packed_bits": packed_bits,
                     "data_name": q_data_name,
                     "scale_name": q_scale_name,
                     "shape_name": q_shape_name,
-                    "shape": q_arr.shape,
+                    "shape": orig_shape,
                     "q_arr": q_arr,
                     "scale": scale,
-                    "ndim": q_arr.ndim,
+                    "ndim": orig_ndim,
                     "ch_axis": 0,
                 }
             )
@@ -563,6 +604,7 @@ def main() -> None:
                                 "name": bias_name,
                                 "bits": bias_bits,
                                 "dtype": "UHD_I16",
+                                "packed_bits": 0,
                                 "data_name": bq_data_name,
                                 "scale_name": bq_scale_name,
                                 "shape_name": bq_shape_name,
@@ -606,7 +648,7 @@ def main() -> None:
         h.write("#pragma once\n")
         h.write("#include <cstddef>\n")
         h.write("#include <cstdint>\n\n")
-        h.write("enum UhdDType : int32_t { UHD_F32 = 0, UHD_I8 = 1, UHD_I16 = 2, UHD_I32 = 3 };\n\n")
+        h.write("enum UhdDType : int32_t { UHD_F32 = 0, UHD_I8 = 1, UHD_I16 = 2, UHD_I32 = 3, UHD_U8 = 4 };\n\n")
         h.write("struct UhdTensor {\n")
         h.write("    const char* name;\n")
         h.write("    const void* data;\n")
@@ -673,6 +715,7 @@ def main() -> None:
         h.write("    int32_t bits;\n")
         h.write("    int32_t ch_axis;\n")
         h.write("    UhdDType dtype;\n")
+        h.write("    int32_t packed_bits;\n")
         h.write("};\n\n")
         h.write("struct UhdQuantizedTensorBin {\n")
         h.write("    const char* name;\n")
@@ -686,6 +729,7 @@ def main() -> None:
         h.write("    int32_t bits;\n")
         h.write("    int32_t ch_axis;\n")
         h.write("    UhdDType dtype;\n")
+        h.write("    int32_t packed_bits;\n")
         h.write("};\n\n")
         h.write("extern const UhdQuantizedTensor kUhdQuantizedTensors[];\n")
         h.write("extern const size_t kUhdQuantizedTensorCount;\n")
@@ -764,6 +808,7 @@ def main() -> None:
                         "bits": entry["bits"],
                         "ch_axis": entry["ch_axis"],
                         "dtype": entry["dtype"],
+                        "packed_bits": entry.get("packed_bits", 0),
                         "scale_len": int(entry["scale"].size),
                         "data_offset": data_offset,
                         "data_bytes": data_bytes,
@@ -817,6 +862,8 @@ def main() -> None:
             if not bin_output:
                 if entry["dtype"] == "UHD_I16":
                     _write_array(c, entry["data_name"], entry["q_arr"].astype(np.int16), "int16_t")
+                elif entry["dtype"] == "UHD_U8":
+                    _write_array(c, entry["data_name"], entry["q_arr"].astype(np.uint8), "uint8_t")
                 else:
                     _write_array(c, entry["data_name"], entry["q_arr"].astype(np.int8), "int8_t")
                 _write_array(c, entry["scale_name"], entry["scale"].astype(np.float32), "float")
@@ -886,6 +933,7 @@ def main() -> None:
                 c.write(f"        {entry['shape_name']},\n")
                 c.write(f"        {int(entry['ndim'])},\n")
                 c.write(f"        {entry['dtype']},\n")
+                c.write(f"        {int(entry['packed_bits'])},\n")
                 c.write("    },\n")
         c.write("};\n\n")
         if bin_output:
@@ -906,6 +954,7 @@ def main() -> None:
                 c.write(f"        {int(entry['bits'])},\n")
                 c.write(f"        {int(entry['ch_axis'])},\n")
                 c.write(f"        {entry['dtype']},\n")
+                c.write(f"        {int(entry['packed_bits'])},\n")
                 c.write("    },\n")
         c.write("};\n\n")
         if bin_output:
@@ -928,6 +977,7 @@ def main() -> None:
                 c.write(f"        {int(entry['bits'])},\n")
                 c.write(f"        {int(entry['ch_axis'])},\n")
                 c.write(f"        {entry['dtype']},\n")
+                c.write(f"        {int(entry['packed_bits'])},\n")
                 c.write("    },\n")
         c.write("};\n\n")
         if bin_output:
