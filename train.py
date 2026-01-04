@@ -247,6 +247,30 @@ def parse_args():
     parser.add_argument("--qat-fuse", action="store_true", help="Fuse Conv+BN(+ReLU) before QAT.")
     parser.add_argument("--qat-disable-observer-epoch", type=int, default=2, help="Epoch (1-based) to disable observers (0 to skip).")
     parser.add_argument("--qat-freeze-bn-epoch", type=int, default=3, help="Epoch (1-based) to freeze BN stats (0 to skip).")
+    parser.add_argument("--w-bits", type=int, default=0, help="Fake-quant bits for weights (UltraTinyOD only, 0 disables).")
+    parser.add_argument("--a-bits", type=int, default=0, help="Fake-quant bits for activations (UltraTinyOD only, 0 disables).")
+    parser.add_argument(
+        "--quant-target",
+        choices=["backbone", "head", "both", "none"],
+        default="both",
+        help="Quantization target for UltraTinyOD (default: both).",
+    )
+    parser.add_argument(
+        "--lowbit-quant-target",
+        choices=["backbone", "head", "both", "none"],
+        default=None,
+        help="Low-bit quantization target (defaults to --quant-target).",
+    )
+    parser.add_argument("--lowbit-w-bits", type=int, default=None, help="Low-bit weight bits (defaults to --w-bits).")
+    parser.add_argument("--lowbit-a-bits", type=int, default=None, help="Low-bit activation bits (defaults to --a-bits).")
+    parser.add_argument(
+        "--highbit-quant-target",
+        choices=["backbone", "head", "both", "none"],
+        default="none",
+        help="High-bit quantization target (default: none).",
+    )
+    parser.add_argument("--highbit-w-bits", type=int, default=8, help="High-bit weight bits (default: 8).")
+    parser.add_argument("--highbit-a-bits", type=int, default=8, help="High-bit activation bits (default: 8).")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
     parser.add_argument("--use-ema", action="store_true", help="Enable EMA of model weights for evaluation/checkpointing.")
     parser.add_argument("--ema-decay", type=float, default=0.9998, help="EMA decay factor (ignored if EMA disabled).")
@@ -1717,6 +1741,17 @@ def main():
     distill_cosine = bool(args.distill_cosine)
     distill_feat = float(args.distill_feat)
     cnn_width = int(args.cnn_width)
+    w_bits = int(args.w_bits)
+    a_bits = int(args.a_bits)
+    quant_target = str(args.quant_target)
+    lowbit_quant_target = args.lowbit_quant_target or quant_target
+    if args.lowbit_quant_target is not None:
+        quant_target = lowbit_quant_target
+    lowbit_w_bits = w_bits if args.lowbit_w_bits is None else int(args.lowbit_w_bits)
+    lowbit_a_bits = a_bits if args.lowbit_a_bits is None else int(args.lowbit_a_bits)
+    highbit_quant_target = str(args.highbit_quant_target)
+    highbit_w_bits = int(args.highbit_w_bits)
+    highbit_a_bits = int(args.highbit_a_bits)
     teacher_backbone = args.teacher_backbone
     teacher_backbone_arch = args.teacher_backbone_arch
     teacher_backbone_norm = args.teacher_backbone_norm
@@ -1789,7 +1824,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1834,6 +1869,24 @@ def main():
             utod_large_obj_depth = int(meta["utod_large_obj_depth"])
         if "utod_large_obj_ch_scale" in meta and meta["utod_large_obj_ch_scale"]:
             utod_large_obj_ch_scale = float(meta["utod_large_obj_ch_scale"])
+        if "w_bits" in meta:
+            w_bits = int(meta["w_bits"])
+        if "a_bits" in meta:
+            a_bits = int(meta["a_bits"])
+        if "quant_target" in meta and meta["quant_target"]:
+            quant_target = str(meta["quant_target"])
+        if "lowbit_quant_target" in meta and meta["lowbit_quant_target"]:
+            lowbit_quant_target = str(meta["lowbit_quant_target"])
+        if "lowbit_w_bits" in meta:
+            lowbit_w_bits = int(meta["lowbit_w_bits"])
+        if "lowbit_a_bits" in meta:
+            lowbit_a_bits = int(meta["lowbit_a_bits"])
+        if "highbit_quant_target" in meta and meta["highbit_quant_target"]:
+            highbit_quant_target = str(meta["highbit_quant_target"])
+        if "highbit_w_bits" in meta:
+            highbit_w_bits = int(meta["highbit_w_bits"])
+        if "highbit_a_bits" in meta:
+            highbit_a_bits = int(meta["highbit_a_bits"])
         if "use_fpn" in meta and bool(meta["use_fpn"]) != use_fpn:
             print(f"Overriding CLI use-fpn={use_fpn} with {label} use-fpn={bool(meta['use_fpn'])}")
             use_fpn = bool(meta["use_fpn"])
@@ -2077,6 +2130,15 @@ def main():
         simota_topk=simota_topk,
         use_batchnorm=use_batchnorm,
         use_improved_head=use_improved_head if args.arch == "ultratinyod" else False,
+        w_bits=w_bits,
+        a_bits=a_bits,
+        quant_target=quant_target,
+        lowbit_quant_target=lowbit_quant_target,
+        lowbit_w_bits=lowbit_w_bits,
+        lowbit_a_bits=lowbit_a_bits,
+        highbit_quant_target=highbit_quant_target,
+        highbit_w_bits=highbit_w_bits,
+        highbit_a_bits=highbit_a_bits,
     ).to(device)
     output_stride = getattr(model, "out_stride", output_stride)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
@@ -2585,6 +2647,15 @@ def main():
                     "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
+                    "w_bits": w_bits,
+                    "a_bits": a_bits,
+                    "quant_target": quant_target,
+                    "lowbit_quant_target": lowbit_quant_target,
+                    "lowbit_w_bits": lowbit_w_bits,
+                    "lowbit_a_bits": lowbit_a_bits,
+                    "highbit_quant_target": highbit_quant_target,
+                    "highbit_w_bits": highbit_w_bits,
+                    "highbit_a_bits": highbit_a_bits,
                     "best_map": best_map,
                     "use_ema": use_ema,
                     "ema_decay": ema_decay,
@@ -2669,6 +2740,15 @@ def main():
             "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
             "activation": activation,
             "use_batchnorm": use_batchnorm,
+            "w_bits": w_bits,
+            "a_bits": a_bits,
+            "quant_target": quant_target,
+            "lowbit_quant_target": lowbit_quant_target,
+            "lowbit_w_bits": lowbit_w_bits,
+            "lowbit_a_bits": lowbit_a_bits,
+            "highbit_quant_target": highbit_quant_target,
+            "highbit_w_bits": highbit_w_bits,
+            "highbit_a_bits": highbit_a_bits,
             "best_map": best_map,
             "use_ema": use_ema,
             "ema_decay": ema_decay,

@@ -20,6 +20,7 @@ raw_out, decoded = model(x, decode=True)
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -39,6 +40,54 @@ def _make_activation(name: str) -> nn.Module:
     if act == "relu":
         return nn.ReLU(inplace=True)
     raise ValueError(f"Unsupported activation: {name}")
+
+
+def _normalize_bits(bits: Optional[int]) -> int:
+    if bits is None:
+        return 0
+    bits = int(bits)
+    return bits if bits >= 2 else 0
+
+
+class FakeQuantizer(nn.Module):
+    """Simple symmetric fake quantizer with STE for low-bit QAT."""
+
+    def __init__(
+        self,
+        bits: int,
+        per_channel: bool = False,
+        ch_axis: int = 0,
+        signed: bool = True,
+        eps: float = 1e-8,
+    ) -> None:
+        super().__init__()
+        self.bits = _normalize_bits(bits)
+        self.per_channel = bool(per_channel)
+        self.ch_axis = int(ch_axis)
+        self.signed = bool(signed)
+        self.eps = float(eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.bits <= 0:
+            return x
+        if self.bits <= 1:
+            return x
+        qmax = (1 << (self.bits - 1)) - 1 if self.signed else (1 << self.bits) - 1
+        if qmax <= 0:
+            return x
+        qmin = -qmax if self.signed else 0
+        if self.per_channel:
+            dims = [d for d in range(x.ndim) if d != self.ch_axis]
+            max_val = x.abs().amax(dim=dims, keepdim=True)
+        else:
+            max_val = x.abs().max()
+        scale = max_val / float(qmax)
+        scale = torch.clamp(scale, min=self.eps)
+        x_scaled = x / scale
+        x_clamped = torch.clamp(x_scaled, qmin, qmax)
+        x_rounded = torch.round(x_clamped)
+        x_q = x_rounded * scale
+        return x + (x_q - x).detach()
 
 
 # ============================================================
@@ -63,6 +112,8 @@ class ConvBNAct(nn.Module):
         bias: bool = False,
         act: bool = True,
         act_name: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
     ):
         super().__init__()
         if p is None:
@@ -79,9 +130,31 @@ class ConvBNAct(nn.Module):
         )
         self.bn = nn.BatchNorm2d(c_out, eps=1e-3, momentum=0.03)
         self.act = _make_activation(act_name) if act else nn.Identity()
+        self.w_bits = _normalize_bits(w_bits)
+        self.a_bits = _normalize_bits(a_bits)
+        self.w_quant = FakeQuantizer(self.w_bits, per_channel=True, ch_axis=0) if self.w_bits else None
+        self.a_quant = FakeQuantizer(self.a_bits, per_channel=False, signed=True) if self.a_bits else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(self.bn(self.conv(x)))
+        if self.w_quant is None and self.a_quant is None:
+            return self.act(self.bn(self.conv(x)))
+        weight = self.conv.weight
+        if self.w_quant is not None:
+            weight = self.w_quant(weight)
+        x = F.conv2d(
+            x,
+            weight,
+            self.conv.bias,
+            stride=self.conv.stride,
+            padding=self.conv.padding,
+            dilation=self.conv.dilation,
+            groups=self.conv.groups,
+        )
+        x = self.bn(x)
+        x = self.act(x)
+        if self.a_quant is not None:
+            x = self.a_quant(x)
+        return x
 
     def fuse_model(self, qat: bool = False) -> None:
         try:
@@ -110,6 +183,8 @@ class DWConv(nn.Module):
         s: int = 1,
         act: bool = True,
         act_name: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
     ):
         super().__init__()
         # depthwise
@@ -123,6 +198,8 @@ class DWConv(nn.Module):
             bias=False,
             act=act,
             act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
         )
         # pointwise
         self.pw = ConvBNAct(
@@ -135,6 +212,8 @@ class DWConv(nn.Module):
             bias=False,
             act=act,
             act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -165,7 +244,7 @@ class EfficientSE(nn.Module):
 class ReceptiveFieldEnhancer(nn.Module):
     """Lightweight receptive-field block mixing dilated and wide depthwise convs."""
 
-    def __init__(self, channels: int, dilation: int = 2, act_name: str = "silu") -> None:
+    def __init__(self, channels: int, dilation: int = 2, act_name: str = "silu", w_bits: int = 0, a_bits: int = 0) -> None:
         super().__init__()
         d = max(1, int(dilation))
         self.branch_dilated = nn.Sequential(
@@ -178,7 +257,7 @@ class ReceptiveFieldEnhancer(nn.Module):
             nn.BatchNorm2d(channels, eps=1e-3, momentum=0.03),
             _make_activation(act_name),
         )
-        self.fuse = ConvBNAct(channels * 2, channels, k=1, s=1, p=0, act_name=act_name)
+        self.fuse = ConvBNAct(channels * 2, channels, k=1, s=1, p=0, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b1 = self.branch_dilated(x)
@@ -217,15 +296,15 @@ class SPPFmin(nn.Module):
     UltraTinyOD 用に最小限構成にしている。
     """
 
-    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu"):
+    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu", w_bits: int = 0, a_bits: int = 0):
         super().__init__()
         # まずチャネルを半減
         c_hidden = c_in // 2
-        self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name)
+        self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
         # 1 回だけの MaxPool（pool_k×pool_k）
         self.pool = nn.MaxPool2d(kernel_size=pool_k, stride=1, padding=pool_k // 2)
         # 出力チャネルを c_out に整える
-        self.cv2 = ConvBNAct(c_hidden * 2, c_out, k=1, s=1, p=0, act_name=act_name)
+        self.cv2 = ConvBNAct(c_hidden * 2, c_out, k=1, s=1, p=0, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.cv1(x)
@@ -261,7 +340,16 @@ class UltraTinyODBackbone(nn.Module):
         sppf: SPPFmin 128->64 (8 -> 8)
     """
 
-    def __init__(self, c_stem: int = 16, in_channels: int = 3, use_residual: bool = False, out_stride: int = 8, activation: str = "silu"):
+    def __init__(
+        self,
+        c_stem: int = 16,
+        in_channels: int = 3,
+        use_residual: bool = False,
+        out_stride: int = 8,
+        activation: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
+    ):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
@@ -269,24 +357,34 @@ class UltraTinyODBackbone(nn.Module):
         self.out_stride = int(out_stride)
         act_name = activation
         # 64 -> 32
-        self.stem = ConvBNAct(in_channels, c_stem, k=3, s=2, act_name=act_name)
+        self.stem = ConvBNAct(in_channels, c_stem, k=3, s=2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
         # 32 -> 16
-        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name)   # 16 -> 32
+        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)   # 16 -> 32
         # 16 -> 8 (stride 8) or keep 16 (stride 4)
         stride_block2 = 2 if self.out_stride >= 8 else 1
-        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2, act_name=act_name)  # 32 -> 64
+        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 32 -> 64
         # 8 -> 8 or 8 -> 4 (stride16 case)
         stride_block3 = 2 if self.out_stride == 16 else 1
-        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3, act_name=act_name)  # 64 -> 128
-        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1, act_name=act_name)  # 128 -> 128
+        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 64 -> 128
+        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 128 -> 128
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
-            self.block3_skip = ConvBNAct(c_stem * 4, c_stem * 8, k=1, s=stride_block3, p=0, act=False, act_name=act_name)
+            self.block3_skip = ConvBNAct(
+                c_stem * 4,
+                c_stem * 8,
+                k=1,
+                s=stride_block3,
+                p=0,
+                act=False,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64
-        self.sppf = SPPFmin(c_stem * 8, c_stem * 4, act_name=act_name)
+        self.sppf = SPPFmin(c_stem * 8, c_stem * 4, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
         self.out_channels = c_stem * 4  # 64
 
@@ -349,6 +447,15 @@ class UltraTinyODConfig:
     use_large_obj_branch: bool = False
     large_obj_branch_depth: int = 1
     large_obj_branch_expansion: float = 1.0
+    w_bits: int = 0
+    a_bits: int = 0
+    quant_target: str = "both"
+    lowbit_quant_target: str = "both"
+    lowbit_w_bits: int = 0
+    lowbit_a_bits: int = 0
+    highbit_quant_target: str = "none"
+    highbit_w_bits: int = 8
+    highbit_a_bits: int = 8
 
     def __post_init__(self):
         if self.anchors is None:
@@ -375,6 +482,21 @@ class UltraTinyODConfig:
         self.use_large_obj_branch = bool(self.use_large_obj_branch)
         self.large_obj_branch_depth = max(1, int(self.large_obj_branch_depth))
         self.large_obj_branch_expansion = float(max(0.25, self.large_obj_branch_expansion))
+        self.w_bits = _normalize_bits(self.w_bits)
+        self.a_bits = _normalize_bits(self.a_bits)
+        self.quant_target = str(self.quant_target or "both").lower()
+        if self.quant_target not in ("backbone", "head", "both", "none"):
+            self.quant_target = "both"
+        self.lowbit_quant_target = str(self.lowbit_quant_target or self.quant_target).lower()
+        if self.lowbit_quant_target not in ("backbone", "head", "both", "none"):
+            self.lowbit_quant_target = self.quant_target
+        self.highbit_quant_target = str(self.highbit_quant_target or "none").lower()
+        if self.highbit_quant_target not in ("backbone", "head", "both", "none"):
+            self.highbit_quant_target = "none"
+        self.lowbit_w_bits = _normalize_bits(self.lowbit_w_bits or self.w_bits)
+        self.lowbit_a_bits = _normalize_bits(self.lowbit_a_bits or self.a_bits)
+        self.highbit_w_bits = _normalize_bits(self.highbit_w_bits)
+        self.highbit_a_bits = _normalize_bits(self.highbit_a_bits)
 
 
 class UltraTinyODHead(nn.Module):
@@ -388,6 +510,8 @@ class UltraTinyODHead(nn.Module):
 
     def __init__(self, in_channels: int, cfg: UltraTinyODConfig, activation: str = "silu"):
         super().__init__()
+        self.w_bits = _normalize_bits(getattr(cfg, "w_bits", 0))
+        self.a_bits = _normalize_bits(getattr(cfg, "a_bits", 0))
         self.nc = cfg.num_classes
         self.stride = cfg.stride
         self.in_channels = in_channels
@@ -423,17 +547,17 @@ class UltraTinyODHead(nn.Module):
         self.has_quality_head = self.has_quality
 
         # 軽い文脈強調
-        self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
+        self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         if self.use_improved_head:
             self.context_res = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
-                ConvBNAct(in_channels, in_channels, k=1, s=1, p=0, act_name=act_name),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                ConvBNAct(in_channels, in_channels, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
             )
         if self.use_head_ese:
             self.head_se = EfficientSE(in_channels)
         self.head_rfb = (
-            ReceptiveFieldEnhancer(in_channels, dilation=self.context_dilation, act_name=act_name)
+            ReceptiveFieldEnhancer(in_channels, dilation=self.context_dilation, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
             if self.use_context_rfb
             else None
         )
@@ -443,23 +567,26 @@ class UltraTinyODHead(nn.Module):
                 nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, groups=in_channels, bias=False),
                 nn.BatchNorm2d(in_channels, eps=1e-3, momentum=0.03),
                 _make_activation(act_name),
-                ConvBNAct(in_channels, lob_ch, k=1, s=1, p=0, act_name=act_name),
+                ConvBNAct(in_channels, lob_ch, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
             )
             self.large_obj_blocks = nn.Sequential(
-                *[DWConv(lob_ch, lob_ch, k=3, s=1, act=True, act_name=act_name) for _ in range(self.large_obj_branch_depth)]
+                *[
+                    DWConv(lob_ch, lob_ch, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+                    for _ in range(self.large_obj_branch_depth)
+                ]
             )
-            self.large_obj_fuse = ConvBNAct(lob_ch, in_channels, k=1, s=1, p=0, act_name=act_name)
+            self.large_obj_fuse = ConvBNAct(lob_ch, in_channels, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         else:
             self.large_obj_down = None
 
         # box ブランチ
         if self.use_iou_aware_head:
             self.box_tower = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
             )
         else:
-            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
+            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         self.box_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 4,
@@ -471,11 +598,11 @@ class UltraTinyODHead(nn.Module):
         if self.has_quality:
             if self.use_iou_aware_head:
                 self.quality_tower = nn.Sequential(
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name),
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
                 )
             else:
-                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
+                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
             self.quality_out = nn.Conv2d(
                 in_channels,
                 self.num_anchors * 1,
@@ -486,7 +613,7 @@ class UltraTinyODHead(nn.Module):
             )
 
         # obj ブランチ
-        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name)
+        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         self.obj_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 1,
@@ -499,13 +626,13 @@ class UltraTinyODHead(nn.Module):
         # cls ブランチ
         if self.use_iou_aware_head:
             self.cls_tower = nn.Sequential(
-                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name),
+                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
             )
         else:
-            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name)
-            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name)
+            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         self.cls_out = nn.Conv2d(
             self.cls_mid,
             self.num_anchors * self.nc,
@@ -514,6 +641,7 @@ class UltraTinyODHead(nn.Module):
             padding=0,
             bias=True,
         )
+        self.out_w_quant = FakeQuantizer(self.w_bits, per_channel=True, ch_axis=0) if self.w_bits else None
 
         perm = self._build_raw_map_perm()
         self.register_buffer("raw_map_perm", perm, persistent=False)
@@ -764,10 +892,10 @@ class UltraTinyODHead(nn.Module):
             box_feat = self.box_tower(x)
         else:
             box_feat = self.box_conv(x)
-        box = self.box_out(box_feat)
+        box = self._conv2d_out(self.box_out, box_feat)
         # obj ブランチ
         obj = self.obj_conv(x)
-        obj = self.obj_out(obj)
+        obj = self._conv2d_out(self.obj_out, obj)
         # quality ブランチ
         quality = None
         if self.has_quality:
@@ -775,16 +903,30 @@ class UltraTinyODHead(nn.Module):
                 quality_feat = self.quality_tower(x)
             else:
                 quality_feat = self.quality_conv(x)
-            quality = self.quality_out(quality_feat)
+            quality = self._conv2d_out(self.quality_out, quality_feat)
         # cls ブランチ
         if self.use_iou_aware_head:
             cls_feat = self.cls_tower(x)
         else:
             cls_feat = self.cls_reduce(x)
             cls_feat = self.cls_conv(cls_feat)
-        cls = self.cls_out(cls_feat)
+        cls = self._conv2d_out(self.cls_out, cls_feat)
 
         return box, obj, quality, cls
+
+    def _conv2d_out(self, conv: nn.Conv2d, x: torch.Tensor) -> torch.Tensor:
+        if self.out_w_quant is None:
+            return conv(x)
+        weight = self.out_w_quant(conv.weight)
+        return F.conv2d(
+            x,
+            weight,
+            conv.bias,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            groups=conv.groups,
+        )
 
 
 class UltraTinyOD(nn.Module):
@@ -842,8 +984,60 @@ class UltraTinyOD(nn.Module):
                 config.use_iou_aware_head = bool(use_iou_aware_head)
             if not hasattr(config, "quality_power"):
                 config.quality_power = float(quality_power)
+            if not hasattr(config, "w_bits"):
+                config.w_bits = 0
+            if not hasattr(config, "a_bits"):
+                config.a_bits = 0
+            if not hasattr(config, "quant_target"):
+                config.quant_target = "both"
+            if not hasattr(config, "lowbit_quant_target"):
+                config.lowbit_quant_target = config.quant_target
+            if not hasattr(config, "lowbit_w_bits"):
+                config.lowbit_w_bits = config.w_bits
+            if not hasattr(config, "lowbit_a_bits"):
+                config.lowbit_a_bits = config.a_bits
+            if not hasattr(config, "highbit_quant_target"):
+                config.highbit_quant_target = "none"
+            if not hasattr(config, "highbit_w_bits"):
+                config.highbit_w_bits = 8
+            if not hasattr(config, "highbit_a_bits"):
+                config.highbit_a_bits = 8
 
         act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
+
+        low_target = str(getattr(config, "lowbit_quant_target", getattr(config, "quant_target", "both")) or "both").lower()
+        high_target = str(getattr(config, "highbit_quant_target", "none") or "none").lower()
+        if low_target not in ("backbone", "head", "both", "none"):
+            low_target = "both"
+        if high_target not in ("backbone", "head", "both", "none"):
+            high_target = "none"
+        if low_target != "none" and high_target != "none":
+            if (low_target in ("backbone", "both") and high_target in ("backbone", "both")) or (
+                low_target in ("head", "both") and high_target in ("head", "both")
+            ):
+                raise ValueError("lowbit-quant-target and highbit-quant-target overlap; choose non-overlapping targets.")
+        low_w = _normalize_bits(getattr(config, "lowbit_w_bits", getattr(config, "w_bits", 0)))
+        low_a = _normalize_bits(getattr(config, "lowbit_a_bits", getattr(config, "a_bits", 0)))
+        high_w = _normalize_bits(getattr(config, "highbit_w_bits", 0))
+        high_a = _normalize_bits(getattr(config, "highbit_a_bits", 0))
+
+        backbone_w_bits = 0
+        backbone_a_bits = 0
+        if high_target in ("backbone", "both"):
+            backbone_w_bits = high_w
+            backbone_a_bits = high_a
+        elif low_target in ("backbone", "both"):
+            backbone_w_bits = low_w
+            backbone_a_bits = low_a
+
+        head_w_bits = 0
+        head_a_bits = 0
+        if high_target in ("head", "both"):
+            head_w_bits = high_w
+            head_a_bits = high_a
+        elif low_target in ("head", "both"):
+            head_w_bits = low_w
+            head_a_bits = low_a
 
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
@@ -851,8 +1045,13 @@ class UltraTinyOD(nn.Module):
             use_residual=use_residual,
             out_stride=int(config.stride),
             activation=act_name,
+            w_bits=backbone_w_bits,
+            a_bits=backbone_a_bits,
         )
-        self.head = UltraTinyODHead(self.backbone.out_channels, config, activation=act_name)
+        head_cfg = deepcopy(config)
+        head_cfg.w_bits = head_w_bits
+        head_cfg.a_bits = head_a_bits
+        self.head = UltraTinyODHead(self.backbone.out_channels, head_cfg, activation=act_name)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
         self.use_improved_head = bool(getattr(config, "use_improved_head", False))
