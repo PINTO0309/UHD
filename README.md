@@ -301,7 +301,7 @@ gh release download onnx -R PINTO0309/UHD
 
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
 
-    |Var|ESPDL size|static w/o post<br>s3|static w/o post<br>p4|
+    |Var|ESPDL size|s3<br>Emphasis<br>on speed|s3<br>Emphasis<br>on precision|
     |:-:|:-:|:-:|:-:|
     |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_espdl.tar.gz)||||
     |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_espdl.tar.gz)||||
