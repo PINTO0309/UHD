@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from uhd.ultratinyod import UltraTinyOD, UltraTinyODConfig
 from uhd.resize import Y_BIN_RESIZE_MODE, Y_ONLY_RESIZE_MODE, Y_TRI_RESIZE_MODE, YUV422_RESIZE_MODE, normalize_resize_mode
+from uhd.spot import SPOT_DEFAULT_K_MAX, SPOT_DEFAULT_K_MIN, bake_spot_weights
 
 
 def parse_img_size(arg: str) -> Tuple[int, int]:
@@ -513,6 +514,10 @@ def build_argparser():
         action="store_true",
         help="Add a Resize op at the graph head and make input dynamic after export/simplify.",
     )
+    parser.add_argument("--use-spot", action="store_true", help="Bake SPoT weights for 1x1 convs.")
+    parser.add_argument("--no-spot", action="store_true", help="Disable SPoT baking even if checkpoint meta enables it.")
+    parser.add_argument("--spot-k-min", type=int, default=None, help="SPoT exponent minimum (default: from checkpoint).")
+    parser.add_argument("--spot-k-max", type=int, default=None, help="SPoT exponent maximum (default: from checkpoint).")
     return parser
 
 
@@ -569,6 +574,20 @@ def main():
             anchors_tensor = anchors_tensor.view(-1, 2)
         if anchors_tensor.ndim == 2 and anchors_tensor.shape[1] == 2:
             model.head.set_anchors(anchors_tensor)
+
+    spot_from_meta = bool(meta.get("use_spot", False))
+    use_spot = bool(args.use_spot) or spot_from_meta
+    if args.no_spot:
+        use_spot = False
+    spot_k_min = args.spot_k_min if args.spot_k_min is not None else int(meta.get("spot_k_min", SPOT_DEFAULT_K_MIN))
+    spot_k_max = args.spot_k_max if args.spot_k_max is not None else int(meta.get("spot_k_max", SPOT_DEFAULT_K_MAX))
+    if use_spot and spot_k_min > spot_k_max:
+        raise ValueError(f"spot_k_min must be <= spot_k_max (got {spot_k_min} > {spot_k_max})")
+    spot_applied = False
+    if use_spot:
+        spot_count = bake_spot_weights(model, spot_k_min, spot_k_max)
+        spot_applied = True
+        print(f"Applied SPoT to {spot_count} weights (k=[{spot_k_min}, {spot_k_max}]).")
 
     if not args.merge_postprocess:
         if args.noconcat_box_obj_quality_cls:
@@ -637,6 +656,10 @@ def main():
             "decode_score": "score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)",
             "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
             "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),
+            "uhd_use_spot": str(use_spot).lower(),
+            "uhd_spot_k_min": str(spot_k_min) if use_spot else "",
+            "uhd_spot_k_max": str(spot_k_max) if use_spot else "",
+            "uhd_spot_applied": str(spot_applied).lower(),
         },
     )
 

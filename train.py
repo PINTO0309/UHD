@@ -24,6 +24,7 @@ from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_m
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
 from uhd.utils import default_device, ensure_dir, move_targets, set_seed
+from uhd.spot import enable_spot_on_model
 from uhd.resize import (
     Y_BIN_RESIZE_MODE,
     Y_ONLY_RESIZE_MODE,
@@ -249,6 +250,9 @@ def parse_args():
     parser.add_argument("--qat-freeze-bn-epoch", type=int, default=3, help="Epoch (1-based) to freeze BN stats (0 to skip).")
     parser.add_argument("--w-bits", type=int, default=0, help="Fake-quant bits for weights (UltraTinyOD only, 0 disables).")
     parser.add_argument("--a-bits", type=int, default=0, help="Fake-quant bits for activations (UltraTinyOD only, 0 disables).")
+    parser.add_argument("--use-spot", action="store_true", help="Enable SPoT weight quantization on 1x1 convs.")
+    parser.add_argument("--spot-k-min", type=int, default=-20, help="SPoT exponent minimum (default: -20).")
+    parser.add_argument("--spot-k-max", type=int, default=2, help="SPoT exponent maximum (default: 2).")
     parser.add_argument(
         "--quant-target",
         choices=["backbone", "head", "both", "none"],
@@ -1743,6 +1747,11 @@ def main():
     cnn_width = int(args.cnn_width)
     w_bits = int(args.w_bits)
     a_bits = int(args.a_bits)
+    use_spot = bool(args.use_spot)
+    spot_k_min = int(args.spot_k_min)
+    spot_k_max = int(args.spot_k_max)
+    if spot_k_min > spot_k_max:
+        raise ValueError(f"spot_k_min must be <= spot_k_max (got {spot_k_min} > {spot_k_max})")
     quant_target = str(args.quant_target)
     lowbit_quant_target = args.lowbit_quant_target or quant_target
     if args.lowbit_quant_target is not None:
@@ -1824,7 +1833,7 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits, use_spot, spot_k_min, spot_k_max
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1873,6 +1882,12 @@ def main():
             w_bits = int(meta["w_bits"])
         if "a_bits" in meta:
             a_bits = int(meta["a_bits"])
+        if "use_spot" in meta:
+            use_spot = bool(meta["use_spot"])
+        if "spot_k_min" in meta:
+            spot_k_min = int(meta["spot_k_min"])
+        if "spot_k_max" in meta:
+            spot_k_max = int(meta["spot_k_max"])
         if "quant_target" in meta and meta["quant_target"]:
             quant_target = str(meta["quant_target"])
         if "lowbit_quant_target" in meta and meta["lowbit_quant_target"]:
@@ -2141,6 +2156,10 @@ def main():
         highbit_a_bits=highbit_a_bits,
     ).to(device)
     output_stride = getattr(model, "out_stride", output_stride)
+    if use_spot:
+        spot_count = enable_spot_on_model(model, spot_k_min, spot_k_max)
+        if spot_count == 0:
+            print("[WARN] --use-spot enabled but no SPoT-capable layers were found.")
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
     ema_helper = None
@@ -2656,6 +2675,9 @@ def main():
                     "highbit_quant_target": highbit_quant_target,
                     "highbit_w_bits": highbit_w_bits,
                     "highbit_a_bits": highbit_a_bits,
+                    "use_spot": use_spot,
+                    "spot_k_min": spot_k_min,
+                    "spot_k_max": spot_k_max,
                     "best_map": best_map,
                     "use_ema": use_ema,
                     "ema_decay": ema_decay,
@@ -2749,6 +2771,9 @@ def main():
             "highbit_quant_target": highbit_quant_target,
             "highbit_w_bits": highbit_w_bits,
             "highbit_a_bits": highbit_a_bits,
+            "use_spot": use_spot,
+            "spot_k_min": spot_k_min,
+            "spot_k_max": spot_k_max,
             "best_map": best_map,
             "use_ema": use_ema,
             "ema_decay": ema_decay,

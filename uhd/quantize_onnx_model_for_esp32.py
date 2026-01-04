@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 from esp_ppq.api import espdl_quantize_onnx
 from esp_ppq.api.setting import QuantizationSettingFactory
 from esp_ppq.core import TargetPlatform
+from uhd.spot import SPOT_DEFAULT_K_MAX, SPOT_DEFAULT_K_MIN, spot_quantize_weight_numpy
 
 try:
     from uhd.data import YoloDataset
@@ -144,6 +145,70 @@ def sanitize_onnx_model(onnx_model_path, export_dir=None, batch_size=None, expan
         print(f"Sanitized ONNX: removed unlinked inputs: {removed_inputs}")
     print(f"Sanitized ONNX saved to: {sanitized_path}")
     return sanitized_path
+
+
+def read_onnx_metadata(onnx_model_path):
+    try:
+        model = onnx.load(onnx_model_path)
+    except Exception:
+        return {}
+    return {prop.key: prop.value for prop in model.metadata_props}
+
+
+def update_onnx_metadata(onnx_model_path, props):
+    try:
+        model = onnx.load(onnx_model_path)
+    except Exception:
+        return
+    kv = {prop.key: prop.value for prop in model.metadata_props}
+    kv.update({str(k): str(v) for k, v in props.items() if v is not None})
+    model.metadata_props.clear()
+    for k, v in kv.items():
+        prop = model.metadata_props.add()
+        prop.key = k
+        prop.value = v
+    onnx.save(model, onnx_model_path)
+
+
+def apply_spot_to_onnx_model(onnx_model_path, k_min, k_max, require_bn_follow=True):
+    model = onnx.load(onnx_model_path)
+    init_by_name = {init.name: init for init in model.graph.initializer}
+    bn_inputs = set()
+    if require_bn_follow:
+        for node in model.graph.node:
+            if node.op_type != "BatchNormalization":
+                continue
+            for inp in node.input:
+                bn_inputs.add(inp)
+    updated = 0
+    for node in model.graph.node:
+        if node.op_type != "Conv":
+            continue
+        if len(node.input) < 2:
+            continue
+        if require_bn_follow:
+            if not any(out in bn_inputs for out in node.output):
+                continue
+        attrs = {attr.name: onnx.helper.get_attribute_value(attr) for attr in node.attribute}
+        groups = int(attrs.get("group", 1) or 1)
+        if groups != 1:
+            continue
+        weight_name = node.input[1]
+        weight_init = init_by_name.get(weight_name)
+        if weight_init is None:
+            continue
+        weight = onnx.numpy_helper.to_array(weight_init)
+        if weight.ndim != 4:
+            continue
+        if weight.shape[2] != 1 or weight.shape[3] != 1:
+            continue
+        weight_q = spot_quantize_weight_numpy(weight.astype(np.float32), k_min, k_max)
+        weight_init.CopyFrom(onnx.numpy_helper.from_array(weight_q, weight_name))
+        updated += 1
+
+    if updated:
+        onnx.save(model, onnx_model_path)
+    return updated
 
 
 def get_int16_platform(target):
@@ -374,6 +439,23 @@ def build_arg_parser():
         help="Quantization bits.",
     )
     parser.add_argument(
+        "--use-spot",
+        action="store_true",
+        help="Apply SPoT weight quantization to 1x1 convs before PTQ.",
+    )
+    parser.add_argument(
+        "--spot-k-min",
+        type=int,
+        default=None,
+        help="SPoT exponent minimum (default: from ONNX metadata).",
+    )
+    parser.add_argument(
+        "--spot-k-max",
+        type=int,
+        default=None,
+        help="SPoT exponent maximum (default: from ONNX metadata).",
+    )
+    parser.add_argument(
         "--device",
         default=DEFAULT_DEVICE,
         choices=["cpu", "cuda"],
@@ -400,6 +482,32 @@ def main():
         batch_size=args.batch_size,
         expand_group_conv=args.expand_group_conv,
     )
+    meta_props = read_onnx_metadata(onnx_model_path)
+    meta_use_spot = str(meta_props.get("uhd_use_spot", "")).lower() in ("1", "true", "yes")
+    meta_spot_applied = str(meta_props.get("uhd_spot_applied", "")).lower() in ("1", "true", "yes")
+    use_spot = bool(args.use_spot) or meta_use_spot
+    spot_k_min = args.spot_k_min if args.spot_k_min is not None else int(meta_props.get("uhd_spot_k_min", SPOT_DEFAULT_K_MIN) or SPOT_DEFAULT_K_MIN)
+    spot_k_max = args.spot_k_max if args.spot_k_max is not None else int(meta_props.get("uhd_spot_k_max", SPOT_DEFAULT_K_MAX) or SPOT_DEFAULT_K_MAX)
+    if use_spot and spot_k_min > spot_k_max:
+        raise ValueError(f"spot_k_min must be <= spot_k_max (got {spot_k_min} > {spot_k_max})")
+    if use_spot:
+        if meta_spot_applied:
+            print("[INFO] ONNX metadata indicates SPoT already applied; skipping SPoT preprocessing.")
+        else:
+            updated = apply_spot_to_onnx_model(onnx_model_path, spot_k_min, spot_k_max, require_bn_follow=True)
+            if updated:
+                update_onnx_metadata(
+                    onnx_model_path,
+                    {
+                        "uhd_use_spot": "true",
+                        "uhd_spot_k_min": str(spot_k_min),
+                        "uhd_spot_k_max": str(spot_k_max),
+                        "uhd_spot_applied": "true",
+                    },
+                )
+                print(f"Applied SPoT to {updated} Conv(1x1) weights in ONNX.")
+            else:
+                print("[WARN] SPoT requested but no matching Conv(1x1) weights were found.")
     if args.dataset_type == "yolo":
         class_ids = parse_class_ids(args.class_ids)
         dataset = YoloDataset(

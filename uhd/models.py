@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from functools import partial
 
 from .ultratinyod import UltraTinyOD, UltraTinyODConfig
+from .spot import SPOT_DEFAULT_K_MAX, SPOT_DEFAULT_K_MIN, spot_quantize_weight
 
 
 def _make_activation(name: str) -> nn.Module:
@@ -28,7 +29,26 @@ class ConvBNAct(nn.Module):
         self.act = _make_activation(activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(self.bn(self.conv(x)))
+        use_spot = bool(getattr(self, "spot_enabled", False))
+        if not use_spot:
+            return self.act(self.bn(self.conv(x)))
+        k = self.conv.kernel_size
+        k_h, k_w = (k if isinstance(k, tuple) else (int(k), int(k)))
+        weight = self.conv.weight
+        if k_h == 1 and k_w == 1 and int(self.conv.groups) == 1:
+            k_min = int(getattr(self, "spot_k_min", SPOT_DEFAULT_K_MIN))
+            k_max = int(getattr(self, "spot_k_max", SPOT_DEFAULT_K_MAX))
+            weight = spot_quantize_weight(weight, k_min, k_max)
+        x = F.conv2d(
+            x,
+            weight,
+            self.conv.bias,
+            stride=self.conv.stride,
+            padding=self.conv.padding,
+            dilation=self.conv.dilation,
+            groups=self.conv.groups,
+        )
+        return self.act(self.bn(x))
 
 
 class DWConvBlock(nn.Module):
@@ -40,7 +60,26 @@ class DWConvBlock(nn.Module):
         self.act = _make_activation(activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(self.bn(self.pw(self.dw(x))))
+        use_spot = bool(getattr(self, "spot_enabled", False))
+        x = self.dw(x)
+        weight = self.pw.weight
+        if use_spot:
+            k = self.pw.kernel_size
+            k_h, k_w = (k if isinstance(k, tuple) else (int(k), int(k)))
+            if k_h == 1 and k_w == 1 and int(self.pw.groups) == 1:
+                k_min = int(getattr(self, "spot_k_min", SPOT_DEFAULT_K_MIN))
+                k_max = int(getattr(self, "spot_k_max", SPOT_DEFAULT_K_MAX))
+                weight = spot_quantize_weight(weight, k_min, k_max)
+        x = F.conv2d(
+            x,
+            weight,
+            self.pw.bias,
+            stride=self.pw.stride,
+            padding=self.pw.padding,
+            dilation=self.pw.dilation,
+            groups=self.pw.groups,
+        )
+        return self.act(self.bn(x))
 
 
 class SEModule(nn.Module):

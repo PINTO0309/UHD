@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .spot import SPOT_DEFAULT_K_MAX, SPOT_DEFAULT_K_MIN, spot_quantize_weight
 
 # ------------------------------------------------------------
 # helpers
@@ -136,11 +137,19 @@ class ConvBNAct(nn.Module):
         self.a_quant = FakeQuantizer(self.a_bits, per_channel=False, signed=True) if self.a_bits else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.w_quant is None and self.a_quant is None:
+        use_spot = bool(getattr(self, "spot_enabled", False))
+        if self.w_quant is None and self.a_quant is None and not use_spot:
             return self.act(self.bn(self.conv(x)))
         weight = self.conv.weight
         if self.w_quant is not None:
             weight = self.w_quant(weight)
+        if use_spot:
+            k = self.conv.kernel_size
+            k_h, k_w = (k if isinstance(k, tuple) else (int(k), int(k)))
+            if k_h == 1 and k_w == 1 and int(self.conv.groups) == 1:
+                k_min = int(getattr(self, "spot_k_min", SPOT_DEFAULT_K_MIN))
+                k_max = int(getattr(self, "spot_k_max", SPOT_DEFAULT_K_MAX))
+                weight = spot_quantize_weight(weight, k_min, k_max)
         x = F.conv2d(
             x,
             weight,
