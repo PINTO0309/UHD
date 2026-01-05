@@ -2382,6 +2382,166 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
 --int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
 --int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv"
+
+#########################################################################################
+#########################################################################################
+#########################################################################################
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_y \
+--onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /obj_conv/pw/conv/Conv \
+--int16-op-pattern /obj_conv/pw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/stem/conv/Conv \
+--int16-op-pattern /backbone/stem/act/Relu \
+--int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /backbone/sppf/cv1/conv/Conv \
+--int16-op-pattern /backbone/sppf/cv1/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /backbone/block3_skip/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
+--int16-op-pattern /backbone/block2/pw/conv/Conv \
+--int16-op-pattern /backbone/block2/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
+--int16-op-pattern /backbone/block1/dw/act/Relu
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_y \
+--onnx-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /obj_conv/pw/conv/Conv \
+--int16-op-pattern /obj_conv/pw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/stem/conv/Conv \
+--int16-op-pattern /backbone/stem/act/Relu \
+--int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /backbone/sppf/cv1/conv/Conv \
+--int16-op-pattern /backbone/sppf/cv1/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /backbone/block3_skip/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
+--int16-op-pattern /backbone/block2/pw/conv/Conv \
+--int16-op-pattern /backbone/block2/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
+--int16-op-pattern /backbone/block1/dw/act/Relu \
+--int16-op-pattern /obj_out/Conv
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_y \
+--onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /obj_conv/pw/conv/Conv \
+--int16-op-pattern /obj_conv/pw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/stem/conv/Conv \
+--int16-op-pattern /backbone/stem/act/Relu \
+--int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /backbone/sppf/cv1/conv/Conv \
+--int16-op-pattern /backbone/sppf/cv1/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
+--int16-op-pattern /backbone/block2/pw/conv/Conv \
+--int16-op-pattern /backbone/block2/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
+--int16-op-pattern /backbone/block1/dw/act/Relu \
+--int16-op-pattern /depthwiseconv/obj_conv/dw/conv/Conv \
+--int16-op-pattern /obj_conv/dw/act/Relu \
+--int16-op-pattern /context_res/context_res.0/pw/conv/Conv \
+--int16-op-pattern /context_res/context_res.0/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/context_res/context_res.0/dw/conv/Conv \
+--int16-op-pattern /context_res/context_res.0/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.1/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/dw/act/Relu \
+--int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
+--int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
+--int16-op-pattern /obj_out/Conv
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest_y \
+--onnx-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
+--espdl-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /obj_conv/pw/conv/Conv \
+--int16-op-pattern /obj_conv/pw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/stem/conv/Conv \
+--int16-op-pattern /backbone/stem/act/Relu \
+--int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
+--int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /backbone/sppf/cv1/conv/Conv \
+--int16-op-pattern /backbone/sppf/cv1/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
+--int16-op-pattern /backbone/block2/pw/conv/Conv \
+--int16-op-pattern /backbone/block2/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
+--int16-op-pattern /backbone/block1/dw/act/Relu \
+--int16-op-pattern /depthwiseconv/obj_conv/dw/conv/Conv \
+--int16-op-pattern /obj_conv/dw/act/Relu \
+--int16-op-pattern /context_res/context_res.0/pw/conv/Conv \
+--int16-op-pattern /context_res/context_res.0/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/context_res/context_res.0/dw/conv/Conv \
+--int16-op-pattern /context_res/context_res.0/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.1/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/dw/act/Relu \
+--int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
+--int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
+--int16-op-pattern /obj_out/Conv
 ```
 
 Notes:
