@@ -303,13 +303,13 @@ gh release download onnx -R PINTO0309/UHD
 
     |Var|ESPDL size|s3<br>Emphasis<br>on speed|s3<br>Emphasis<br>on precision|
     |:-:|:-:|:-:|:-:|
-    |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
-    |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)||||
+    |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl_highacc.tar.gz)|
+    |Y|380.2 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl_highacc.tar.gz)|
+    |Z|601.1 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl_highacc.tar.gz)|
+    |A|882.8 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl_highacc.tar.gz)|
+    |F|1.2 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|-|
+    |P|1.6 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|-|
+    |N|2.1 MB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_y_static_nopost_nocat_espdl.tar.gz)|-|
 
 - `opencv_inter_nearest_y_tri` + Optimized for Y (Luminance) only + Y ternarization + Suitable for quantization
   - `opencv_inter_nearest_y_tri` uses fixed Y thresholds (1/3, 2/3) to quantize to 3 levels: 0.0, 0.5, 1.0.
