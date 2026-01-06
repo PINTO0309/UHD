@@ -181,6 +181,110 @@ def load_output_names(onnx_path: str) -> Optional[List[str]]:
     return [out.name for out in model.graph.output]
 
 
+def prepare_onnx_for_ppq(onnx_path: str) -> str:
+    try:
+        import onnx
+        from onnx import numpy_helper
+    except Exception:
+        return onnx_path
+    model = onnx.load(onnx_path, load_external_data=False)
+    changed = False
+
+    input_names = {inp.name for inp in model.graph.input}
+    node_outputs = {out for node in model.graph.node for out in node.output}
+    keep_outputs = []
+    removed_outputs = []
+    for out in model.graph.output:
+        if out.name in input_names or out.name in node_outputs:
+            keep_outputs.append(out)
+        else:
+            removed_outputs.append(out.name)
+    if removed_outputs:
+        del model.graph.output[:]
+        model.graph.output.extend(keep_outputs)
+        changed = True
+
+    shape_by_name: dict[str, List[int]] = {}
+    tensors = list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output)
+    for tensor in tensors:
+        if not tensor.type.HasField("tensor_type"):
+            continue
+        dims = []
+        for dim in tensor.type.tensor_type.shape.dim:
+            if dim.dim_value:
+                dims.append(int(dim.dim_value))
+            else:
+                dims.append(-1)
+        shape_by_name[tensor.name] = dims
+
+    init_by_name = {init.name: init for init in model.graph.initializer}
+    resized = []
+    for node in model.graph.node:
+        if node.op_type != "Resize":
+            continue
+        if len(node.input) < 4:
+            continue
+        sizes_name = node.input[3]
+        if not sizes_name or sizes_name not in init_by_name:
+            continue
+        sizes_arr = numpy_helper.to_array(init_by_name[sizes_name]).astype(np.float32)
+        if sizes_arr.size == 0:
+            continue
+        input_name = node.input[0]
+        input_shape = shape_by_name.get(input_name)
+        if not input_shape or len(input_shape) != int(sizes_arr.size):
+            continue
+        if any(dim <= 0 for dim in input_shape):
+            continue
+        scales_arr = sizes_arr / np.array(input_shape, dtype=np.float32)
+        if not np.all(np.isfinite(scales_arr)):
+            continue
+        scales_name = node.input[2] if node.input[2] else f"{node.name or 'Resize'}_scales"
+        if scales_name in init_by_name:
+            existing = numpy_helper.to_array(init_by_name[scales_name]).astype(np.float32)
+            if existing.shape != scales_arr.shape or not np.allclose(existing, scales_arr):
+                base = scales_name
+                suffix = 0
+                while f"{base}_{suffix}" in init_by_name:
+                    suffix += 1
+                scales_name = f"{base}_{suffix}"
+        scales_tensor = numpy_helper.from_array(scales_arr.astype(np.float32), name=scales_name)
+        model.graph.initializer.append(scales_tensor)
+        init_by_name[scales_name] = scales_tensor
+        roi_name = node.input[1] if len(node.input) > 1 else ""
+        if not roi_name or roi_name not in init_by_name:
+            roi_base = f"{node.name or 'Resize'}_roi"
+            roi_name = roi_base
+            suffix = 0
+            while roi_name in init_by_name:
+                suffix += 1
+                roi_name = f"{roi_base}_{suffix}"
+            roi_tensor = numpy_helper.from_array(
+                np.zeros((int(sizes_arr.size) * 2,), dtype=np.float32), name=roi_name
+            )
+            model.graph.initializer.append(roi_tensor)
+            init_by_name[roi_name] = roi_tensor
+        node.input[:] = [input_name, roi_name, scales_name]
+        resized.append(node.name or sizes_name)
+        changed = True
+
+    if not changed:
+        return onnx_path
+
+    import tempfile
+
+    base = os.path.splitext(os.path.basename(onnx_path))[0]
+    out_dir = os.path.dirname(onnx_path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=f"{base}_ppq_", suffix=".onnx", dir=out_dir)
+    os.close(fd)
+    onnx.save(model, temp_path)
+    if removed_outputs:
+        print(f"Stripped disconnected ONNX outputs for PPQ: {', '.join(removed_outputs)}")
+    if resized:
+        print(f"Converted Resize sizes to scales for PPQ: {', '.join(resized)}")
+    return temp_path
+
+
 def load_anchors_wh_scale_from_onnx(onnx_path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     try:
         import onnx
@@ -569,7 +673,8 @@ def main() -> None:
     sample_img, _ = train_dataset[0]
     input_shape = [1, *sample_img.shape]
 
-    graph = load_onnx_graph(onnx_import_file=args.onnx_model)
+    ppq_onnx_path = prepare_onnx_for_ppq(args.onnx_model)
+    graph = load_onnx_graph(onnx_import_file=ppq_onnx_path)
     cfg_platform = get_target_platform(str(args.target), int(args.num_of_bits))
     quantizer = PFL.Quantizer(platform=cfg_platform, graph=graph)
     dispatching_table = _build_dispatching_table(graph, quantizer)
@@ -606,7 +711,7 @@ def main() -> None:
     )
     print(f"Calibrate images: {len(cast(Sized, cali_loader.dataset))}, steps: {calib_steps}")
 
-    output_names = load_output_names(args.onnx_model)
+    output_names = load_output_names(ppq_onnx_path)
     output_spec = OutputSpec.from_output_names(output_names)
 
     anchors_np, wh_scale_np = load_anchors_wh_scale_from_npy(args.onnx_model)
