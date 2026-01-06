@@ -108,7 +108,7 @@ gh release download onnx -R PINTO0309/UHD
     |M|17.44 M|1.94 G|0.57815|3.57 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_loese_distill_nopost.onnx)|
 
   - `torch_bilinear_dynamic` + No resizing required + Not suitable for quantization
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.98 M|0.22 G|0.55489|0.70 ms|8.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_torch_bilinear_dynamic_nopost.onnx)|
@@ -117,9 +117,9 @@ gh release download onnx -R PINTO0309/UHD
     |C|12.13 M|1.35 G|0.58459|2.74 ms|48.6 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w160_64x64_torch_bilinear_dynamic_nopost.onnx)|
     |M|17.44 M|1.94 G|0.59034|3.57 ms|69.8 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w192_64x64_torch_bilinear_dynamic_nopost.onnx)|
     |L|30.92 M|3.44 G|0.58929|7.16 ms|123.7 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w256_64x64_torch_bilinear_dynamic_nopost.onnx)|
-  
+
   - `torch_nearest_dynamic` + No resizing required + Suitable for quantization
-  
+
     |Variant|Params|FLOPs|mAP@0.5|Corei9 CPU<br>inference<br>latency|ONNX<br>File size|ONNX|w/o post<br>ONNX|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |N|1.98 M|0.22 G|0.53376|0.70 ms|8.0 MB|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_torch_nearest_dynamic.onnx)|[Download](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w64_64x64_torch_nearest_dynamic_nopost.onnx)|
@@ -157,7 +157,7 @@ gh release download onnx -R PINTO0309/UHD
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
 
     https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
-  
+
     |Var|ESPDL size|s3<br>Emphasis<br>on speed|s3<br>latency|s3<br>Emphasis<br>on precision|s3<br>latency|p4<br>static<br>w/o post|p4<br>latency|
     |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
     |R|218.3 KB|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat_espdl.tar.gz)|11.28 ms|[DL](https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat_espdl_highacc.tar.gz)|20.05 ms|||
@@ -241,7 +241,7 @@ gh release download onnx -R PINTO0309/UHD
     <img width="480" height="360" alt="00_000000019456" src="https://github.com/user-attachments/assets/9c01234d-6aab-4815-bd33-688effdc6c3a" />
 
   - ESPDL INT8 (.espdl, .info, .json, anchors.npy, wh_scale.npy)
-  
+
     |Var|ESPDL size|static w/o post<br>s3|static w/o post<br>p4|
     |:-:|:-:|:-:|:-:|
     |R|218.3 KB|||||
@@ -2165,6 +2165,8 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 ## ONNX simple benchmark
 
+<details><summary>Click to expand</summary>
+
 ```bash
 uv run sit4onnx \
 -if ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_dynamic_nopost.onnx \
@@ -2180,6 +2182,8 @@ INFO: output_name.1: txtywh_obj_quality_cls_x8 shape: [1, 56, 8, 8] dtype: float
 INFO: output_name.2: anchors shape: [8, 2] dtype: float32
 INFO: output_name.3: wh_scale shape: [8, 2] dtype: float32
 ```
+
+</details>
 
 ## LiteRT (TFLite) quantization
 
@@ -2202,10 +2206,101 @@ uv run onnx2tf \
 
 ## ESP-DL Quantization
 
+This section separates QAT and PTQ workflows for ESP-DL.
+
+### 1. QAT (Quantization-Aware Training)
+
+`uhd/uhd_qat.py` performs Quantization-Aware Training on a **raw** UltraTinyOD ONNX graph
+and exports `.espdl`/`.native` per epoch.
+
+#### 1-1. Export a raw ONNX (no postprocess)
+
+<details><summary>Click to expand</summary>
+
+QAT expects raw head outputs. Export with `--no-merge-postprocess` and `--noconcat_box_obj_quality_cls`.
+
+```bash
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=16
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/17/ultratinyod_res_anc8_w16_loese_64x64_lr0.000001_opencv_inter_nearest_distill/best_utod_0008_map_0.21863.pt
+
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_res_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost_nocat.onnx \
+--opset 17 \
+--no-merge-postprocess \
+--noconcat_box_obj_quality_cls
+```
+
+</details>
+
+#### 1-2. (Optional) Provide anchors/wh_scale as .npy
+
+<details><summary>Click to expand</summary>
+
+If `*_anchors.npy` and `*_wh_scale.npy` exist, QAT will load them automatically.
+It searches the ONNX directory first, then the current working directory.
+
+```
+ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat_anchors.npy
+ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat_wh_scale.npy
+```
+
+If they are missing, QAT falls back to anchors/wh_scale stored inside the ONNX.
+
+</details>
+
+#### 1-3. Run QAT
+
+<details><summary>Click to expand</summary>
+
+```bash
+uv run python uhd/uhd_qat.py \
+--onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
+--image-dir data/wholebody34/obj_train_data \
+--img-size 64x64 \
+--resize-mode opencv_inter_nearest \
+--class-ids 0 \
+--batch-size 32 \
+--epochs 10 \
+--target esp32s3 \
+--num-of-bits 8
+```
+
+- Outputs are saved under `runs/uhd_qat/epoch_***` and `runs/uhd_qat/best_***`
+as `.espdl` and `.native`.
+- `--resize-mode` must match the training/export setting (e.g., `opencv_inter_nearest`).
+- If the model has a quality head, QAT usually detects it automatically.
+  If unsure, force it with `--use-quality` or `--no-quality`.
+- Layerwise equalization is **enabled by default** with the same settings as
+  `uhd/quantize_onnx_model_for_esp32.py`. Disable via `--no-equalization`.
+
+</details>
+
+#### 1-4. CLI options (QAT)
+
+<details><summary>Click to expand</summary>
+
+- Required: `--onnx-model`, `--image-dir`
+- Data: `--img-size`, `--resize-mode`, `--class-ids`, `--list-path`, `--val-split`, `--batch-size`, `--num-workers`
+- Quant: `--target`, `--num-of-bits`, `--calib-steps`
+- Equalization: `--no-equalization`, `--equalization-iterations`, `--equalization-value-threshold`, `--equalization-opt-level`
+- Anchor head: `--use-quality`, `--no-quality`, `--iou-loss`, `--anchor-assigner`, `--anchor-cls-loss`, `--simota-topk`
+- Training: `--epochs`, `--lr`, `--momentum`, `--weight-decay`, `--seed`, `--device`
+- Eval/output: `--no-eval`, `--conf-thresh`, `--nms-thresh`, `--iou-thresh`, `--score-mode`, `--quality-power`, `--save-dir`, `--output-prefix`
+
+</details>
+
+### 2. PTQ (Post-Training Quantization)
+
 This repository includes a calibration/quantization script for ESP-DL:
 `uhd/quantize_onnx_model_for_esp32.py`.
 
-### Image-only calibration (default)
+#### 2-1. Image-only calibration
+
+<details><summary>Click to expand</summary>
 
 ```bash
 ### Example command that prioritizes maximum speed at the expense of accuracy
@@ -2259,9 +2354,6 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --int16-op-pattern /large_obj_blocks/large_obj_blocks.0/pw/conv/Conv \
 --int16-op-pattern /large_obj_blocks/large_obj_blocks.1/pw/act/Relu
 ```
-
-<details><summary>Click to expand</summary>
-
 ```bash
 uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
@@ -2551,7 +2643,7 @@ Notes:
 
 </details>
 
-### CLI options
+#### 2-2. CLI options
 
 <details><summary>Click to expand</summary>
 

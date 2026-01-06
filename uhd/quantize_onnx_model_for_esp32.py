@@ -17,8 +17,8 @@ try:
     from uhd.data import YoloDataset
     from uhd.resize import resize_image_numpy
 except ImportError:
-    from data import YoloDataset
-    from resize import resize_image_numpy
+    from data import YoloDataset # ty: ignore
+    from resize import resize_image_numpy # ty: ignore
 
 DEFAULT_ONNX_MODEL_PATH = "ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx"
 DEFAULT_ESPDL_MODEL_PATH = "ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl"
@@ -244,7 +244,7 @@ class ImageCalibrationDataset(Dataset):
     def __len__(self):
         return len(self.items)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx): # ty: ignore
         img_path = self.items[idx]
         im_bgr = cv2.imread(img_path, cv2.IMREAD_COLOR)
         if im_bgr is None:
