@@ -2217,7 +2217,9 @@ and exports `.espdl`/`.native` per epoch.
 
 <details><summary>Click to expand</summary>
 
-QAT expects raw head outputs. Export with `--no-merge-postprocess` and `--noconcat_box_obj_quality_cls`.
+QAT expects raw head outputs. Export with `--no-merge-postprocess` and `--noconcat_box_obj_quality_cls`. Quantization is possible even if you exported ONNX without specifying `--noconcat_box_obj_quality_cls`, but if you want to minimize the loss of accuracy due to quantization, it is better to export to ONNX with this option specified.
+
+<img width="981" height="631" alt="image" src="https://github.com/user-attachments/assets/967e576d-d0e5-42fe-9be0-c044dd4c2b50" />
 
 ```bash
 SIZE=64x64
