@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 import esp_ppq.lib as PFL
 from esp_ppq.api import get_target_platform
 from esp_ppq.api.interface import load_onnx_graph
-from esp_ppq.core import QuantizationVisibility, TargetPlatform
+from esp_ppq.core import QuantizationVisibility, TargetPlatform, convert_any_to_torch_tensor
 from esp_ppq.executor import TorchExecutor
 from esp_ppq.quantization.optim import (
     ParameterQuantizePass,
@@ -20,7 +20,7 @@ from esp_ppq.quantization.optim import (
     QuantizeSimplifyPass,
     RuntimeCalibrationPass,
 )
-from esp_ppq.IR import BaseGraph, TrainableGraph
+from esp_ppq.IR import BaseGraph, QuantableOperation, TrainableGraph
 from esp_ppq.parser import NativeExporter
 
 try:
@@ -306,6 +306,8 @@ def load_anchors_wh_scale_from_npy(onnx_path: str) -> Tuple[Optional[np.ndarray]
     base = os.path.splitext(os.path.basename(onnx_path))[0]
     anchors = None
     wh_scale = None
+    anchors_path_found = None
+    wh_scale_path_found = None
     candidates = [os.path.dirname(onnx_path) or ".", "."]
     seen = set()
     for cand_dir in candidates:
@@ -316,10 +318,15 @@ def load_anchors_wh_scale_from_npy(onnx_path: str) -> Tuple[Optional[np.ndarray]
         wh_scale_path = os.path.join(cand_dir, f"{base}_wh_scale.npy")
         if anchors is None and os.path.exists(anchors_path):
             anchors = np.load(anchors_path).astype(np.float32)
+            anchors_path_found = anchors_path
         if wh_scale is None and os.path.exists(wh_scale_path):
             wh_scale = np.load(wh_scale_path).astype(np.float32)
+            wh_scale_path_found = wh_scale_path
         if anchors is not None and wh_scale is not None:
             break
+    if anchors_path_found or wh_scale_path_found:
+        found = [p for p in (anchors_path_found, wh_scale_path_found) if p]
+        print(f"Loaded anchors/wh_scale from npy: {', '.join(found)}")
     return anchors, wh_scale
 
 
@@ -341,6 +348,125 @@ def normalize_anchor_array(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
     if arr.ndim == 1:
         arr = arr.reshape(-1, 2)
     return arr
+
+
+def snapshot_trainable_params(graph: BaseGraph) -> dict[str, torch.Tensor]:
+    state = TrainableGraph(graph).state_dict()
+    snapshot: dict[str, torch.Tensor] = {}
+    for name, tensor in state.items():
+        if tensor is None:
+            continue
+        snapshot[name] = tensor.detach().cpu().clone()
+    return snapshot
+
+
+def snapshot_quant_params(
+    graph: BaseGraph,
+) -> dict[str, Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]:
+    snapshot: dict[str, Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]] = {}
+    for op in graph.operations.values():
+        if not isinstance(op, QuantableOperation):
+            continue
+        input_count = len(op.inputs)
+        for idx, (cfg, var) in enumerate(op.config_with_variable):
+            if cfg is None or var is None:
+                continue
+            scale = cfg.scale
+            offset = cfg.offset
+            if scale is None and offset is None:
+                continue
+            io = "in" if idx < input_count else "out"
+            io_idx = idx if idx < input_count else idx - input_count
+            key = f"{op.name}:{io}{io_idx}:{var.name}"
+            scale_tensor = None
+            offset_tensor = None
+            if scale is not None:
+                scale_tensor = convert_any_to_torch_tensor(scale, device="cpu").clone()
+            if offset is not None:
+                offset_tensor = convert_any_to_torch_tensor(offset, device="cpu").clone()
+            snapshot[key] = (scale_tensor, offset_tensor)
+    return snapshot
+
+
+def report_param_deltas(
+    before: dict[str, torch.Tensor],
+    after: dict[str, torch.Tensor],
+    top_k: int = 5,
+) -> None:
+    if not before:
+        print("QAT weight change summary: no trainable parameters found.")
+        return
+    total_sq = 0.0
+    base_sq = 0.0
+    max_abs = 0.0
+    per_param = []
+    for name, before_tensor in before.items():
+        after_tensor = after.get(name)
+        if after_tensor is None:
+            continue
+        if before_tensor.shape != after_tensor.shape:
+            per_param.append((name, float("inf"), float("inf"), float("inf")))
+            continue
+        diff = (after_tensor - before_tensor).float()
+        diff_sq = float(diff.pow(2).sum().item())
+        base_sq_i = float(before_tensor.float().pow(2).sum().item())
+        total_sq += diff_sq
+        base_sq += base_sq_i
+        diff_max = float(diff.abs().max().item()) if diff.numel() else 0.0
+        max_abs = max(max_abs, diff_max)
+        if base_sq_i > 0:
+            rel = (diff_sq ** 0.5) / (base_sq_i ** 0.5)
+        else:
+            rel = float("inf") if diff_sq > 0 else 0.0
+        per_param.append((name, rel, diff_sq ** 0.5, diff_max))
+    global_l2 = total_sq ** 0.5
+    global_rel = global_l2 / ((base_sq ** 0.5) + 1e-12)
+    print(
+        "QAT weight change summary: "
+        f"params={len(per_param)}, l2={global_l2:.6g}, rel={global_rel:.6g}, max_abs={max_abs:.6g}"
+    )
+    per_param = [item for item in per_param if item[1] != float("inf")]
+    per_param.sort(key=lambda x: x[1], reverse=True)
+    for name, rel, l2, diff_max in per_param[:top_k]:
+        print(f"  {name}: rel={rel:.6g}, l2={l2:.6g}, max_abs={diff_max:.6g}")
+
+
+def report_quant_param_deltas(
+    before: dict[str, Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]],
+    after: dict[str, Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]],
+    top_k: int = 5,
+) -> None:
+    if not before:
+        print("Quantization param change summary: no quantized configs found.")
+        return
+    entries = []
+    changed = 0
+    max_abs = 0.0
+    for key, (scale_before, offset_before) in before.items():
+        scale_after, offset_after = after.get(key, (None, None))
+        entry_max = 0.0
+        if scale_before is not None and scale_after is not None:
+            if scale_before.shape == scale_after.shape:
+                entry_max = max(entry_max, float((scale_after - scale_before).abs().max().item()))
+            else:
+                entry_max = float("inf")
+        if offset_before is not None and offset_after is not None:
+            if offset_before.shape == offset_after.shape:
+                entry_max = max(entry_max, float((offset_after - offset_before).abs().max().item()))
+            else:
+                entry_max = float("inf")
+        if entry_max > 0:
+            changed += 1
+        max_abs = max(max_abs, entry_max)
+        entries.append((key, entry_max))
+    print(
+        "Quantization param change summary: "
+        f"configs={len(entries)}, changed={changed}, max_abs={max_abs:.6g}"
+    )
+    entries = [item for item in entries if item[1] != float("inf")]
+    entries.sort(key=lambda x: x[1], reverse=True)
+    for name, diff_max in entries[:top_k]:
+        print(f"  {name}: max_abs={diff_max:.6g}")
 
 
 def infer_use_quality(
@@ -556,7 +682,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-dir", default="runs/uhd_qat", help="Directory to save QAT outputs.")
     parser.add_argument("--output-prefix", default=None, help="Prefix for saved model files.")
     parser.add_argument("--no-eval", action="store_true", help="Skip evaluation.")
-    parser.add_argument("--conf-thresh", type=float, default=0.3)
+    parser.add_argument("--conf-thresh", type=float, default=0.15)
     parser.add_argument("--nms-thresh", type=float, default=0.5)
     parser.add_argument("--iou-thresh", type=float, default=0.5)
     parser.add_argument("--score-mode", default="obj_quality_cls")
@@ -787,6 +913,8 @@ def main() -> None:
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
+    param_snapshot_before = snapshot_trainable_params(trainer.graph)
+    quant_snapshot_before = snapshot_quant_params(trainer.graph)
 
     base_name = os.path.splitext(os.path.basename(args.onnx_model))[0]
     output_prefix = args.output_prefix or base_name
@@ -817,6 +945,35 @@ def main() -> None:
             best_espdl = os.path.join(args.save_dir, f"best_{output_prefix}.espdl")
             best_native = os.path.join(args.save_dir, f"best_{output_prefix}.native")
             trainer.save(best_espdl, best_native, platform=TargetPlatform(cfg_platform))
+
+    param_snapshot_after = snapshot_trainable_params(trainer.graph)
+    quant_snapshot_after = snapshot_quant_params(trainer.graph)
+    report_param_deltas(param_snapshot_before, param_snapshot_after)
+    report_quant_param_deltas(quant_snapshot_before, quant_snapshot_after)
+
+    try:
+        from esp_ppq.quantization.analyse import graphwise_error_analyse
+        from esp_ppq.quantization.analyse.layerwise import layerwise_error_analyse
+    except Exception as exc:
+        print(f"Quantization error analysis skipped: {exc}")
+    else:
+        analysis_steps = min(8, len(cali_loader))
+        if analysis_steps > 0:
+            collate_fn = lambda x: x.type(torch.float).to(device)
+            graphwise_error_analyse(
+                graph=trainer.graph,
+                running_device=str(device),
+                dataloader=cali_loader,
+                collate_fn=collate_fn,
+                steps=analysis_steps,
+            )
+            layerwise_error_analyse(
+                graph=trainer.graph,
+                running_device=str(device),
+                dataloader=cali_loader,
+                collate_fn=collate_fn,
+                steps=analysis_steps,
+            )
 
 
 if __name__ == "__main__":

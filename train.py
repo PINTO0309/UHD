@@ -239,7 +239,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=10)
     parser.add_argument("--eval-interval", type=int, default=1)
-    parser.add_argument("--conf-thresh", type=float, default=0.3)
+    parser.add_argument("--conf-thresh", type=float, default=0.15)
     parser.add_argument("--topk", type=int, default=50, help="Top-K for CNN decoding.")
     parser.add_argument("--use-amp", action="store_true", help="Enable automatic mixed precision training.")
     parser.add_argument("--qat", action="store_true", help="Enable QAT via torch.ao.quantization.")

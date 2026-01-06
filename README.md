@@ -2265,10 +2265,11 @@ uv run python uhd/uhd_qat.py \
 --img-size 64x64 \
 --resize-mode opencv_inter_nearest \
 --class-ids 0 \
---batch-size 32 \
+--batch-size 64 \
 --epochs 10 \
 --target esp32s3 \
---num-of-bits 8
+--num-of-bits 8 \
+--lr 1e-5
 ```
 
 - Outputs are saved under `runs/uhd_qat/epoch_***` and `runs/uhd_qat/best_***`
