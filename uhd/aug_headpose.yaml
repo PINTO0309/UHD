@@ -1,0 +1,41 @@
+data_augment:
+  RandomPhotometricDistort:
+    prob: 0.5
+  RandomHSV:
+    prob: 0.75
+    hue_gain: 0.015
+    saturation_gain: 0.7
+    value_gain: 0.4
+  # Blur:
+  #   prob: 0.01
+  #   blur_limit: [3, 7]
+  # MedianBlur:
+  #   prob: 0.01
+  #   blur_limit: [3, 7]
+  # VerticalFlip:
+  #   prob: 0.5
+  HorizontalFlip:
+    prob: 0.5
+    class_swap_map:
+      9: 15 # right-front -> left-front
+      15: 9 # left-front -> right-front
+      10: 14 # right-side -> left-side
+      14: 10 # left-side -> right-side
+      11: 13 # right-back -> left-back
+      13: 11 # left-back -> right-back
+  # RandomScale:
+  #   prob: 0.5
+  #   scale_range: [1.0, 1.4]
+  #   keep_aspect_ratio: true
+  # Translation:
+  #   prob: 0.5
+  #   translate: 0.1
+  #   fill: [114, 114, 114]
+  CLAHE:
+    prob: 0.01
+    clip_limit: 4.0
+    tile_grid_size: [8, 8]
+  # ToGray: 0.01
+
+  # (3/64)^2 ≈ 0.002197266
+  RemoveOutliers: 0.002197266
