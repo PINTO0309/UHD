@@ -498,6 +498,41 @@ def load_aug_config(path: str):
         return yaml.safe_load(f)
 
 
+def _find_horizontal_flip_cfg(augment_cfg: Dict):
+    if not isinstance(augment_cfg, dict):
+        return None
+    hf_cfg = augment_cfg.get("HorizontalFlip")
+    if hf_cfg is None:
+        da_cfg = augment_cfg.get("data_augment")
+        if isinstance(da_cfg, dict):
+            hf_cfg = da_cfg.get("HorizontalFlip")
+    return hf_cfg
+
+
+def resolve_class_swap_map(augment_cfg: Dict, class_ids):
+    raw_map: Dict[int, int] = {}
+    internal_map: Dict[int, int] = {}
+    if not isinstance(class_ids, (list, tuple)):
+        return raw_map, internal_map
+    hf_cfg = _find_horizontal_flip_cfg(augment_cfg)
+    if isinstance(hf_cfg, dict):
+        raw_cfg = hf_cfg.get("class_swap_map")
+        if isinstance(raw_cfg, dict):
+            for k, v in raw_cfg.items():
+                try:
+                    k_int = int(k)
+                    v_int = int(v)
+                except (ValueError, TypeError):
+                    continue
+                raw_map[k_int] = v_int
+    if raw_map:
+        class_to_idx = {int(cid): i for i, cid in enumerate(class_ids)}
+        for k, v in raw_map.items():
+            if k in class_to_idx and v in class_to_idx:
+                internal_map[class_to_idx[k]] = class_to_idx[v]
+    return raw_map, internal_map
+
+
 def log_scalars(writer: SummaryWriter, prefix: str, values: Dict[str, float], ordered_keys, step: int):
     """Log scalars with forced ordering by prefixing numeric indices."""
     logged = set()
@@ -2044,6 +2079,28 @@ def main():
             if not existing_log.startswith("\n"):
                 f.write("\n")
             f.write(existing_log)
+    def _log_line(msg: str):
+        print(msg)
+        try:
+            with open(log_path, "a") as f:
+                f.write(msg + "\n")
+        except OSError:
+            pass
+    raw_swap_map, internal_swap_map = resolve_class_swap_map(aug_cfg, class_ids)
+    if raw_swap_map:
+        class_to_idx = {int(cid): i for i, cid in enumerate(class_ids)}
+        effective_raw = {k: v for k, v in raw_swap_map.items() if k in class_to_idx and v in class_to_idx}
+        raw_items = ", ".join(f"{k}->{v}" for k, v in sorted(raw_swap_map.items()))
+        if effective_raw:
+            eff_items = ", ".join(f"{k}->{v}" for k, v in sorted(effective_raw.items()))
+            idx_items = ", ".join(f"{k}->{v}" for k, v in sorted(internal_swap_map.items()))
+            _log_line(f"Augment: class_swap_map raw={{{raw_items}}}")
+            _log_line(f"Augment: class_swap_map effective={{{eff_items}}}")
+            _log_line(f"Augment: class_swap_map internal_idx={{{idx_items}}}")
+        else:
+            _log_line(f"Augment: class_swap_map raw={{{raw_items}}} (no matching class_ids; disabled)")
+    else:
+        _log_line("Augment: class_swap_map not set (no label swap on HorizontalFlip)")
     writer = SummaryWriter(log_dir=run_dir)
     use_amp = bool(args.use_amp and device.type == "cuda")
     if args.qat and use_amp:
