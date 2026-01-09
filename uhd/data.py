@@ -104,7 +104,13 @@ class YoloDataset(Dataset):
         if self.augment and augment_cfg:
             # convert class_swap_map to internal indices if present
             class_swap_map = None
-            hf_cfg = augment_cfg.get("HorizontalFlip") if isinstance(augment_cfg, dict) else None
+            hf_cfg = None
+            if isinstance(augment_cfg, dict):
+                hf_cfg = augment_cfg.get("HorizontalFlip")
+                if hf_cfg is None:
+                    da_cfg = augment_cfg.get("data_augment")
+                    if isinstance(da_cfg, dict):
+                        hf_cfg = da_cfg.get("HorizontalFlip")
             if hf_cfg and isinstance(hf_cfg, dict) and "class_swap_map" in hf_cfg:
                 class_swap_map = {}
                 for k, v in hf_cfg["class_swap_map"].items():
