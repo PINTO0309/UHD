@@ -71,6 +71,9 @@ def decode_anchor(
     wh_scale: Optional[torch.Tensor] = None,
     score_mode: str = "obj_quality_cls",
     quality_power: float = 1.0,
+    multi_label: bool = False,
+    cls_logits_override: Optional[torch.Tensor] = None,
+    class_offset: int = 0,
 ) -> List[List[Tuple[float, int, torch.Tensor]]]:
     """
     YOLO-style decoding: pred shape B x (A*(5+Q+C)) x H x W, anchors A x 2 (normalized w,h).
@@ -100,7 +103,11 @@ def decode_anchor(
     th = pred[..., 3]
     obj = pred[..., 4].sigmoid()
     quality = pred[..., 5].sigmoid() if has_quality else None
-    cls = pred[..., (5 + extra):].sigmoid()
+    if cls_logits_override is None:
+        cls_logits = pred[..., (5 + extra):]
+    else:
+        cls_logits = cls_logits_override.view(b, na, num_classes, h, w).permute(0, 1, 3, 4, 2)
+    cls = cls_logits.sigmoid()
 
     gy, gx = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
     gx = gx.view(1, 1, h, w)
@@ -140,23 +147,47 @@ def decode_anchor(
 
         # reshape handles non-contiguous tensors from broadcasting/permutation safely
         flat_scores = score_map.reshape(-1, num_classes)
-        max_scores, max_cls = flat_scores.max(dim=1)
-        mask = max_scores >= conf_thresh
-        if mask.any():
-            sel_scores = max_scores[mask]
-            sel_cls = max_cls[mask]
-            idxs = mask.nonzero(as_tuple=False).squeeze(1)
-            a_idx = idxs // (h * w)
-            rem = idxs % (h * w)
-            gy_idx = rem // w
-            gx_idx = rem % w
-            cx_sel = pred_cx_i[a_idx, gy_idx, gx_idx]
-            cy_sel = pred_cy_i[a_idx, gy_idx, gx_idx]
-            bw_sel = pred_w_i[a_idx, gy_idx, gx_idx]
-            bh_sel = pred_h_i[a_idx, gy_idx, gx_idx]
-            boxes_raw = []
-            for sc, cls_id, cx, cy, bw, bh in zip(sel_scores, sel_cls, cx_sel, cy_sel, bw_sel, bh_sel):
-                boxes_raw.append((float(sc), int(cls_id.item()), torch.stack([cx, cy, bw, bh]).detach().cpu()))
+        boxes_raw = []
+        if multi_label:
+            for cls_id in range(num_classes):
+                cls_scores = flat_scores[:, cls_id]
+                mask = cls_scores >= conf_thresh
+                if not mask.any():
+                    continue
+                idxs = mask.nonzero(as_tuple=False).squeeze(1)
+                a_idx = idxs // (h * w)
+                rem = idxs % (h * w)
+                gy_idx = rem // w
+                gx_idx = rem % w
+                cx_sel = pred_cx_i[a_idx, gy_idx, gx_idx]
+                cy_sel = pred_cy_i[a_idx, gy_idx, gx_idx]
+                bw_sel = pred_w_i[a_idx, gy_idx, gx_idx]
+                bh_sel = pred_h_i[a_idx, gy_idx, gx_idx]
+                sc_sel = cls_scores[mask]
+                for sc, cx, cy, bw, bh in zip(sc_sel, cx_sel, cy_sel, bw_sel, bh_sel):
+                    boxes_raw.append(
+                        (float(sc), int(cls_id + class_offset), torch.stack([cx, cy, bw, bh]).detach().cpu())
+                    )
+        else:
+            max_scores, max_cls = flat_scores.max(dim=1)
+            mask = max_scores >= conf_thresh
+            if mask.any():
+                sel_scores = max_scores[mask]
+                sel_cls = max_cls[mask]
+                idxs = mask.nonzero(as_tuple=False).squeeze(1)
+                a_idx = idxs // (h * w)
+                rem = idxs % (h * w)
+                gy_idx = rem // w
+                gx_idx = rem % w
+                cx_sel = pred_cx_i[a_idx, gy_idx, gx_idx]
+                cy_sel = pred_cy_i[a_idx, gy_idx, gx_idx]
+                bw_sel = pred_w_i[a_idx, gy_idx, gx_idx]
+                bh_sel = pred_h_i[a_idx, gy_idx, gx_idx]
+                for sc, cls_id, cx, cy, bw, bh in zip(sel_scores, sel_cls, cx_sel, cy_sel, bw_sel, bh_sel):
+                    boxes_raw.append(
+                        (float(sc), int(cls_id.item() + class_offset), torch.stack([cx, cy, bw, bh]).detach().cpu())
+                    )
+        if boxes_raw:
             boxes_i = nms_per_class(boxes_raw, iou_thresh=nms_thresh)
         preds.append(boxes_i)
     return preds

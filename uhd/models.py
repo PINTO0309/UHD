@@ -829,6 +829,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         highbit_a_bits = int(kwargs.get("highbit_a_bits", 8) or 8)
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
+            attr_num_classes=kwargs.get("attr_num_classes", 0) or 0,
             stride=kwargs.get("output_stride", 8) or 8,
             anchors=kwargs.get("anchors") or None,
             use_improved_head=bool(kwargs.get("use_improved_head", False)),
@@ -841,6 +842,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_large_obj_branch=bool(kwargs.get("utod_large_obj_branch", False)),
             large_obj_branch_depth=int(kwargs.get("utod_large_obj_depth", 1)),
             large_obj_branch_expansion=float(kwargs.get("utod_large_obj_ch_scale", 1.0)),
+            sppf_scale_mode=str(kwargs.get("utod_sppf_scale", "none") or "none"),
             w_bits=lowbit_w_bits,
             a_bits=lowbit_a_bits,
             quant_target=quant_target,

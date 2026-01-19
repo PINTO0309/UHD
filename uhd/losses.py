@@ -228,6 +228,7 @@ def anchor_loss(
     simota_topk: int = 10,
     use_quality: bool = False,
     wh_scale: Optional[torch.Tensor] = None,
+    multi_label: bool = False,
 ) -> Dict[str, torch.Tensor]:
     """
     YOLO-style anchor loss with optional IoU/GIoU/CIoU regression.
@@ -344,21 +345,30 @@ def anchor_loss(
                 order = torch.argsort(cost)
                 selected = topk_idx[order[:dynamic_k]]
                 for idx in selected:
-                    if assigned[idx]:
+                    was_assigned = assigned[idx]
+                    if was_assigned and not multi_label:
                         continue
-                    assigned[idx] = True
-                    n_pos_total += 1
-                    a = int(idx // (h * w))
-                    rem = int(idx % (h * w))
-                    gj = rem // w
-                    gi = rem % w
-                    target_obj[bi, a, gj, gi] = 1.0
+                    if not was_assigned:
+                        assigned[idx] = True
+                        n_pos_total += 1
+                        a = int(idx // (h * w))
+                        rem = int(idx % (h * w))
+                        gj = rem // w
+                        gi = rem % w
+                        target_obj[bi, a, gj, gi] = 1.0
+                        target_box[bi, a, gj, gi] = boxes[gt_idx]
+                        if use_quality and target_quality is not None:
+                            target_quality[bi, a, gj, gi] = 1.0
+                    else:
+                        a = int(idx // (h * w))
+                        rem = int(idx % (h * w))
+                        gj = rem // w
+                        gi = rem % w
                     # For IoU-aware heads, keep cls target high (1.0) and let quality carry IoU.
                     cls_target_val = 1.0 if use_quality else iou_g[idx]
-                    target_cls[bi, a, gj, gi, cls_id] = cls_target_val
-                    target_box[bi, a, gj, gi] = boxes[gt_idx]
-                    if use_quality and target_quality is not None:
-                        target_quality[bi, a, gj, gi] = 1.0
+                    current = target_cls[bi, a, gj, gi, cls_id]
+                    if cls_target_val > current:
+                        target_cls[bi, a, gj, gi, cls_id] = cls_target_val
     else:
         raise ValueError(f"Unknown assigner: {assigner}")
 
@@ -405,6 +415,71 @@ def anchor_loss(
 
     total = box_loss + obj_loss + cls_loss + quality_loss
     return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss, "quality": quality_loss}
+
+
+def anchor_attr_loss(
+    attr_logit: torch.Tensor,
+    targets: Sequence[Dict[str, torch.Tensor]],
+    anchors: torch.Tensor,
+    num_classes: int,
+    assigner: str = "legacy",
+    simota_topk: int = 10,
+    wh_scale: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    """
+    Attribute loss for anchor head (multi-label BCE on positive anchors).
+    attr_logit: B x (A*C) x H x W
+    """
+    if num_classes <= 0:
+        device = attr_logit.device
+        zero = torch.tensor(0.0, device=device)
+        return {"attr": zero}
+
+    if assigner != "legacy":
+        # Attribute assignment uses center-based legacy strategy for now.
+        assigner = "legacy"
+
+    device = attr_logit.device
+    b, _, h, w = attr_logit.shape
+    na = anchors.shape[0]
+    attr_logit = attr_logit.view(b, na, num_classes, h, w).permute(0, 1, 3, 4, 2)
+    anchors_dev = anchors.to(device)
+    if wh_scale is not None:
+        anchors_dev = anchors_dev * wh_scale.to(device)
+    target_attr = torch.zeros((b, na, h, w, num_classes), device=device)
+
+    for bi, tgt in enumerate(targets):
+        boxes = tgt["boxes"].to(device)
+        labels = tgt["labels"].to(device)
+        if boxes.numel() == 0:
+            continue
+        gxs = (boxes[:, 0] * w).clamp(0, w - 1e-3)
+        gys = (boxes[:, 1] * h).clamp(0, h - 1e-3)
+        gis = gxs.long()
+        gjs = gys.long()
+        wh = boxes[:, 2:4]
+        # anchor matching by IoU on w,h only
+        awh = anchors_dev[:, None, :]  # A x 1 x 2
+        inter = torch.min(awh, wh[None, :, :]).prod(dim=2)
+        union = (awh[:, :, 0] * awh[:, :, 1]) + (wh[None, :, 0] * wh[None, :, 1]) - inter + 1e-7
+        anchor_iou = inter / union  # A x G
+        best_anchor = anchor_iou.argmax(dim=0)  # G
+        for gi, gj, a, cls in zip(gis, gjs, best_anchor, labels):
+            if gi < 0 or gj < 0 or gi >= w or gj >= h:
+                continue
+            cls_id = int(cls.item())
+            if cls_id < 0 or cls_id >= num_classes:
+                continue
+            target_attr[bi, a, gj, gi, cls_id] = 1.0
+
+    pos_mask = target_attr.sum(dim=-1) > 0
+    num_pos = int(pos_mask.sum().item())
+    if num_pos > 0:
+        bce = nn.BCEWithLogitsLoss(reduction="sum")
+        loss = bce(attr_logit[pos_mask], target_attr[pos_mask]) / max(1, num_pos)
+    else:
+        loss = torch.tensor(0.0, device=device)
+    return {"attr": loss}
 
 
 def varifocal_loss(pred: torch.Tensor, target: torch.Tensor, alpha: float = 0.75, gamma: float = 2.0) -> torch.Tensor:

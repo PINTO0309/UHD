@@ -5,7 +5,7 @@ import os
 import random
 import math
 from copy import deepcopy
-from typing import Dict, Sequence, Optional, Tuple
+from typing import Dict, Sequence, Optional, Tuple, List
 
 import numpy as np
 import torch
@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from uhd.data import YoloDataset, detection_collate
-from uhd.losses import anchor_loss, centernet_loss, detr_loss
+from uhd.losses import anchor_loss, anchor_attr_loss, centernet_loss, detr_loss
 from uhd.metrics import decode_anchor, decode_centernet, decode_detr, evaluate_map
 from uhd.backbones import load_dinov3_backbone
 from uhd.models import build_model
@@ -315,6 +315,12 @@ def parse_args():
     parser.add_argument("--utod-residual", action="store_true", help="Enable residual skips inside the UltraTinyOD backbone.")
     parser.add_argument("--utod-head-ese", action="store_true", help="UltraTinyOD head: apply lightweight eSE on shared features.")
     parser.add_argument(
+        "--utod-sppf-scale",
+        choices=["none", "bn", "conv"],
+        default="none",
+        help="UltraTinyOD SPPF-min: per-branch scale matching before concat (none/bn/conv).",
+    )
+    parser.add_argument(
         "--utod-context-rfb",
         action="store_true",
         help="UltraTinyOD head: add a receptive-field block (dilated + wide depthwise) before prediction layers.",
@@ -386,6 +392,28 @@ def parse_args():
         choices=["bce", "vfl", "ce"],
         default="bce",
         help="Classification loss for anchor head.",
+    )
+    parser.add_argument(
+        "--multi-label-mode",
+        choices=["none", "single", "separate"],
+        default="none",
+        help="Multi-label mode for anchor heads: none, single (one head), or separate (attr head).",
+    )
+    parser.add_argument(
+        "--multi-label-det-classes",
+        default=None,
+        help="Comma-separated class ids for detection head when --multi-label-mode separate.",
+    )
+    parser.add_argument(
+        "--multi-label-attr-classes",
+        default=None,
+        help="Comma-separated class ids for attribute head when --multi-label-mode separate.",
+    )
+    parser.add_argument(
+        "--multi-label-attr-weight",
+        type=float,
+        default=1.0,
+        help="Loss weight for attribute head when --multi-label-mode separate.",
     )
     parser.add_argument("--simota-topk", type=int, default=10, help="Top-K IoUs for dynamic-k in SimOTA.")
     parser.add_argument("--last-se", choices=["none", "se", "ese"], default="none", help="Apply SE/eSE only on the last CNN block.")
@@ -642,6 +670,7 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
 
 def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     img_h, img_w = parse_img_size(args.img_size)
+    img_size_str = f"{img_h}x{img_w}"
     base = YoloDataset(
         image_dir=args.image_dir,
         list_path=None,
@@ -811,6 +840,52 @@ def run_coco_eval(images, annos, dets, class_ids, per_class=False):
     return out
 
 
+def filter_targets_by_class(targets: Sequence[Dict[str, torch.Tensor]], class_map: Dict[int, int]) -> Sequence[Dict[str, torch.Tensor]]:
+    out = []
+    if not class_map:
+        for tgt in targets:
+            out.append({"boxes": tgt["boxes"], "labels": tgt["labels"]})
+        return out
+    for tgt in targets:
+        labels = tgt["labels"]
+        boxes = tgt["boxes"]
+        if labels.numel() == 0:
+            out.append({"boxes": boxes, "labels": labels})
+            continue
+        keep = torch.zeros_like(labels, dtype=torch.bool)
+        for src in class_map.keys():
+            keep |= labels == int(src)
+        if not keep.any():
+            out.append({"boxes": boxes[:0], "labels": labels[:0]})
+            continue
+        kept_labels = labels[keep]
+        remap = [class_map[int(l)] for l in kept_labels.tolist()]
+        out.append(
+            {
+                "boxes": boxes[keep],
+                "labels": torch.tensor(remap, device=labels.device, dtype=labels.dtype),
+            }
+        )
+    return out
+
+
+def remap_preds_class(
+    preds: List[List[Tuple[float, int, torch.Tensor]]],
+    class_map: Sequence[int],
+) -> List[List[Tuple[float, int, torch.Tensor]]]:
+    if not class_map:
+        return preds
+    out = []
+    for p_img in preds:
+        remapped = []
+        for score, cls, box in p_img:
+            if cls < 0 or cls >= len(class_map):
+                continue
+            remapped.append((score, int(class_map[cls]), box))
+        out.append(remapped)
+    return out
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -822,6 +897,11 @@ def train_one_epoch(
     epoch: int,
     total_epochs: int,
     num_classes: int,
+    multi_label_mode: str = "none",
+    det_class_map: Optional[Dict[int, int]] = None,
+    attr_class_map: Optional[Dict[int, int]] = None,
+    attr_num_classes: int = 0,
+    attr_loss_weight: float = 1.0,
     grad_clip_norm: float = 0.0,
     ema: ModelEma = None,
     teacher_model: torch.nn.Module = None,
@@ -860,6 +940,8 @@ def train_one_epoch(
     total_anchor_cls = 0.0
     total_anchor_box = 0.0
     total_anchor_quality = 0.0
+    total_anchor_attr = 0.0
+    total_anchor_attr = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
@@ -873,6 +955,7 @@ def train_one_epoch(
     if distill_cosine and (distill_kl > 0 or distill_box_l1 > 0 or distill_feat > 0 or distill_obj > 0 or distill_quality > 0):
         distill_scale = 0.5 * (1 - math.cos(math.pi * (epoch + 1) / total_epochs))
     use_quality_head = bool(getattr(model, "has_quality_head", getattr(model, "use_improved_head", False)))
+    multi_label_mode = (multi_label_mode or "none").lower()
     score_mode = getattr(model, "score_mode", None)
     quality_power = getattr(model, "quality_power", 1.0)
     wh_scale_tensor = None
@@ -982,13 +1065,24 @@ def train_one_epoch(
                     teacher_feats = teacher_backbone(imgs_t)
             if arch_cnn_like:
                 need_feats = teacher_feats is not None and distill_feat > 0
-                outputs = model(imgs, return_feat=need_feats)
-                if need_feats:
-                    outputs, student_feats = outputs
+                attr_logits = None
+                if multi_label_mode == "separate" and anchor_head and arch == "ultratinyod":
+                    if need_feats:
+                        outputs, student_feats, attr_logits = model(imgs, return_feat=True, return_attr=True)
+                    else:
+                        outputs, attr_logits = model(imgs, return_attr=True)
+                    det_targets = filter_targets_by_class(targets_dev, det_class_map or {})
+                    attr_targets = filter_targets_by_class(targets_dev, attr_class_map or {})
+                else:
+                    outputs = model(imgs, return_feat=need_feats)
+                    if need_feats:
+                        outputs, student_feats = outputs
+                    det_targets = targets_dev
+                    attr_targets = None
                 if anchor_head:
                     loss_dict = anchor_loss(
                         outputs,
-                        targets_dev,
+                        det_targets,
                         anchors=anchors,
                         num_classes=num_classes,
                         iou_loss=iou_loss_type,
@@ -997,7 +1091,20 @@ def train_one_epoch(
                         simota_topk=simota_topk,
                         use_quality=use_quality_head,
                         wh_scale=wh_scale_tensor,
+                        multi_label=multi_label_mode == "single",
                     )
+                    if multi_label_mode == "separate" and attr_logits is not None and attr_num_classes > 0:
+                        attr_loss = anchor_attr_loss(
+                            attr_logits,
+                            attr_targets if attr_targets is not None else det_targets,
+                            anchors=anchors,
+                            num_classes=attr_num_classes,
+                            assigner=anchor_assigner,
+                            simota_topk=simota_topk,
+                            wh_scale=wh_scale_tensor,
+                        )
+                        loss_dict["loss"] = loss_dict["loss"] + attr_loss_weight * attr_loss["attr"]
+                        loss_dict["attr"] = attr_loss["attr"]
                 else:
                     loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                 if need_feats and student_feats is not None:
@@ -1203,6 +1310,8 @@ def train_one_epoch(
                 total_anchor_box += float(loss_dict["box"].item())
                 if "quality" in loss_dict:
                     total_anchor_quality += float(loss_dict["quality"].item())
+                if "attr" in loss_dict:
+                    total_anchor_attr += float(loss_dict["attr"].item())
             else:
                 total_hm += float(loss_dict["hm"].item())
                 total_off += float(loss_dict["off"].item())
@@ -1240,6 +1349,7 @@ def train_one_epoch(
                         cls=f"{loss_dict['cls'].item():.4f}",
                         box=f"{loss_dict['box'].item():.4f}",
                         quality=f"{loss_dict.get('quality', 0.0):.4f}",
+                        attr=f"{loss_dict.get('attr', 0.0):.4f}",
                         step=f"{step+1}/{len(loader)}",
                     )
                 else:
@@ -1268,6 +1378,7 @@ def train_one_epoch(
                     "cls": total_anchor_cls / steps if steps else 0.0,
                     "box": total_anchor_box / steps if steps else 0.0,
                     "quality": total_anchor_quality / steps if steps else 0.0,
+                    "attr": total_anchor_attr / steps if steps else 0.0,
                 }
             )
         else:
@@ -1426,6 +1537,14 @@ def validate(
     iou_thresh: float = 0.5,
     use_amp: bool = False,
     num_classes: int = 1,
+    det_num_classes: Optional[int] = None,
+    multi_label_mode: str = "none",
+    det_class_map: Optional[Dict[int, int]] = None,
+    attr_class_map: Optional[Dict[int, int]] = None,
+    det_class_indices: Optional[Sequence[int]] = None,
+    attr_class_indices: Optional[Sequence[int]] = None,
+    attr_num_classes: int = 0,
+    attr_loss_weight: float = 1.0,
     sample_dir: str = None,
     class_ids = None,
     sample_limit: int = 10,
@@ -1478,6 +1597,10 @@ def validate(
     arch_cnn_like = arch in ("cnn", "ultratinyod")
     anchor_head = bool(use_anchor or arch == "ultratinyod")
     use_quality_head = bool(getattr(model, "has_quality_head", getattr(model, "use_improved_head", False)))
+    multi_label_mode = (multi_label_mode or "none").lower()
+    det_num_classes = det_num_classes if det_num_classes is not None else num_classes
+    det_class_indices = det_class_indices or list(range(det_num_classes))
+    attr_class_indices = attr_class_indices or []
     score_mode = getattr(model, "score_mode", None)
     quality_power = getattr(model, "quality_power", 1.0)
     wh_scale_tensor = None
@@ -1589,31 +1712,72 @@ def validate(
                     enabled=use_amp,
                 ):
                     if arch_cnn_like:
-                        outputs = model(imgs)
+                        attr_logits = None
+                        if multi_label_mode == "separate" and anchor_head and arch == "ultratinyod":
+                            outputs, attr_logits = model(imgs, return_attr=True)
+                            det_targets = filter_targets_by_class(targets_dev, det_class_map or {})
+                            attr_targets = filter_targets_by_class(targets_dev, attr_class_map or {})
+                        else:
+                            outputs = model(imgs)
+                            det_targets = targets_dev
+                            attr_targets = None
                         if anchor_head:
                             loss_dict = anchor_loss(
                                 outputs,
-                                targets_dev,
+                                det_targets,
                                 anchors=anchors,
-                                num_classes=num_classes,
+                                num_classes=det_num_classes,
                                 iou_loss=iou_loss_type,
                                 assigner=anchor_assigner,
                                 cls_loss_type=anchor_cls_loss,
                                 simota_topk=simota_topk,
                                 use_quality=use_quality_head,
                                 wh_scale=wh_scale_tensor,
+                                multi_label=multi_label_mode == "single",
                             )
-                            preds = decode_anchor(
+                            if multi_label_mode == "separate" and attr_logits is not None and attr_num_classes > 0:
+                                attr_loss = anchor_attr_loss(
+                                    attr_logits,
+                                    attr_targets if attr_targets is not None else det_targets,
+                                    anchors=anchors,
+                                    num_classes=attr_num_classes,
+                                    assigner=anchor_assigner,
+                                    simota_topk=simota_topk,
+                                    wh_scale=wh_scale_tensor,
+                                )
+                                loss_dict["loss"] = loss_dict["loss"] + attr_loss_weight * attr_loss["attr"]
+                                loss_dict["attr"] = attr_loss["attr"]
+                            det_preds = decode_anchor(
                                 outputs,
                                 anchors=anchors,
-                                num_classes=num_classes,
+                                num_classes=det_num_classes,
                                 conf_thresh=conf_thresh,
                                 nms_thresh=0.5,
                                 has_quality=use_quality_head,
                                 wh_scale=wh_scale_tensor,
                                 score_mode=score_mode or "obj_quality_cls",
                                 quality_power=quality_power,
+                                multi_label=multi_label_mode == "single",
                             )
+                            det_preds = remap_preds_class(det_preds, det_class_indices)
+                            if multi_label_mode == "separate" and attr_logits is not None and attr_num_classes > 0:
+                                attr_preds = decode_anchor(
+                                    outputs,
+                                    anchors=anchors,
+                                    num_classes=attr_num_classes,
+                                    conf_thresh=conf_thresh,
+                                    nms_thresh=0.5,
+                                    has_quality=use_quality_head,
+                                    wh_scale=wh_scale_tensor,
+                                    score_mode=score_mode or "obj_quality_cls",
+                                    quality_power=quality_power,
+                                    multi_label=True,
+                                    cls_logits_override=attr_logits,
+                                )
+                                attr_preds = remap_preds_class(attr_preds, attr_class_indices)
+                                preds = [d + a for d, a in zip(det_preds, attr_preds)]
+                            else:
+                                preds = det_preds
                         else:
                             loss_dict = centernet_loss(outputs, targets_dev, num_classes=num_classes)
                             preds = decode_centernet(outputs, conf_thresh=conf_thresh, topk=topk)
@@ -1630,6 +1794,8 @@ def validate(
                         total_anchor_box += float(loss_dict["box"].item())
                         if "quality" in loss_dict:
                             total_anchor_quality += float(loss_dict["quality"].item())
+                        if "attr" in loss_dict:
+                            total_anchor_attr += float(loss_dict["attr"].item())
                     else:
                         total_hm += float(loss_dict["hm"].item())
                         total_off += float(loss_dict["off"].item())
@@ -1722,6 +1888,7 @@ def validate(
                 metrics["cls"] = total_anchor_cls / steps
                 metrics["box"] = total_anchor_box / steps
                 metrics["quality"] = total_anchor_quality / steps
+                metrics["attr"] = total_anchor_attr / steps
             else:
                 metrics["hm"] = total_hm / steps
                 metrics["off"] = total_off / steps
@@ -1740,6 +1907,15 @@ def main():
     args = parse_args()
     class_ids = parse_classes(args.classes)
     num_classes = len(class_ids)
+    multi_label_mode = (args.multi_label_mode or "none").lower()
+    multi_label_attr_weight = float(args.multi_label_attr_weight)
+    det_class_ids_raw = []
+    attr_class_ids_raw = []
+    if multi_label_mode == "separate":
+        if args.multi_label_det_classes is None or args.multi_label_attr_classes is None:
+            raise ValueError("--multi-label-det-classes and --multi-label-attr-classes are required for separate mode.")
+        det_class_ids_raw = parse_classes(args.multi_label_det_classes)
+        attr_class_ids_raw = parse_classes(args.multi_label_attr_classes)
     aug_cfg = load_aug_config(args.aug_config)
     resize_mode = normalize_resize_mode(args.resize_mode)
     use_skip = bool(args.use_skip)
@@ -1827,6 +2003,7 @@ def main():
     utod_large_obj_branch = bool(args.utod_large_obj_branch)
     utod_large_obj_depth = int(args.utod_large_obj_depth)
     utod_large_obj_ch_scale = float(args.utod_large_obj_ch_scale)
+    utod_sppf_scale = str(args.utod_sppf_scale or "none").lower()
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
@@ -1859,7 +2036,8 @@ def main():
     img_h, img_w = parse_img_size(args.img_size)
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
         nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
@@ -1875,6 +2053,14 @@ def main():
                 print(f"Overriding CLI classes {class_ids} with {label} classes {ckpt_classes}")
             class_ids = ckpt_classes
             num_classes = len(class_ids)
+        if "multi_label_mode" in meta:
+            multi_label_mode = str(meta["multi_label_mode"] or "none").lower()
+        if "multi_label_det_classes" in meta:
+            det_class_ids_raw = [int(c) for c in meta.get("multi_label_det_classes", [])]
+        if "multi_label_attr_classes" in meta:
+            attr_class_ids_raw = [int(c) for c in meta.get("multi_label_attr_classes", [])]
+        if "multi_label_attr_weight" in meta:
+            multi_label_attr_weight = float(meta["multi_label_attr_weight"])
         if "augment_cfg" in meta:
             aug_cfg = meta["augment_cfg"]
         if "resize_mode" in meta and meta["resize_mode"]:
@@ -1904,6 +2090,8 @@ def main():
             utod_large_obj_depth = int(meta["utod_large_obj_depth"])
         if "utod_large_obj_ch_scale" in meta and meta["utod_large_obj_ch_scale"]:
             utod_large_obj_ch_scale = float(meta["utod_large_obj_ch_scale"])
+        if "utod_sppf_scale" in meta and meta["utod_sppf_scale"]:
+            utod_sppf_scale = str(meta["utod_sppf_scale"]).lower()
         if "w_bits" in meta:
             w_bits = int(meta["w_bits"])
         if "a_bits" in meta:
@@ -2044,10 +2232,54 @@ def main():
             if "distill_feat" in meta:
                 distill_feat = float(meta["distill_feat"])
 
+    det_class_indices: List[int] = []
+    attr_class_indices: List[int] = []
+    det_class_map: Dict[int, int] = {}
+    attr_class_map: Dict[int, int] = {}
+    det_num_classes = num_classes
+    attr_num_classes = 0
+
+    def resolve_multi_label_config():
+        nonlocal det_class_indices, attr_class_indices, det_class_map, attr_class_map, det_num_classes, attr_num_classes, anchor_cls_loss, multi_label_mode
+        mode = (multi_label_mode or "none").lower()
+        if mode not in ("none", "single", "separate"):
+            mode = "none"
+        multi_label_mode = mode
+        if mode == "separate":
+            if not det_class_ids_raw or not attr_class_ids_raw:
+                raise ValueError("multi-label separate mode requires det and attr class ids.")
+            class_to_idx = {int(cid): i for i, cid in enumerate(class_ids)}
+            missing = [c for c in det_class_ids_raw + attr_class_ids_raw if c not in class_to_idx]
+            if missing:
+                raise ValueError(f"multi-label class ids not in --classes: {missing}")
+            det_class_indices = [class_to_idx[cid] for cid in det_class_ids_raw]
+            attr_class_indices = [class_to_idx[cid] for cid in attr_class_ids_raw]
+            if set(det_class_indices) & set(attr_class_indices):
+                raise ValueError("det and attr classes must be disjoint for separate mode.")
+            det_class_map = {idx: i for i, idx in enumerate(det_class_indices)}
+            attr_class_map = {idx: i for i, idx in enumerate(attr_class_indices)}
+            det_num_classes = len(det_class_indices)
+            attr_num_classes = len(attr_class_indices)
+        else:
+            det_class_indices = list(range(num_classes))
+            attr_class_indices = []
+            det_class_map = {}
+            attr_class_map = {}
+            det_num_classes = num_classes
+            attr_num_classes = 0
+        if mode != "none" and anchor_cls_loss == "ce":
+            print("[WARN] multi-label mode is incompatible with CE; switching anchor-cls-loss to bce.")
+            anchor_cls_loss = "bce"
+
     if pretrain_meta is not None:
         apply_meta(pretrain_meta, f"ckpt {args.ckpt}", allow_distill=False)
     if ckpt_meta is not None:
         apply_meta(ckpt_meta, f"resume {args.resume}", allow_distill=True)
+    resolve_multi_label_config()
+    if multi_label_mode == "separate" and args.arch != "ultratinyod":
+        raise ValueError("multi-label separate mode is supported only for arch=ultratinyod.")
+    if multi_label_mode == "separate" and anchor_assigner != "legacy":
+        print("[WARN] multi-label separate mode uses legacy center assignment for attributes; consider --anchor-assigner legacy.")
     if args.arch == "ultratinyod":
         use_anchor = True
     anchor_head = bool(use_anchor or args.arch == "ultratinyod")
@@ -2153,7 +2385,8 @@ def main():
         heads=args.heads,
         layers=args.layers,
         dim_feedforward=args.dim_feedforward,
-        num_classes=num_classes,
+        num_classes=det_num_classes,
+        attr_num_classes=attr_num_classes,
         use_skip=use_skip,
         activation=activation,
         use_fpn=use_fpn,
@@ -2172,6 +2405,7 @@ def main():
         utod_large_obj_branch=utod_large_obj_branch,
         utod_large_obj_depth=utod_large_obj_depth,
         utod_large_obj_ch_scale=utod_large_obj_ch_scale,
+        utod_sppf_scale=utod_sppf_scale,
         backbone=backbone,
         backbone_channels=backbone_channels,
         backbone_blocks=backbone_blocks,
@@ -2240,7 +2474,7 @@ def main():
                 teacher_backbone, img_size=(img_h, img_w), device=device, arch_hint=teacher_backbone_arch
             )
             teacher_dim = getattr(teacher_backbone_model, "embed_dim", None)
-            student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
+            student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=det_num_classes)
             if teacher_dim is None:
                 teacher_dim = student_channels
             teacher_feature_dim = teacher_dim
@@ -2401,6 +2635,7 @@ def main():
             t_utod_large_obj_branch = bool(t_meta.get("utod_large_obj_branch", utod_large_obj_branch))
             t_utod_large_obj_depth = int(t_meta.get("utod_large_obj_depth", utod_large_obj_depth))
             t_utod_large_obj_ch_scale = float(t_meta.get("utod_large_obj_ch_scale", utod_large_obj_ch_scale))
+            t_utod_sppf_scale = str(t_meta.get("utod_sppf_scale", utod_sppf_scale))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
             t_backbone_blocks = t_meta.get("backbone_blocks", backbone_blocks)
@@ -2425,12 +2660,19 @@ def main():
             t_simota_topk = int(t_meta.get("simota_topk", simota_topk))
             t_classes = [int(c) for c in t_meta.get("classes", class_ids)]
             t_num_classes = len(t_classes)
+            t_multi_label_mode = str(t_meta.get("multi_label_mode", "none") or "none").lower()
+            t_det_ids = [int(c) for c in t_meta.get("multi_label_det_classes", [])]
+            t_attr_ids = [int(c) for c in t_meta.get("multi_label_attr_classes", [])]
+            t_attr_num_classes = len(t_attr_ids) if t_multi_label_mode == "separate" else 0
+            if t_multi_label_mode == "separate" and t_det_ids:
+                t_num_classes = len(t_det_ids)
             t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
                 input_channels=input_channels,
                 width=t_cnn_width,
                 num_classes=t_num_classes,
+                attr_num_classes=t_attr_num_classes,
                 use_skip=t_use_skip,
                 activation=t_activation,
                 use_fpn=t_use_fpn,
@@ -2449,6 +2691,7 @@ def main():
                 utod_large_obj_branch=t_utod_large_obj_branch,
                 utod_large_obj_depth=t_utod_large_obj_depth,
                 utod_large_obj_ch_scale=t_utod_large_obj_ch_scale,
+                utod_sppf_scale=t_utod_sppf_scale,
                 backbone=t_backbone,
                 backbone_channels=t_backbone_channels,
                 backbone_blocks=t_backbone_blocks,
@@ -2480,7 +2723,7 @@ def main():
             if arch_cnn_like and distill_feat > 0:
                 if teacher_feature_dim is None:
                     teacher_feature_dim = _infer_cnn_feat_channels(teacher_model, use_anchor=t_use_anchor, num_classes=t_num_classes)
-                student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=num_classes)
+                student_channels = _infer_cnn_feat_channels(model, use_anchor=use_anchor, num_classes=det_num_classes)
                 if teacher_feature_dim is not None and feature_adapter is None:
                     if student_channels != teacher_feature_dim:
                         feature_adapter = torch.nn.Conv2d(student_channels, teacher_feature_dim, kernel_size=1).to(device)
@@ -2507,6 +2750,14 @@ def main():
             iou_thresh=0.5,
             use_amp=use_amp,
             num_classes=num_classes,
+            det_num_classes=det_num_classes,
+            multi_label_mode=multi_label_mode,
+            det_class_map=det_class_map,
+            attr_class_map=attr_class_map,
+            det_class_indices=det_class_indices,
+            attr_class_indices=attr_class_indices,
+            attr_num_classes=attr_num_classes,
+            attr_loss_weight=multi_label_attr_weight,
             sample_dir=sample_dir,
             class_ids=class_ids,
             sample_limit=val_sample_limit,
@@ -2532,7 +2783,7 @@ def main():
             writer,
             "val",
             metrics,
-            ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou"],
+            ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "attr", "hm", "off", "wh", "l1", "iou"],
             step=0,
         )
         writer.close()
@@ -2551,7 +2802,12 @@ def main():
             scaler=scaler,
             epoch=epoch,
             total_epochs=args.epochs,
-            num_classes=num_classes,
+            num_classes=det_num_classes,
+            multi_label_mode=multi_label_mode,
+            det_class_map=det_class_map,
+            attr_class_map=attr_class_map,
+            attr_num_classes=attr_num_classes,
+            attr_loss_weight=multi_label_attr_weight,
             grad_clip_norm=grad_clip_norm,
             ema=ema_helper,
             teacher_model=teacher_model,
@@ -2592,6 +2848,7 @@ def main():
                 "cls",
                 "box",
                 "quality",
+                "attr",
                 "hm",
                 "off",
                 "wh",
@@ -2621,6 +2878,14 @@ def main():
                 iou_thresh=0.5,
                 use_amp=use_amp,
                 num_classes=num_classes,
+                det_num_classes=det_num_classes,
+                multi_label_mode=multi_label_mode,
+                det_class_map=det_class_map,
+                attr_class_map=attr_class_map,
+                det_class_indices=det_class_indices,
+                attr_class_indices=attr_class_indices,
+                attr_num_classes=attr_num_classes,
+                attr_loss_weight=multi_label_attr_weight,
                 sample_dir=epoch_dir,
                 class_ids=class_ids,
                 sample_limit=10,
@@ -2646,7 +2911,7 @@ def main():
                 writer,
                 "val",
                 metrics,
-                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "hm", "off", "wh", "l1", "iou"],
+                ordered_keys=["mAP@0.5", "AP@0.5_class0", "AP@0.5", "ap@0.5", "map@0.5", "loss", "obj", "cls", "box", "quality", "attr", "hm", "off", "wh", "l1", "iou"],
                 step=epoch + 1,
             )
 
@@ -2665,6 +2930,11 @@ def main():
                     "epoch": epoch + 1,
                     "arch": args.arch,
                     "classes": class_ids,
+                    "img_size": img_size_str,
+                    "multi_label_mode": multi_label_mode,
+                    "multi_label_det_classes": det_class_ids_raw,
+                    "multi_label_attr_classes": attr_class_ids_raw,
+                    "multi_label_attr_weight": multi_label_attr_weight,
                     "augment_cfg": aug_cfg,
                     "resize_mode": resize_mode,
                     "use_skip": use_skip,
@@ -2702,6 +2972,7 @@ def main():
                     "utod_large_obj_branch": utod_large_obj_branch,
                     "utod_large_obj_depth": utod_large_obj_depth,
                     "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
+                    "utod_sppf_scale": utod_sppf_scale,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
                     "w_bits": w_bits,
@@ -2758,6 +3029,11 @@ def main():
             "epoch": epoch + 1,
             "arch": args.arch,
             "classes": class_ids,
+            "img_size": img_size_str,
+            "multi_label_mode": multi_label_mode,
+            "multi_label_det_classes": det_class_ids_raw,
+            "multi_label_attr_classes": attr_class_ids_raw,
+            "multi_label_attr_weight": multi_label_attr_weight,
             "augment_cfg": aug_cfg,
             "resize_mode": resize_mode,
             "use_skip": use_skip,
@@ -2795,6 +3071,7 @@ def main():
             "utod_large_obj_branch": utod_large_obj_branch,
             "utod_large_obj_depth": utod_large_obj_depth,
             "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
+            "utod_sppf_scale": utod_sppf_scale,
             "activation": activation,
             "use_batchnorm": use_batchnorm,
             "w_bits": w_bits,

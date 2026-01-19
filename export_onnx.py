@@ -25,14 +25,20 @@ def _is_state_dict(obj) -> bool:
     return isinstance(obj, dict) and obj and all(isinstance(v, torch.Tensor) for v in obj.values())
 
 
-def load_checkpoint(path: str, use_ema: bool) -> Tuple[Dict[str, torch.Tensor], Dict]:
+def load_checkpoint(path: str) -> Tuple[Dict[str, torch.Tensor], Dict]:
     """Returns (state_dict, meta)."""
     ckpt = torch.load(path, map_location="cpu")
     meta: Dict = ckpt if isinstance(ckpt, dict) else {}
     state: Optional[Dict[str, torch.Tensor]] = None
     if isinstance(ckpt, dict):
         if "model" in ckpt:
-            state = ckpt["ema"] if use_ema and "ema" in ckpt else ckpt["model"]
+            use_ema = False
+            if "ema" in ckpt and ckpt["ema"] is not None:
+                if "use_ema" in meta:
+                    use_ema = bool(meta.get("use_ema"))
+                else:
+                    use_ema = True
+            state = ckpt["ema"] if use_ema else ckpt["model"]
         elif "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
             state = ckpt["state_dict"]
         elif _is_state_dict(ckpt):
@@ -58,15 +64,32 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         num_anchors = len(anchors_from_meta)
         anchors_source = "meta"
 
-    # num_classes: meta > CLI > derive from cls_out shape
-    if "classes" in meta and meta["classes"]:
-        num_classes = len(meta["classes"])
+    # num_classes: prefer head shapes; fall back to metadata
+    cls_weight = state.get("head.cls_out.weight")
+    det_from_state = int(cls_weight.shape[0] // num_anchors) if cls_weight is not None and num_anchors else None
+    attr_weight = state.get("head.attr_out.weight")
+    attr_from_state = int(attr_weight.shape[0] // num_anchors) if attr_weight is not None and num_anchors else None
+
+    meta_classes = meta.get("classes") if isinstance(meta, dict) else None
+    class_ids = [int(c) for c in meta_classes] if meta_classes else []
+    multi_label_mode = str(meta.get("multi_label_mode", "none") or "none").lower() if isinstance(meta, dict) else "none"
+    det_class_ids = [int(c) for c in meta.get("multi_label_det_classes", [])] if isinstance(meta, dict) else []
+    attr_class_ids = [int(c) for c in meta.get("multi_label_attr_classes", [])] if isinstance(meta, dict) else []
+    if multi_label_mode == "none" and attr_from_state:
+        multi_label_mode = "separate"
+
+    class_to_idx = {cid: i for i, cid in enumerate(class_ids)} if class_ids else {}
+    det_class_indices = [class_to_idx[c] for c in det_class_ids if c in class_to_idx] if det_class_ids and class_to_idx else []
+    attr_class_indices = [class_to_idx[c] for c in attr_class_ids if c in class_to_idx] if attr_class_ids and class_to_idx else []
+
+    if multi_label_mode == "separate":
+        num_classes = det_from_state or (len(det_class_indices) if det_class_indices else len(det_class_ids) if det_class_ids else None)
+        if num_classes is None:
+            num_classes = len(class_ids) if class_ids else 1
+        attr_num_classes = attr_from_state or (len(attr_class_indices) if attr_class_indices else len(attr_class_ids) if attr_class_ids else 0)
     else:
-        cls_weight = state.get("head.cls_out.weight")
-        if cls_weight is not None and num_anchors:
-            num_classes = int(cls_weight.shape[0] // num_anchors)
-        else:
-            num_classes = 1
+        num_classes = det_from_state or (len(class_ids) if class_ids else 1)
+        attr_num_classes = 0
 
     # backbone width from meta > weight shape
     if "cnn_width" in meta:
@@ -97,9 +120,22 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
     use_large_obj_branch = bool(meta.get("utod_large_obj_branch") or any(k.startswith("head.large_obj_") for k in state.keys()))
     large_obj_depth = int(meta.get("utod_large_obj_depth", 1))
     large_obj_ch_scale = float(meta.get("utod_large_obj_ch_scale", 1.0))
+    sppf_scale_mode = str(meta.get("utod_sppf_scale", "none") or "none").lower()
+    if sppf_scale_mode in ("conv1x1", "1x1", "conv"):
+        sppf_scale_mode = "conv"
+    elif sppf_scale_mode == "bn":
+        sppf_scale_mode = "bn"
+    else:
+        sppf_scale_mode = "none"
+    if sppf_scale_mode == "none":
+        if any(k.startswith("backbone.sppf.scale_x.conv.") for k in state.keys()):
+            sppf_scale_mode = "conv"
+        elif any(k.startswith("backbone.sppf.scale_x.weight") for k in state.keys()):
+            sppf_scale_mode = "bn"
 
     cfg = UltraTinyODConfig(
         num_classes=num_classes,
+        attr_num_classes=attr_num_classes,
         anchors=anchors,
         stride=stride,
         use_improved_head=use_improved_head,
@@ -112,6 +148,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         use_large_obj_branch=use_large_obj_branch,
         large_obj_branch_depth=large_obj_depth,
         large_obj_branch_expansion=large_obj_ch_scale,
+        sppf_scale_mode=sppf_scale_mode,
     )
     overrides = {
         "num_classes": num_classes,
@@ -125,17 +162,30 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "quality_power": quality_power,
         "anchors_source": anchors_source,
         "activation": activation,
+        "multi_label_mode": multi_label_mode,
+        "det_class_indices": det_class_indices,
+        "attr_class_indices": attr_class_indices,
+        "attr_num_classes": attr_num_classes,
         "use_context_rfb": use_context_rfb,
         "context_dilation": context_dilation,
         "use_large_obj_branch": use_large_obj_branch,
         "large_obj_branch_depth": large_obj_depth,
         "large_obj_branch_expansion": large_obj_ch_scale,
+        "sppf_scale_mode": sppf_scale_mode,
     }
     return cfg, overrides
 
 
 class UltraTinyODWithPost(nn.Module):
-    def __init__(self, model: UltraTinyOD, topk: int = 100, conf_thresh: float = 0.0) -> None:
+    def __init__(
+        self,
+        model: UltraTinyOD,
+        topk: int = 100,
+        conf_thresh: float = 0.0,
+        multi_label_mode: str = "none",
+        det_class_indices: Optional[Sequence[int]] = None,
+        attr_class_indices: Optional[Sequence[int]] = None,
+    ) -> None:
         super().__init__()
         self.model = model
         self.topk = int(topk)
@@ -143,11 +193,69 @@ class UltraTinyODWithPost(nn.Module):
         self.has_quality = bool(getattr(model.head, "has_quality", False))
         self.score_mode = getattr(model, "score_mode", getattr(model.head, "score_mode", "obj_quality_cls"))
         self.quality_power = float(getattr(model, "quality_power", getattr(model.head, "quality_power", 1.0)))
+        self.multi_label_mode = (multi_label_mode or "none").lower()
+        self.det_class_indices = list(det_class_indices) if det_class_indices else None
+        self.attr_class_indices = list(attr_class_indices) if attr_class_indices else None
+
+    def _score_base(self, obj: torch.Tensor, quality: Optional[torch.Tensor]) -> torch.Tensor:
+        quality_use = quality
+        if quality_use is not None and self.quality_power != 1.0:
+            quality_use = torch.pow(quality_use, self.quality_power)
+        smode = (self.score_mode or "obj_quality_cls").lower()
+        if smode == "quality_cls" and quality_use is not None:
+            score_base = quality_use
+        elif smode == "obj_cls":
+            score_base = obj
+        else:
+            score_base = obj
+            if quality_use is not None:
+                score_base = score_base * quality_use
+        return score_base
+
+    def _topk_multi_label(
+        self,
+        scores: torch.Tensor,
+        cx: torch.Tensor,
+        cy: torch.Tensor,
+        bw: torch.Tensor,
+        bh: torch.Tensor,
+        class_map: Optional[Sequence[int]],
+    ) -> torch.Tensor:
+        b, _, _, _, c = scores.shape
+        scores_flat = scores.reshape(b, -1)
+        if self.conf_thresh > 0:
+            scores_flat = torch.where(scores_flat >= self.conf_thresh, scores_flat, torch.zeros_like(scores_flat))
+        k = min(self.topk, scores_flat.shape[1])
+        top_scores, top_idx = torch.topk(scores_flat, k=k, dim=1)
+        top_cls = top_idx % c
+        top_cell = top_idx // c
+        cx_flat = cx.reshape(b, -1)
+        cy_flat = cy.reshape(b, -1)
+        bw_flat = bw.reshape(b, -1)
+        bh_flat = bh.reshape(b, -1)
+        top_cx = torch.gather(cx_flat, 1, top_cell)
+        top_cy = torch.gather(cy_flat, 1, top_cell)
+        top_bw = torch.gather(bw_flat, 1, top_cell)
+        top_bh = torch.gather(bh_flat, 1, top_cell)
+        if class_map is not None:
+            cm = torch.tensor(class_map, device=scores.device, dtype=top_cls.dtype)
+            top_cls = cm[top_cls]
+        detections = torch.stack(
+            [top_scores, top_cls.float(), top_cx, top_cy, top_bw, top_bh],
+            dim=-1,
+        )
+        return detections
 
     def forward(self, x: torch.Tensor):
-        raw = self.model(x, decode=False)  # [B, na*no, H, W]
-        if isinstance(raw, tuple):
-            raw = raw[0]
+        if self.multi_label_mode == "separate" and getattr(self.model.head, "attr_out", None) is not None:
+            out = self.model(x, decode=False, return_attr=True)
+            raw, attr_logits = out if isinstance(out, (tuple, list)) else (out, None)
+        else:
+            raw = self.model(x, decode=False)  # [B, na*no, H, W]
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            attr_logits = None
+
         b, _, h, w = raw.shape
         na = self.model.num_anchors
         no = self.model.head.no
@@ -162,19 +270,6 @@ class UltraTinyODWithPost(nn.Module):
         quality = pred[..., 5].sigmoid() if self.has_quality else None
         cls_logits = pred[..., cls_start:]
         cls_scores = cls_logits.sigmoid()
-
-        quality_use = quality
-        if quality_use is not None and self.quality_power != 1.0:
-            quality_use = torch.pow(quality_use, self.quality_power)
-        smode = (self.score_mode or "obj_quality_cls").lower()
-        if smode == "quality_cls" and quality_use is not None:
-            score_base = quality_use
-        elif smode == "obj_cls":
-            score_base = obj
-        else:
-            score_base = obj
-            if quality_use is not None:
-                score_base = score_base * quality_use
 
         # grid
         gy, gx = torch.meshgrid(
@@ -196,6 +291,23 @@ class UltraTinyODWithPost(nn.Module):
         bw = pw * F.softplus(tw)
         bh = ph * F.softplus(th)
 
+        score_base = self._score_base(obj, quality)
+        if self.multi_label_mode in ("single", "separate"):
+            if self.multi_label_mode == "separate" and attr_logits is not None:
+                attr_scores = attr_logits.view(b, na, -1, h, w).permute(0, 1, 3, 4, 2).sigmoid()
+                det_scores = score_base.unsqueeze(-1) * cls_scores
+                attr_scores = score_base.unsqueeze(-1) * attr_scores
+                combined_scores = torch.cat([det_scores, attr_scores], dim=-1)
+                class_map = None
+                if self.det_class_indices is not None or self.attr_class_indices is not None:
+                    det_map = self.det_class_indices or list(range(det_scores.shape[-1]))
+                    attr_map = self.attr_class_indices or list(range(attr_scores.shape[-1]))
+                    class_map = det_map + attr_map
+                return self._topk_multi_label(combined_scores, cx, cy, bw, bh, class_map)
+            return self._topk_multi_label(
+                score_base.unsqueeze(-1) * cls_scores, cx, cy, bw, bh, self.det_class_indices
+            )
+
         scores = score_base.unsqueeze(-1) * cls_scores  # [B, A, H, W, C]
         if self.conf_thresh > 0:
             scores = torch.where(scores >= self.conf_thresh, scores, torch.zeros_like(scores))
@@ -215,6 +327,9 @@ class UltraTinyODWithPost(nn.Module):
         top_cy = torch.gather(cy_flat, 1, top_idx)
         top_bw = torch.gather(bw_flat, 1, top_idx)
         top_bh = torch.gather(bh_flat, 1, top_idx)
+        if self.det_class_indices is not None:
+            cm = torch.tensor(self.det_class_indices, device=pred.device, dtype=top_cls.dtype)
+            top_cls = cm[top_cls]
 
         detections = torch.stack(
             [top_scores, top_cls.float(), top_cx, top_cy, top_bw, top_bh],
@@ -233,11 +348,18 @@ class UltraTinyODRawWithAnchors(nn.Module):
         self.model = model
 
     def forward(self, x: torch.Tensor):
-        out = self.model(x, decode=False)
-        raw = out[0] if isinstance(out, (tuple, list)) else out
+        if getattr(self.model.head, "attr_out", None) is not None:
+            out = self.model(x, decode=False, return_attr=True)
+            raw, attr = out if isinstance(out, (tuple, list)) else (out, None)
+        else:
+            out = self.model(x, decode=False)
+            raw = out[0] if isinstance(out, (tuple, list)) else out
+            attr = None
         anchors = self.model.head.anchors
         wh_scale = self.model.head.wh_scale
-        return raw, anchors, wh_scale
+        if attr is None:
+            return raw, anchors, wh_scale
+        return raw, attr, anchors, wh_scale
 
 
 class UltraTinyODRawPartsWithAnchors(nn.Module):
@@ -251,12 +373,16 @@ class UltraTinyODRawPartsWithAnchors(nn.Module):
 
     def forward(self, x: torch.Tensor):
         feat = self.model.backbone(x)
-        box, obj, quality, cls = self.model.head.forward_raw_parts(feat)
+        box, obj, quality, cls, attr = self.model.head.forward_raw_parts(feat)
         anchors = self.model.head.anchors
         wh_scale = self.model.head.wh_scale
         if quality is None:
-            return box, obj, cls, anchors, wh_scale
-        return box, obj, quality, cls, anchors, wh_scale
+            if attr is None:
+                return box, obj, cls, anchors, wh_scale
+            return box, obj, cls, attr, anchors, wh_scale
+        if attr is None:
+            return box, obj, quality, cls, anchors, wh_scale
+        return box, obj, quality, cls, attr, anchors, wh_scale
 
 
 def _resize_attrs_from_mode(resize_mode: str):
@@ -492,12 +618,9 @@ def build_argparser():
     src.add_argument("--checkpoint", help="Training checkpoint (.pt) containing optimizer/ema/etc.")
     src.add_argument("--weights", help="Weights/state_dict only (.pt).")
     parser.add_argument("--output", required=True, help="Output ONNX path.")
-    parser.add_argument("--img-size", default="64x64", help="Input size as HxW (e.g., 64x64).")
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--topk", type=int, default=100, help="Number of detections to keep (Top-K).")
     parser.add_argument("--conf-thresh", type=float, default=0.0, help="Optional confidence threshold before Top-K.")
-    parser.add_argument("--no-ema", dest="use_ema", action="store_false", help="Use raw model weights instead of EMA (defaults to EMA when available).")
-    parser.set_defaults(use_ema=True)
     parser.add_argument("--no-merge-postprocess", dest="merge_postprocess", action="store_false", help="Export raw model only.")
     parser.set_defaults(merge_postprocess=True)
     parser.add_argument(
@@ -523,7 +646,7 @@ def main():
         parser.error("--noconcat_box_obj_quality_cls requires --no-merge-postprocess.")
 
     ckpt_path = args.checkpoint or args.weights
-    state, meta = load_checkpoint(ckpt_path, use_ema=bool(args.use_ema))
+    state, meta = load_checkpoint(ckpt_path)
     try:
         resize_mode = normalize_resize_mode(meta.get("resize_mode", "opencv_inter_nearest"))
     except Exception:
@@ -539,6 +662,9 @@ def main():
         input_channels = 3
         input_name = "input_rgb"
     cfg, inferred = infer_utod_config(state, meta, args)
+    multi_label_mode = inferred.get("multi_label_mode", "none")
+    det_class_indices = inferred.get("det_class_indices") or None
+    attr_class_indices = inferred.get("attr_class_indices") or None
 
     model = UltraTinyOD(
         num_classes=inferred["num_classes"],
@@ -573,19 +699,42 @@ def main():
     if not args.merge_postprocess:
         if args.noconcat_box_obj_quality_cls:
             export_module = UltraTinyODRawPartsWithAnchors(model)
-            if getattr(model.head, "has_quality", False):
+            has_quality = bool(getattr(model.head, "has_quality", False))
+            has_attr = getattr(model.head, "attr_out", None) is not None
+            if has_quality and has_attr:
+                output_names = ["box", "obj", "quality", "cls", "attr", "anchors", "wh_scale"]
+            elif has_quality:
                 output_names = ["box", "obj", "quality", "cls", "anchors", "wh_scale"]
+            elif has_attr:
+                output_names = ["box", "obj", "cls", "attr", "anchors", "wh_scale"]
             else:
                 output_names = ["box", "obj", "cls", "anchors", "wh_scale"]
         else:
             export_module = UltraTinyODRawWithAnchors(model)
-            output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
+            if getattr(model.head, "attr_out", None) is not None:
+                output_names = ["txtywh_obj_quality_cls_x8", "attr_logits", "anchors", "wh_scale"]
+            else:
+                output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
     else:
-        export_module = UltraTinyODWithPost(model, topk=args.topk, conf_thresh=args.conf_thresh)
+        export_module = UltraTinyODWithPost(
+            model,
+            topk=args.topk,
+            conf_thresh=args.conf_thresh,
+            multi_label_mode=multi_label_mode,
+            det_class_indices=det_class_indices,
+            attr_class_indices=attr_class_indices,
+        )
         output_names = ["score_classid_cxcywh"]
 
     device = torch.device("cpu")
-    img_size = parse_img_size(args.img_size)
+    img_size_meta = meta.get("img_size") if isinstance(meta, dict) else None
+    if img_size_meta is None:
+        print("[WARN] img_size missing in checkpoint meta; defaulting to 64x64.")
+        img_size = parse_img_size("64x64")
+    elif isinstance(img_size_meta, (tuple, list)) and len(img_size_meta) == 2:
+        img_size = (int(img_size_meta[0]), int(img_size_meta[1]))
+    else:
+        img_size = parse_img_size(str(img_size_meta))
     export_module.to(device)
 
     out_dir = os.path.dirname(os.path.abspath(args.output))
@@ -637,6 +786,11 @@ def main():
             "decode_score": "score = sigmoid(obj) * (sigmoid(quality)^quality_power) * sigmoid(cls)",
             "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
             "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),
+            "img_size": meta.get("img_size", "") if isinstance(meta, dict) else "",
+            "multi_label_mode": meta.get("multi_label_mode", "none") if isinstance(meta, dict) else "none",
+            "multi_label_det_classes": meta.get("multi_label_det_classes", "") if isinstance(meta, dict) else "",
+            "multi_label_attr_classes": meta.get("multi_label_attr_classes", "") if isinstance(meta, dict) else "",
+            "multi_label_attr_weight": meta.get("multi_label_attr_weight", "") if isinstance(meta, dict) else "",
         },
     )
 

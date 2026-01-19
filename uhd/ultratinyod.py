@@ -296,19 +296,48 @@ class SPPFmin(nn.Module):
     UltraTinyOD 用に最小限構成にしている。
     """
 
-    def __init__(self, c_in: int, c_out: int, pool_k: int = 5, act_name: str = "silu", w_bits: int = 0, a_bits: int = 0):
+    def __init__(
+        self,
+        c_in: int,
+        c_out: int,
+        pool_k: int = 5,
+        act_name: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
+        scale_mode: str = "none",
+    ):
         super().__init__()
         # まずチャネルを半減
         c_hidden = c_in // 2
         self.cv1 = ConvBNAct(c_in, c_hidden, k=1, s=1, p=0, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
         # 1 回だけの MaxPool（pool_k×pool_k）
         self.pool = nn.MaxPool2d(kernel_size=pool_k, stride=1, padding=pool_k // 2)
+        # Optional per-branch scaling to align concat statistics.
+        scale_mode = (scale_mode or "none").lower()
+        if scale_mode in ("conv1x1", "1x1", "conv"):
+            scale_mode = "conv"
+        elif scale_mode == "bn":
+            scale_mode = "bn"
+        else:
+            scale_mode = "none"
+        self.scale_mode = scale_mode
+        if self.scale_mode == "bn":
+            self.scale_x = nn.BatchNorm2d(c_hidden, eps=1e-3, momentum=0.03)
+            self.scale_y = nn.BatchNorm2d(c_hidden, eps=1e-3, momentum=0.03)
+        elif self.scale_mode == "conv":
+            self.scale_x = ConvBNAct(c_hidden, c_hidden, k=1, s=1, p=0, act=False, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
+            self.scale_y = ConvBNAct(c_hidden, c_hidden, k=1, s=1, p=0, act=False, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
+        else:
+            self.scale_x = nn.Identity()
+            self.scale_y = nn.Identity()
         # 出力チャネルを c_out に整える
         self.cv2 = ConvBNAct(c_hidden * 2, c_out, k=1, s=1, p=0, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.cv1(x)
         y = self.pool(x)
+        x = self.scale_x(x)
+        y = self.scale_y(y)
         x = torch.cat([x, y], dim=1)
         x = self.cv2(x)
         return x
@@ -316,6 +345,9 @@ class SPPFmin(nn.Module):
     def fuse_model(self, qat: bool = False) -> None:
         if hasattr(self.cv1, "fuse_model"):
             self.cv1.fuse_model(qat=qat)
+        for scale in (self.scale_x, self.scale_y):
+            if hasattr(scale, "fuse_model"):
+                scale.fuse_model(qat=qat)
         if hasattr(self.cv2, "fuse_model"):
             self.cv2.fuse_model(qat=qat)
 
@@ -349,6 +381,7 @@ class UltraTinyODBackbone(nn.Module):
         activation: str = "silu",
         w_bits: int = 0,
         a_bits: int = 0,
+        sppf_scale_mode: str = "none",
     ):
         super().__init__()
         if out_stride not in (4, 8, 16):
@@ -384,7 +417,14 @@ class UltraTinyODBackbone(nn.Module):
             self.block4_skip = nn.Identity()
 
         # SPPF-min: 128 -> 64
-        self.sppf = SPPFmin(c_stem * 8, c_stem * 4, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
+        self.sppf = SPPFmin(
+            c_stem * 8,
+            c_stem * 4,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+            scale_mode=sppf_scale_mode,
+        )
 
         self.out_channels = c_stem * 4  # 64
 
@@ -421,6 +461,7 @@ class UltraTinyODConfig:
     UltraTinyOD の設定
 
     - num_classes : クラス数
+    - attr_num_classes : 追加の属性クラス数（別ヘッド）
     - anchors     : [(w, h), ...] のリスト（入力に対する正規化値, e.g., w=0.125 は 8px/64px）
     - stride      : この Head が担当する stride (通常 8、主に情報用途)
     - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
@@ -428,9 +469,11 @@ class UltraTinyODConfig:
     - use_head_ese : Head入口にeSEを挿入して軽量に文脈強調
     - use_iou_aware_head : IoU/quality をクラス信頼度に直結させるタスクアラインドヘッド
     - quality_power : quality スコアの指数。IoU-aware スコアリングの鋭さを調整
+    - sppf_scale_mode : SPPF-min concat前のスケール整合 (none/bn/conv)
     """
 
     num_classes: int = 1
+    attr_num_classes: int = 0
     stride: int = 8
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     cls_bottleneck_ratio: float = 0.5
@@ -447,6 +490,7 @@ class UltraTinyODConfig:
     use_large_obj_branch: bool = False
     large_obj_branch_depth: int = 1
     large_obj_branch_expansion: float = 1.0
+    sppf_scale_mode: str = "none"
     w_bits: int = 0
     a_bits: int = 0
     quant_target: str = "both"
@@ -467,6 +511,7 @@ class UltraTinyODConfig:
             ]
         # ensure float tuples
         self.anchors = [(float(w), float(h)) for w, h in self.anchors]
+        self.attr_num_classes = int(max(0, self.attr_num_classes))
         self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
         self.use_iou_aware_head = bool(self.use_iou_aware_head)
         self.quality_power = float(max(0.0, self.quality_power))
@@ -482,6 +527,14 @@ class UltraTinyODConfig:
         self.use_large_obj_branch = bool(self.use_large_obj_branch)
         self.large_obj_branch_depth = max(1, int(self.large_obj_branch_depth))
         self.large_obj_branch_expansion = float(max(0.25, self.large_obj_branch_expansion))
+        sppf_mode = str(self.sppf_scale_mode or "none").lower()
+        if sppf_mode in ("conv1x1", "1x1", "conv"):
+            sppf_mode = "conv"
+        elif sppf_mode == "bn":
+            sppf_mode = "bn"
+        else:
+            sppf_mode = "none"
+        self.sppf_scale_mode = sppf_mode
         self.w_bits = _normalize_bits(self.w_bits)
         self.a_bits = _normalize_bits(self.a_bits)
         self.quant_target = str(self.quant_target or "both").lower()
@@ -513,6 +566,7 @@ class UltraTinyODHead(nn.Module):
         self.w_bits = _normalize_bits(getattr(cfg, "w_bits", 0))
         self.a_bits = _normalize_bits(getattr(cfg, "a_bits", 0))
         self.nc = cfg.num_classes
+        self.attr_nc = int(getattr(cfg, "attr_num_classes", 0))
         self.stride = cfg.stride
         self.in_channels = in_channels
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
@@ -641,6 +695,17 @@ class UltraTinyODHead(nn.Module):
             padding=0,
             bias=True,
         )
+        if self.attr_nc > 0:
+            self.attr_out = nn.Conv2d(
+                self.cls_mid,
+                self.num_anchors * self.attr_nc,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+        else:
+            self.attr_out = None
         self.out_w_quant = FakeQuantizer(self.w_bits, per_channel=True, ch_axis=0) if self.w_bits else None
 
         perm = self._build_raw_map_perm()
@@ -725,6 +790,15 @@ class UltraTinyODHead(nn.Module):
                 padding=0,
                 bias=True,
             ).to(anchor_tensor.device)
+            if self.attr_out is not None:
+                self.attr_out = nn.Conv2d(
+                    self.cls_mid,
+                    self.num_anchors * self.attr_nc,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                ).to(anchor_tensor.device)
             nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
             if self.has_quality:
@@ -732,6 +806,8 @@ class UltraTinyODHead(nn.Module):
                 if self.use_improved_head and isinstance(self.wh_scale, nn.Parameter):
                     self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, device=anchor_tensor.device))
             nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
+            if self.attr_out is not None:
+                nn.init.kaiming_normal_(self.attr_out.weight, mode="fan_out", nonlinearity="relu")
             self.reset_output_bias()
             if not self.use_improved_head:
                 self.wh_scale = torch.ones(self.num_anchors, 2, device=anchor_tensor.device)
@@ -808,6 +884,8 @@ class UltraTinyODHead(nn.Module):
             nn.init.constant_(self.quality_out.bias, 0.0)
         if self.cls_out.bias is not None:
             nn.init.constant_(self.cls_out.bias, cls_bias)
+        if self.attr_out is not None and self.attr_out.bias is not None:
+            nn.init.constant_(self.attr_out.bias, cls_bias)
 
     def forward(
         self,
@@ -815,6 +893,7 @@ class UltraTinyODHead(nn.Module):
         decode: bool = False,
         conf_thresh: float = 0.3,
         nms_thresh: float = 0.5,
+        return_attr: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Parameters
@@ -834,7 +913,7 @@ class UltraTinyODHead(nn.Module):
         """
         b, c, h, w = x.shape
 
-        box, obj, quality, cls = self.forward_raw_parts(x)
+        box, obj, quality, cls, attr = self.forward_raw_parts(x)
 
         # merge to [B, na, (5+nc), H, W] (tx,ty,tw,th,obj,cls...)
         if self.has_quality and quality is not None:
@@ -844,6 +923,8 @@ class UltraTinyODHead(nn.Module):
         raw_map = pred.index_select(1, self.raw_map_perm)
 
         if not decode:
+            if return_attr and self.attr_out is not None:
+                return raw_map, attr
             return raw_map, None
 
         # decode は pipeline の decode_anchor と同じパラメータ化 (tx/ty sigmoid, tw/th softplus)
@@ -865,11 +946,13 @@ class UltraTinyODHead(nn.Module):
             score_mode=self.score_mode,
             quality_power=self.quality_power,
         )
+        if return_attr and self.attr_out is not None:
+            return raw_map, decoded, attr
         return raw_map, decoded
 
     def forward_raw_parts(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor, Optional[torch.Tensor]]:
         """Return raw head outputs without concatenation (box, obj, quality, cls)."""
         b, c, h, w = x.shape
 
@@ -911,8 +994,11 @@ class UltraTinyODHead(nn.Module):
             cls_feat = self.cls_reduce(x)
             cls_feat = self.cls_conv(cls_feat)
         cls = self._conv2d_out(self.cls_out, cls_feat)
+        attr = None
+        if self.attr_out is not None:
+            attr = self._conv2d_out(self.attr_out, cls_feat)
 
-        return box, obj, quality, cls
+        return box, obj, quality, cls, attr
 
     def _conv2d_out(self, conv: nn.Conv2d, x: torch.Tensor) -> torch.Tensor:
         if self.out_w_quant is None:
@@ -1002,6 +1088,8 @@ class UltraTinyOD(nn.Module):
                 config.highbit_w_bits = 8
             if not hasattr(config, "highbit_a_bits"):
                 config.highbit_a_bits = 8
+            if not hasattr(config, "sppf_scale_mode"):
+                config.sppf_scale_mode = "none"
 
         act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
 
@@ -1047,6 +1135,7 @@ class UltraTinyOD(nn.Module):
             activation=act_name,
             w_bits=backbone_w_bits,
             a_bits=backbone_a_bits,
+            sppf_scale_mode=getattr(config, "sppf_scale_mode", "none"),
         )
         head_cfg = deepcopy(config)
         head_cfg.w_bits = head_w_bits
@@ -1059,6 +1148,7 @@ class UltraTinyOD(nn.Module):
         self.has_quality_head = bool(self.head.has_quality)
         self.score_mode = getattr(self.head, "score_mode", "obj_quality_cls")
         self.quality_power = getattr(self.head, "quality_power", 1.0)
+        self.attr_num_classes = int(getattr(config, "attr_num_classes", 0))
         self.activation = act_name
 
         # モデル初期化（簡易版）
@@ -1093,6 +1183,7 @@ class UltraTinyOD(nn.Module):
         x: torch.Tensor,
         decode: bool = False,
         return_feat: bool = False,
+        return_attr: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Parameters
@@ -1114,9 +1205,28 @@ class UltraTinyOD(nn.Module):
             decode=False の場合: None
         """
         feat = self.backbone(x)
-        raw_preds, decoded = self.head(feat, decode=decode)
+        attr_logits = None
+        if return_attr:
+            out = self.head(feat, decode=decode, return_attr=True)
+            if decode:
+                raw_preds, decoded, attr_logits = out
+            else:
+                raw_preds, attr_logits = out
+                decoded = None
+        else:
+            raw_preds, decoded = self.head(feat, decode=decode)
+        if return_feat and return_attr:
+            if decode:
+                return raw_preds, decoded, feat, attr_logits
+            return raw_preds, feat, attr_logits
         if return_feat:
+            if decode:
+                return raw_preds, decoded, feat
             return raw_preds, feat
+        if return_attr:
+            if decode:
+                return raw_preds, decoded, attr_logits
+            return raw_preds, attr_logits
         if decode:
             return raw_preds, decoded
         return raw_preds
