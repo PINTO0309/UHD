@@ -210,7 +210,7 @@ pgc/
 ava_v*/
 data*/
 output*/
-runs/
+runs*/
 feature_heatmaps/
 ablation_heatmaps/
 saved_model/

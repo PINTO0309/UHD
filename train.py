@@ -1572,6 +1572,7 @@ def validate(
     total_anchor_cls = 0.0
     total_anchor_box = 0.0
     total_anchor_quality = 0.0
+    total_anchor_attr = 0.0
     total_cls = 0.0
     total_l1 = 0.0
     total_iou = 0.0
