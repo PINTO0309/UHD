@@ -670,7 +670,6 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
 
 def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     img_h, img_w = parse_img_size(args.img_size)
-    img_size_str = f"{img_h}x{img_w}"
     base = YoloDataset(
         image_dir=args.image_dir,
         list_path=None,
@@ -2034,6 +2033,7 @@ def main():
     pretrain_meta = torch.load(args.ckpt, map_location="cpu") if args.ckpt else None
     ckpt_meta = torch.load(args.resume, map_location="cpu") if args.resume else None
     img_h, img_w = parse_img_size(args.img_size)
+    img_size_str = f"{img_h}x{img_w}"
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
         nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
