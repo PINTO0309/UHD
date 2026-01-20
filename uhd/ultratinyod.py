@@ -469,6 +469,7 @@ class UltraTinyODConfig:
     - use_head_ese : Head入口にeSEを挿入して軽量に文脈強調
     - use_iou_aware_head : IoU/quality をクラス信頼度に直結させるタスクアラインドヘッド
     - quality_power : quality スコアの指数。IoU-aware スコアリングの鋭さを調整
+    - score_mode : 推論スコアの合成方法 (obj_quality_cls / quality_cls / obj_cls)
     - sppf_scale_mode : SPPF-min concat前のスケール整合 (none/bn/conv)
     """
 
@@ -481,6 +482,7 @@ class UltraTinyODConfig:
     use_head_ese: bool = False
     use_iou_aware_head: bool = False
     quality_power: float = 1.0
+    score_mode: Optional[str] = None
     use_fpn: bool = False
     fpn_strides: Optional[Sequence[int]] = None
     use_fpn_strict: bool = False
@@ -515,6 +517,11 @@ class UltraTinyODConfig:
         self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
         self.use_iou_aware_head = bool(self.use_iou_aware_head)
         self.quality_power = float(max(0.0, self.quality_power))
+        if self.score_mode is not None:
+            mode = str(self.score_mode).lower()
+            if mode not in ("obj_quality_cls", "quality_cls", "obj_cls"):
+                mode = "obj_quality_cls"
+            self.score_mode = mode
         self.use_fpn = bool(self.use_fpn)
         self.use_fpn_strict = bool(self.use_fpn_strict)
         if self.fpn_strides is None:
@@ -596,7 +603,10 @@ class UltraTinyODHead(nn.Module):
         else:
             self.register_buffer("wh_scale", torch.ones(self.num_anchors, 2, dtype=torch.float32))
         # task-aligned score uses quality*cls (no obj) when enabled
-        self.score_mode = "quality_cls" if self.use_iou_aware_head else "obj_quality_cls"
+        if getattr(cfg, "score_mode", None):
+            self.score_mode = str(cfg.score_mode).lower()
+        else:
+            self.score_mode = "quality_cls" if self.use_iou_aware_head else "obj_quality_cls"
         self.quality_power = float(max(0.0, self.quality_power))
         self.has_quality_head = self.has_quality
 

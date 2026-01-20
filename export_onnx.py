@@ -109,6 +109,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         or any(k.startswith("head.box_tower") or k.startswith("head.quality_tower") or k.startswith("head.cls_tower") for k in state.keys())
     )
     quality_power = max(0.0, float(meta.get("quality_power", 1.0)))
+    score_mode = meta.get("score_mode") if isinstance(meta, dict) else None
     activation = str(meta.get("activation", "swish") or "swish")
     has_ese_weights = ("head.head_se.fc.weight" in state) and ("head.head_se.fc.bias" in state)
     if meta.get("utod_head_ese") and not has_ese_weights:
@@ -142,6 +143,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         use_head_ese=use_head_ese,
         use_iou_aware_head=use_iou_aware_head,
         quality_power=quality_power,
+        score_mode=score_mode,
         activation=activation,
         use_context_rfb=use_context_rfb,
         context_dilation=context_dilation,
@@ -160,6 +162,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_residual": use_residual,
         "use_iou_aware_head": use_iou_aware_head,
         "quality_power": quality_power,
+        "score_mode": score_mode,
         "anchors_source": anchors_source,
         "activation": activation,
         "multi_label_mode": multi_label_mode,
@@ -787,6 +790,7 @@ def main():
             "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
             "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),
             "img_size": meta.get("img_size", "") if isinstance(meta, dict) else "",
+            "score_mode": meta.get("score_mode", "") if isinstance(meta, dict) else "",
             "multi_label_mode": meta.get("multi_label_mode", "none") if isinstance(meta, dict) else "none",
             "multi_label_det_classes": meta.get("multi_label_det_classes", "") if isinstance(meta, dict) else "",
             "multi_label_attr_classes": meta.get("multi_label_attr_classes", "") if isinstance(meta, dict) else "",
