@@ -229,6 +229,12 @@ def anchor_loss(
     use_quality: bool = False,
     wh_scale: Optional[torch.Tensor] = None,
     multi_label: bool = False,
+    loss_weight_box: float = 1.0,
+    loss_weight_obj: float = 1.0,
+    loss_weight_cls: float = 1.0,
+    loss_weight_quality: float = 1.0,
+    obj_loss_type: str = "bce",
+    obj_target: str = "auto",
 ) -> Dict[str, torch.Tensor]:
     """
     YOLO-style anchor loss with optional IoU/GIoU/CIoU regression.
@@ -374,11 +380,24 @@ def anchor_loss(
 
     bce_obj = nn.BCEWithLogitsLoss(reduction="mean")
     bce_cls = nn.BCEWithLogitsLoss(reduction="sum")
-    obj_loss = bce_obj(obj_logit, target_obj)
     quality_loss = torch.tensor(0.0, device=device)
+
+    obj_loss_type = str(obj_loss_type or "bce").lower()
+    if obj_loss_type in ("smooth_l1", "smooth-l1"):
+        obj_loss_type = "smoothl1"
+    if obj_loss_type not in ("bce", "smoothl1"):
+        raise ValueError(f"Unknown obj_loss_type: {obj_loss_type}")
+    obj_target_mode = str(obj_target or "auto").lower()
+    if obj_target_mode not in ("auto", "binary", "iou"):
+        raise ValueError(f"Unknown obj_target: {obj_target_mode}")
+    loss_weight_box = float(loss_weight_box)
+    loss_weight_obj = float(loss_weight_obj)
+    loss_weight_cls = float(loss_weight_cls)
+    loss_weight_quality = float(loss_weight_quality)
 
     pos_mask = target_obj > 0.5
     num_pos = int(pos_mask.sum().item())
+    iou_val = None
     if num_pos > 0:
         t_box = target_box[pos_mask]
         p_box = pred_box[pos_mask]
@@ -391,8 +410,6 @@ def anchor_loss(
             tq = iou_val.detach().clamp(min=0.0, max=1.0).to(target_quality.dtype)
             target_quality[pos_mask] = tq
             quality_loss = bce_obj(qual_logit, target_quality)
-            # also make obj target IoU-aware
-            obj_loss = bce_obj(obj_logit, target_quality)
         if cls_loss_type == "vfl":
             # varifocal: target carries IoU quality; negatives are zero
             t = torch.zeros_like(cls_logit)
@@ -413,7 +430,26 @@ def anchor_loss(
         box_loss = torch.tensor(0.0, device=device)
         cls_loss = torch.tensor(0.0, device=device)
 
-    total = box_loss + obj_loss + cls_loss + quality_loss
+    obj_target_tensor = target_obj
+    use_iou_for_obj = obj_target_mode == "iou" or (obj_target_mode == "auto" and use_quality)
+    if use_iou_for_obj:
+        if target_quality is not None:
+            obj_target_tensor = target_quality
+        elif iou_val is not None and num_pos > 0:
+            obj_target_tensor = target_obj.clone()
+            obj_target_tensor[pos_mask] = iou_val.detach().clamp(min=0.0, max=1.0).to(obj_target_tensor.dtype)
+    if obj_loss_type == "smoothl1":
+        obj_pred = obj_logit.sigmoid()
+        obj_loss = F.smooth_l1_loss(obj_pred, obj_target_tensor, reduction="mean")
+    else:
+        obj_loss = bce_obj(obj_logit, obj_target_tensor)
+
+    total = (
+        loss_weight_box * box_loss
+        + loss_weight_obj * obj_loss
+        + loss_weight_cls * cls_loss
+        + loss_weight_quality * quality_loss
+    )
     return {"loss": total, "box": box_loss, "obj": obj_loss, "cls": cls_loss, "quality": quality_loss}
 
 

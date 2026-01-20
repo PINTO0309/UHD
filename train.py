@@ -393,6 +393,22 @@ def parse_args():
         default="bce",
         help="Classification loss for anchor head.",
     )
+    parser.add_argument("--loss-weight-box", type=float, default=1.0, help="Loss weight for anchor box regression.")
+    parser.add_argument("--loss-weight-obj", type=float, default=1.0, help="Loss weight for anchor objectness.")
+    parser.add_argument("--loss-weight-cls", type=float, default=1.0, help="Loss weight for anchor classification.")
+    parser.add_argument("--loss-weight-quality", type=float, default=1.0, help="Loss weight for anchor quality head.")
+    parser.add_argument(
+        "--obj-loss",
+        choices=["bce", "smoothl1"],
+        default="bce",
+        help="Objectness loss type for anchor head.",
+    )
+    parser.add_argument(
+        "--obj-target",
+        choices=["auto", "binary", "iou"],
+        default="auto",
+        help="Objectness target for anchor head (auto uses IoU when quality head is enabled).",
+    )
     parser.add_argument(
         "--multi-label-mode",
         choices=["none", "single", "separate"],
@@ -930,6 +946,12 @@ def train_one_epoch(
     anchor_assigner: str = "legacy",
     anchor_cls_loss: str = "bce",
     simota_topk: int = 10,
+    loss_weight_box: float = 1.0,
+    loss_weight_obj: float = 1.0,
+    loss_weight_cls: float = 1.0,
+    loss_weight_quality: float = 1.0,
+    obj_loss_type: str = "bce",
+    obj_target: str = "auto",
     qat_freeze_bn: bool = False,
 ) -> Dict[str, float]:
     model.train()
@@ -1097,6 +1119,12 @@ def train_one_epoch(
                         use_quality=use_quality_head,
                         wh_scale=wh_scale_tensor,
                         multi_label=multi_label_mode == "single",
+                        loss_weight_box=loss_weight_box,
+                        loss_weight_obj=loss_weight_obj,
+                        loss_weight_cls=loss_weight_cls,
+                        loss_weight_quality=loss_weight_quality,
+                        obj_loss_type=obj_loss_type,
+                        obj_target=obj_target,
                     )
                     if multi_label_mode == "separate" and attr_logits is not None and attr_num_classes > 0:
                         attr_loss = anchor_attr_loss(
@@ -1565,6 +1593,12 @@ def validate(
     anchor_assigner: str = "legacy",
     anchor_cls_loss: str = "bce",
     simota_topk: int = 10,
+    loss_weight_box: float = 1.0,
+    loss_weight_obj: float = 1.0,
+    loss_weight_cls: float = 1.0,
+    loss_weight_quality: float = 1.0,
+    obj_loss_type: str = "bce",
+    obj_target: str = "auto",
 ) -> Dict[str, float]:
     model.eval()
     all_preds = []
@@ -1740,6 +1774,12 @@ def validate(
                                 use_quality=use_quality_head,
                                 wh_scale=wh_scale_tensor,
                                 multi_label=multi_label_mode == "single",
+                                loss_weight_box=loss_weight_box,
+                                loss_weight_obj=loss_weight_obj,
+                                loss_weight_cls=loss_weight_cls,
+                                loss_weight_quality=loss_weight_quality,
+                                obj_loss_type=obj_loss_type,
+                                obj_target=obj_target,
                             )
                             if multi_label_mode == "separate" and attr_logits is not None and attr_num_classes > 0:
                                 attr_loss = anchor_attr_loss(
@@ -1995,6 +2035,12 @@ def main():
     iou_loss_type = args.iou_loss
     anchor_assigner = args.anchor_assigner
     anchor_cls_loss = args.anchor_cls_loss
+    loss_weight_box = float(args.loss_weight_box)
+    loss_weight_obj = float(args.loss_weight_obj)
+    loss_weight_cls = float(args.loss_weight_cls)
+    loss_weight_quality = float(args.loss_weight_quality)
+    obj_loss_type = args.obj_loss
+    obj_target = args.obj_target
     simota_topk = int(args.simota_topk)
     last_se = args.last_se
     last_width_scale = float(args.last_width_scale)
@@ -2048,7 +2094,7 @@ def main():
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
-        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, simota_topk
+        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, loss_weight_box, loss_weight_obj, loss_weight_cls, loss_weight_quality, obj_loss_type, obj_target, simota_topk
         nonlocal last_se, last_width_scale, output_stride
         if "cnn_width" in meta:
             ckpt_width = int(meta["cnn_width"])
@@ -2168,6 +2214,18 @@ def main():
             anchor_assigner = meta["anchor_assigner"]
         if "anchor_cls_loss" in meta and meta["anchor_cls_loss"]:
             anchor_cls_loss = meta["anchor_cls_loss"]
+        if "loss_weight_box" in meta:
+            loss_weight_box = float(meta["loss_weight_box"])
+        if "loss_weight_obj" in meta:
+            loss_weight_obj = float(meta["loss_weight_obj"])
+        if "loss_weight_cls" in meta:
+            loss_weight_cls = float(meta["loss_weight_cls"])
+        if "loss_weight_quality" in meta:
+            loss_weight_quality = float(meta["loss_weight_quality"])
+        if "obj_loss_type" in meta and meta["obj_loss_type"]:
+            obj_loss_type = str(meta["obj_loss_type"])
+        if "obj_target" in meta and meta["obj_target"]:
+            obj_target = str(meta["obj_target"])
         if "simota_topk" in meta and meta["simota_topk"]:
             simota_topk = int(meta["simota_topk"])
         if "use_improved_head" in meta:
@@ -2786,6 +2844,12 @@ def main():
             anchor_assigner=anchor_assigner,
             anchor_cls_loss=anchor_cls_loss,
             simota_topk=simota_topk,
+            loss_weight_box=loss_weight_box,
+            loss_weight_obj=loss_weight_obj,
+            loss_weight_cls=loss_weight_cls,
+            loss_weight_quality=loss_weight_quality,
+            obj_loss_type=obj_loss_type,
+            obj_target=obj_target,
         )
         fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
         val_msg = f"val-only: {fmt_val}"
@@ -2844,6 +2908,12 @@ def main():
             anchor_assigner=anchor_assigner,
             anchor_cls_loss=anchor_cls_loss,
             simota_topk=simota_topk,
+            loss_weight_box=loss_weight_box,
+            loss_weight_obj=loss_weight_obj,
+            loss_weight_cls=loss_weight_cls,
+            loss_weight_quality=loss_weight_quality,
+            obj_loss_type=obj_loss_type,
+            obj_target=obj_target,
             qat_freeze_bn=bool(getattr(model, "_qat_freeze_bn", False)),
         )
         fmt_train = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in train_logs.items()}
@@ -2914,6 +2984,12 @@ def main():
                 anchor_assigner=anchor_assigner,
                 anchor_cls_loss=anchor_cls_loss,
                 simota_topk=simota_topk,
+                loss_weight_box=loss_weight_box,
+                loss_weight_obj=loss_weight_obj,
+                loss_weight_cls=loss_weight_cls,
+                loss_weight_quality=loss_weight_quality,
+                obj_loss_type=obj_loss_type,
+                obj_target=obj_target,
             )
             fmt_val = {k: (f"{v:.5f}" if isinstance(v, float) else v) for k, v in metrics.items()}
             val_msg = f"epoch {epoch+1}/{args.epochs} val: {fmt_val}"
@@ -2970,6 +3046,12 @@ def main():
                     "iou_loss": iou_loss_type,
                     "anchor_assigner": anchor_assigner,
                     "anchor_cls_loss": anchor_cls_loss,
+                    "loss_weight_box": loss_weight_box,
+                    "loss_weight_obj": loss_weight_obj,
+                    "loss_weight_cls": loss_weight_cls,
+                    "loss_weight_quality": loss_weight_quality,
+                    "obj_loss_type": obj_loss_type,
+                    "obj_target": obj_target,
                     "simota_topk": simota_topk,
                     "last_se": last_se,
                     "last_width_scale": last_width_scale,
@@ -3070,6 +3152,12 @@ def main():
             "iou_loss": iou_loss_type,
             "anchor_assigner": anchor_assigner,
             "anchor_cls_loss": anchor_cls_loss,
+            "loss_weight_box": loss_weight_box,
+            "loss_weight_obj": loss_weight_obj,
+            "loss_weight_cls": loss_weight_cls,
+            "loss_weight_quality": loss_weight_quality,
+            "obj_loss_type": obj_loss_type,
+            "obj_target": obj_target,
             "simota_topk": simota_topk,
             "last_se": last_se,
             "last_width_scale": last_width_scale,
