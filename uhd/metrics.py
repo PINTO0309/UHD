@@ -89,10 +89,20 @@ def decode_anchor(
         return w, h
 
     device = pred.device
-    b, _, h, w = pred.shape
+    b, pred_ch, h, w = pred.shape
     na = anchors.shape[0]
     extra = 1 if has_quality else 0
-    pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    if cls_logits_override is None:
+        pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
+    else:
+        if pred_ch % na != 0:
+            raise ValueError(f"pred channels ({pred_ch}) not divisible by num_anchors ({na}).")
+        per_anchor = pred_ch // na
+        pred_num_classes = per_anchor - 5 - extra
+        if pred_num_classes <= 0:
+            raise ValueError(f"pred channels ({pred_ch}) imply invalid class count ({pred_num_classes}).")
+        # When overriding class logits, reshape pred using its own class count.
+        pred = pred.view(b, na, 5 + extra + pred_num_classes, h, w).permute(0, 1, 3, 4, 2)
     anchors_dev = anchors.to(device)
     if wh_scale is not None:
         anchors_dev = anchors_dev * wh_scale.to(device)
@@ -106,6 +116,12 @@ def decode_anchor(
     if cls_logits_override is None:
         cls_logits = pred[..., (5 + extra):]
     else:
+        override_ch = cls_logits_override.shape[1]
+        if override_ch % na != 0:
+            raise ValueError(f"cls_logits_override channels ({override_ch}) not divisible by num_anchors ({na}).")
+        override_num_classes = override_ch // na
+        if override_num_classes != num_classes:
+            num_classes = override_num_classes
         cls_logits = cls_logits_override.view(b, na, num_classes, h, w).permute(0, 1, 3, 4, 2)
     cls = cls_logits.sigmoid()
 
