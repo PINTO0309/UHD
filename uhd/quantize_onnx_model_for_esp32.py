@@ -20,13 +20,57 @@ except ImportError:
     from data import YoloDataset # ty: ignore
     from resize import resize_image_numpy # ty: ignore
 
-DEFAULT_ONNX_MODEL_PATH = "ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx"
-DEFAULT_ESPDL_MODEL_PATH = "ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl"
+DEFAULT_ONNX_MODEL_PATH = "ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx"
+DEFAULT_ESPDL_MODEL_PATH = "ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl"
 DEFAULT_TARGET = "esp32s3"
 DEFAULT_NUM_OF_BITS = 8
 DEFAULT_DEVICE = "cpu"
 
 DEVICE = DEFAULT_DEVICE
+
+
+def _parse_img_size(value):
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        h, w = int(value[0]), int(value[1])
+        if h != w:
+            print(f"[WARN] Non-square img_size {h}x{w}; using {h}.")
+        return h
+    s = str(value).strip().lower()
+    if "x" in s:
+        parts = s.split("x")
+        if len(parts) == 2:
+            h, w = int(float(parts[0])), int(float(parts[1]))
+            if h != w:
+                print(f"[WARN] Non-square img_size {h}x{w}; using {h}.")
+            return h
+    try:
+        return int(float(s))
+    except Exception:
+        return None
+
+
+def _load_onnx_metadata(onnx_model_path):
+    info = {"resize_mode": None, "img_size": None, "input_hw": None, "input_channels": None}
+    try:
+        model = onnx.load(onnx_model_path, load_external_data=False)
+    except Exception as exc:
+        print(f"[WARN] Failed to load ONNX metadata: {exc}")
+        return info
+    meta = {m.key.lower(): m.value for m in model.metadata_props}
+    info["resize_mode"] = meta.get("resize_mode")
+    info["img_size"] = _parse_img_size(meta.get("img_size"))
+    if model.graph.input:
+        dims = [d.dim_value for d in model.graph.input[0].type.tensor_type.shape.dim]
+        if len(dims) >= 4:
+            n, c, h, w = dims[:4]
+            info["input_channels"] = int(c) if c not in (None, 0) else None
+            if h not in (None, 0) and w not in (None, 0):
+                info["input_hw"] = (int(h), int(w))
+                if info["img_size"] is None and h == w:
+                    info["img_size"] = int(h)
+    return info
 
 
 def sanitize_onnx_model(onnx_model_path, export_dir=None, batch_size=None, expand_group_conv=False):
@@ -297,14 +341,14 @@ def build_arg_parser():
     )
     parser.add_argument(
         "--img-size",
-        type=int,
-        default=64,
-        help="Square input size used for calibration.",
+        type=str,
+        default=None,
+        help="Square input size used for calibration (e.g., 64 or 64x64). Defaults to ONNX metadata when available.",
     )
     parser.add_argument(
         "--resize-mode",
-        default="opencv_inter_nearest_yuv422",
-        help="Resize mode for calibration data.",
+        default=None,
+        help="Resize mode for calibration data (defaults to ONNX metadata when available).",
     )
     parser.add_argument(
         "--class-ids",
@@ -392,6 +436,11 @@ def main():
     target = args.target
     num_of_bits = args.num_of_bits
     export_dir = args.export_anchors_wh_scale_dir
+    meta_info = _load_onnx_metadata(onnx_model_path)
+    img_size = _parse_img_size(args.img_size) if args.img_size is not None else meta_info.get("img_size")
+    if img_size is None:
+        img_size = 64
+    resize_mode = args.resize_mode or meta_info.get("resize_mode") or "opencv_inter_nearest"
     if export_dir is None:
         export_dir = os.path.dirname(espdl_model_path) or "."
     onnx_model_path = sanitize_onnx_model(
@@ -407,8 +456,8 @@ def main():
             list_path=args.list_path,
             split=args.split,
             val_split=args.val_split,
-            img_size=(args.img_size, args.img_size),
-            resize_mode=args.resize_mode,
+            img_size=(img_size, img_size),
+            resize_mode=resize_mode,
             augment=False,
             class_ids=class_ids,
         )
@@ -416,8 +465,8 @@ def main():
         dataset = ImageCalibrationDataset(
             image_dir=args.image_dir,
             list_path=args.list_path,
-            img_size=(args.img_size, args.img_size),
-            resize_mode=args.resize_mode,
+            img_size=(img_size, img_size),
+            resize_mode=resize_mode,
         )
     # The dataloader shuffle setting must be set to False.
     # Because the dataset is traversed multiple times when calculating the quantization error,
@@ -425,6 +474,12 @@ def main():
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
     sample_image, _ = dataset[0]
     input_shape = [1, *sample_image.shape]
+    if meta_info.get("input_channels") is not None and meta_info["input_channels"] != int(sample_image.shape[0]):
+        print(
+            f"[WARN] Calibration channel count {int(sample_image.shape[0])} "
+            f"does not match ONNX input channels {meta_info['input_channels']} "
+            f"(resize_mode={resize_mode})."
+        )
     calib_steps = min(args.calib_steps, len(dataloader))
 
     setting = QuantizationSettingFactory.espdl_setting()

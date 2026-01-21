@@ -790,10 +790,26 @@ def main():
             "decode_bbox": "cx = (sigmoid(tx)+gx)/w, cy = (sigmoid(ty)+gy)/h, bw = anchor_w*softplus(tw)*wh_scale, bh = anchor_h*softplus(th)*wh_scale; boxes = (cx±bw/2, cy±bh/2)",
             "quality_power": str(getattr(export_module, "quality_power", getattr(model, "quality_power", 1.0))),
             "img_size": meta.get("img_size", "") if isinstance(meta, dict) else "",
-            "score_mode": meta.get("score_mode", "") if isinstance(meta, dict) else "",
-            "multi_label_mode": meta.get("multi_label_mode", "none") if isinstance(meta, dict) else "none",
-            "multi_label_det_classes": meta.get("multi_label_det_classes", "") if isinstance(meta, dict) else "",
-            "multi_label_attr_classes": meta.get("multi_label_attr_classes", "") if isinstance(meta, dict) else "",
+            "score_mode": (
+                meta.get("score_mode")
+                if isinstance(meta, dict) and meta.get("score_mode")
+                else inferred.get("score_mode", "") if isinstance(inferred, dict) else ""
+            ),
+            "multi_label_mode": (
+                meta.get("multi_label_mode")
+                if isinstance(meta, dict) and meta.get("multi_label_mode")
+                else inferred.get("multi_label_mode", "none") if isinstance(inferred, dict) else "none"
+            ),
+            "multi_label_det_classes": (
+                meta.get("multi_label_det_classes")
+                if isinstance(meta, dict) and meta.get("multi_label_det_classes")
+                else inferred.get("det_class_indices", "") if isinstance(inferred, dict) else ""
+            ),
+            "multi_label_attr_classes": (
+                meta.get("multi_label_attr_classes")
+                if isinstance(meta, dict) and meta.get("multi_label_attr_classes")
+                else inferred.get("attr_class_indices", "") if isinstance(inferred, dict) else ""
+            ),
             "multi_label_attr_weight": meta.get("multi_label_attr_weight", "") if isinstance(meta, dict) else "",
         },
     )
