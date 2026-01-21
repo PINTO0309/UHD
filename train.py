@@ -696,8 +696,8 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
                 for f in files:
                     os.remove(os.path.join(root, f))
                 os.rmdir(root)
-    except OSError:
-        pass
+        except OSError:
+            pass
 
 
 def _default_split_list_paths(image_dir: str) -> tuple[str, str]:
