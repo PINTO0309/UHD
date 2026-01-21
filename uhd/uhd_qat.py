@@ -634,6 +634,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--onnx-model", required=True, help="Path to raw ONNX model (no postprocess).")
     parser.add_argument("--image-dir", required=True, help="Directory with images and YOLO txt labels.")
     parser.add_argument("--list-path", default=None, help="Optional list file for dataset.")
+    parser.add_argument(
+        "--train-list",
+        default=None,
+        help="Optional train list file (one image path per line). Requires --val-list and ignores --val-split.",
+    )
+    parser.add_argument(
+        "--val-list",
+        default=None,
+        help="Optional validation list file (one image path per line). Requires --train-list and ignores --val-split.",
+    )
     parser.add_argument("--img-size", default="64x64", help="Input size as HxW (e.g., 64x64).")
     parser.add_argument(
         "--resize-mode",
@@ -721,39 +731,31 @@ def main() -> None:
     class_ids = parse_class_ids(args.class_ids)
     img_size = parse_img_size(args.img_size)
 
-    base_dataset = YoloDataset(
-        image_dir=args.image_dir,
-        list_path=args.list_path,
-        split="all",
-        val_split=0.0,
-        img_size=img_size,
-        resize_mode=args.resize_mode,
-        augment=False,
-        class_ids=class_ids,
-    )
-    items = list(base_dataset.items)
-    rng = random.Random(int(args.seed))
-    rng.shuffle(items)
-    split_idx = int(len(items) * (1.0 - float(args.val_split))) if args.val_split else len(items)
-    train_items = items[:split_idx]
-    val_items = items[split_idx:] if args.val_split and args.val_split > 0 else []
-    if args.val_split and args.val_split > 0 and not val_items:
-        raise ValueError("Validation split produced no samples; adjust --val-split.")
-
-    train_dataset = YoloDataset(
-        image_dir=args.image_dir,
-        list_path=args.list_path,
-        split="all",
-        val_split=0.0,
-        img_size=img_size,
-        resize_mode=args.resize_mode,
-        augment=False,
-        class_ids=class_ids,
-        items=train_items,
-    )
-    val_dataset = None
-    if val_items:
+    if args.train_list or args.val_list:
+        if not (args.train_list and args.val_list):
+            raise ValueError("--train-list and --val-list must be provided together.")
+        train_dataset = YoloDataset(
+            image_dir=args.image_dir,
+            list_path=args.train_list,
+            split="all",
+            val_split=0.0,
+            img_size=img_size,
+            resize_mode=args.resize_mode,
+            augment=False,
+            class_ids=class_ids,
+        )
         val_dataset = YoloDataset(
+            image_dir=args.image_dir,
+            list_path=args.val_list,
+            split="all",
+            val_split=0.0,
+            img_size=img_size,
+            resize_mode=args.resize_mode,
+            augment=False,
+            class_ids=class_ids,
+        )
+    else:
+        base_dataset = YoloDataset(
             image_dir=args.image_dir,
             list_path=args.list_path,
             split="all",
@@ -762,8 +764,40 @@ def main() -> None:
             resize_mode=args.resize_mode,
             augment=False,
             class_ids=class_ids,
-            items=val_items,
         )
+        items = list(base_dataset.items)
+        rng = random.Random(int(args.seed))
+        rng.shuffle(items)
+        split_idx = int(len(items) * (1.0 - float(args.val_split))) if args.val_split else len(items)
+        train_items = items[:split_idx]
+        val_items = items[split_idx:] if args.val_split and args.val_split > 0 else []
+        if args.val_split and args.val_split > 0 and not val_items:
+            raise ValueError("Validation split produced no samples; adjust --val-split.")
+
+        train_dataset = YoloDataset(
+            image_dir=args.image_dir,
+            list_path=args.list_path,
+            split="all",
+            val_split=0.0,
+            img_size=img_size,
+            resize_mode=args.resize_mode,
+            augment=False,
+            class_ids=class_ids,
+            items=train_items,
+        )
+        val_dataset = None
+        if val_items:
+            val_dataset = YoloDataset(
+                image_dir=args.image_dir,
+                list_path=args.list_path,
+                split="all",
+                val_split=0.0,
+                img_size=img_size,
+                resize_mode=args.resize_mode,
+                augment=False,
+                class_ids=class_ids,
+                items=val_items,
+            )
 
     g = torch.Generator()
     g.manual_seed(int(args.seed))

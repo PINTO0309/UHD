@@ -1810,6 +1810,8 @@ overlayed on the detection image.
 | --- | --- | --- |
 | `--arch` | Model architecture: `cnn`, `transformer`, or anchor-only `ultratinyod`. | `cnn` |
 | `--image-dir` | Directory containing images and YOLO txt labels. | `data/wholebody34/obj_train_data` |
+| `--train-list` | Optional train list file (one image path per line); requires `--val-list` and ignores split ratios. | `None` |
+| `--val-list` | Optional validation list file (one image path per line); requires `--train-list` and ignores split ratios. | `None` |
 | `--train-split` | Fraction of data used for training. | `0.8` |
 | `--val-split` | Fraction of data used for validation. | `0.2` |
 | `--img-size` | Input size `HxW` (e.g., `64x64`). | `64x64` |
@@ -1883,6 +1885,9 @@ overlayed on the detection image.
 | `--highbit-w-bits` | High-bit weight bits. | `8` |
 | `--highbit-a-bits` | High-bit activation bits. | `8` |
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
+
+Notes:
+- When `--train-list`/`--val-list` are not provided, the split from `--train-split`/`--val-split` is written to `train.txt` and `val.txt` in the parent directory of `--image-dir` (default: `data/wholebody34`).
 | `--use-ema` | Enable EMA of model weights for evaluation/checkpointing. | `False` |
 | `--ema-decay` | EMA decay factor (ignored if EMA disabled). | `0.9998` |
 | `--coco-eval` | Run COCO-style evaluation. | `False` |

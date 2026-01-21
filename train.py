@@ -124,6 +124,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Ultra-lightweight detection trainer (CNN/Transformer).")
     parser.add_argument("--arch", choices=["cnn", "transformer", "ultratinyod"], default="cnn")
     parser.add_argument("--image-dir", default="data/wholebody34/obj_train_data", help="Directory with images and YOLO txt labels.")
+    parser.add_argument(
+        "--train-list",
+        default=None,
+        help="Optional train list file (one image path per line). Requires --val-list and ignores split ratios.",
+    )
+    parser.add_argument(
+        "--val-list",
+        default=None,
+        help="Optional validation list file (one image path per line). Requires --train-list and ignores split ratios.",
+    )
     parser.add_argument("--train-split", type=float, default=0.8, help="Fraction of data for training.")
     parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of data for validation.")
     parser.add_argument(
@@ -686,12 +696,63 @@ def _prune_epoch_dirs(run_dir: str, keep: int = 10):
                 for f in files:
                     os.remove(os.path.join(root, f))
                 os.rmdir(root)
-        except OSError:
-            pass
+    except OSError:
+        pass
+
+
+def _default_split_list_paths(image_dir: str) -> tuple[str, str]:
+    base_dir = os.path.dirname(os.path.normpath(image_dir))
+    return os.path.join(base_dir, "train.txt"), os.path.join(base_dir, "val.txt")
+
+
+def _write_split_list(path: str, items: List[Tuple[str, str]]) -> None:
+    list_dir = os.path.dirname(path)
+    if list_dir:
+        os.makedirs(list_dir, exist_ok=True)
+    with open(path, "w") as f:
+        for img_path, _ in items:
+            f.write(f"{img_path}\n")
 
 
 def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     img_h, img_w = parse_img_size(args.img_size)
+    if args.train_list or args.val_list:
+        if not (args.train_list and args.val_list):
+            raise ValueError("--train-list and --val-list must be provided together.")
+        train_ds = YoloDataset(
+            image_dir=args.image_dir,
+            list_path=args.train_list,
+            split="all",
+            val_split=0.0,
+            seed=args.seed,
+            img_size=(img_h, img_w),
+            resize_mode=resize_mode,
+            augment=True,
+            class_ids=class_ids,
+            augment_cfg=aug_cfg,
+        )
+        val_ds = YoloDataset(
+            image_dir=args.image_dir,
+            list_path=args.val_list,
+            split="all",
+            val_split=0.0,
+            seed=args.seed,
+            img_size=(img_h, img_w),
+            resize_mode=resize_mode,
+            augment=False,
+            class_ids=class_ids,
+            augment_cfg=aug_cfg,
+        )
+        # When running val-only, optionally cap validation set size for quick checks.
+        if getattr(args, "val_only", False) and getattr(args, "val_count", None):
+            val_cap = max(0, int(args.val_count))
+            if val_cap > 0:
+                val_ds.items = val_ds.items[:val_cap]
+                if not val_ds.items:
+                    raise ValueError("val-count reduced validation set to zero samples.")
+                print(f"val-only: restricting validation set to {len(val_ds.items)} samples (val-count={val_cap}).")
+        return train_ds, val_ds
+
     base = YoloDataset(
         image_dir=args.image_dir,
         list_path=None,
@@ -716,6 +777,11 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     val_items = items[n_train : n_train + n_val]
     if not val_items:
         raise ValueError("Validation split produced no samples; adjust train-split/val-split.")
+
+    train_list_path, val_list_path = _default_split_list_paths(args.image_dir)
+    _write_split_list(train_list_path, train_items)
+    _write_split_list(val_list_path, val_items)
+
     # When running val-only, optionally cap validation set size for quick checks.
     if getattr(args, "val_only", False) and getattr(args, "val_count", None):
         val_cap = max(0, int(args.val_count))
