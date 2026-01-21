@@ -365,6 +365,22 @@ wheels = [
 ]
 
 [[package]]
+name = "faster-coco-eval"
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/ce/8f754b094e38e3d4f7edccbe186aeb7bc0d1ecf3324aa9c796432e0a90e5/faster_coco_eval-1.7.1.tar.gz", hash = "sha256:23d470688ffdb3956ddf23bb22f401d8eb765d51df8afc156bf0d9cf9e58d8ea", size = 94267, upload-time = "2026-01-07T23:46:39.564Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/6d/d85b9e51240598cbb2588c1e996407754c26eadaf00464190bb38b444bb1/faster_coco_eval-1.7.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:4aacb56d00f774e0c20f33d464309d2dbc25d8f52c5c2cd444257bbe6bc10da1", size = 355928, upload-time = "2026-01-07T23:46:07.441Z" },
+    { url = "https://files.pythonhosted.org/packages/13/bf/ee5e460d8090d4d02c6c235dae636ec524f9b73bcabbd359feaf5f615654/faster_coco_eval-1.7.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5773f681481f49c34fff805210451e09cf04c29d7d31b5432a97eb5ec2644314", size = 580810, upload-time = "2026-01-07T23:46:08.782Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/40/8cd31d191b74dd1ecd08210753efcb883cb45c19b30fad9468e0857cd184/faster_coco_eval-1.7.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:36e0e083729261f5035f8c6687a239e88f6abdc303da25d336f6dbd6c43495f7", size = 579166, upload-time = "2026-01-07T23:46:10.177Z" },
+    { url = "https://files.pythonhosted.org/packages/53/3e/e2f9c5e13643435682a811cf9c4b640945b8c81e5b667723cb5ed9f6df56/faster_coco_eval-1.7.1-cp311-cp311-win_amd64.whl", hash = "sha256:ee8717a03cbd6d4ead929b0fb8d3653a9b5e2713c36f1a74b1732aa907226684", size = 319254, upload-time = "2026-01-07T23:46:11.69Z" },
+    { url = "https://files.pythonhosted.org/packages/62/9d/2fafcf0c742243b7cca1890aea886d7b0a45f9ed41ca2eda9f017f84f698/faster_coco_eval-1.7.1-cp311-cp311-win_arm64.whl", hash = "sha256:8f7786e99804132326e62bbd51e87a66400e2de867d17560e819626f56b0f205", size = 317077, upload-time = "2026-01-07T23:46:14.293Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1080,25 +1096,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pycocotools"
-version = "2.0.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "matplotlib" },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/1a/cdfce175d663568215b3a6b6170ad2a526932cc1021dffabda56a5c3f189/pycocotools-2.0.8.tar.gz", hash = "sha256:8f2bcedb786ba26c367a3680f9c4eb5b2ad9dccb2b34eaeb205e0a021e1dfb8d", size = 24993, upload-time = "2024-06-17T04:26:51.711Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/56/9eedccfd1cfdaf6553d527bed0b2b5572550567a5786a8beb098027a3e5e/pycocotools-2.0.8-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:92bf788e6936fc52b57ccaaa78ecdaeac81872eebbfc45b6fe16ae18b85709bd", size = 162868, upload-time = "2024-06-17T04:26:25.412Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/9c/09cd808743338db170915deb35fa020b792d583238afe55f27c011f91c3c/pycocotools-2.0.8-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6a07f57f991e379959c0f4a1b9ea35d875876433b7f45c6d8fe6b718e58834bc", size = 443318, upload-time = "2024-06-17T04:26:26.452Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/d4/7279d072c0255d07c541326f6058effb1b08190f49695bf2c22aae666878/pycocotools-2.0.8-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5968a1e5421719af9eb7ccee4c540bfb18b1fc95d30d9a48571d0aaeb159a1ae", size = 458661, upload-time = "2024-06-17T04:26:27.917Z" },
-    { url = "https://files.pythonhosted.org/packages/33/b7/886f5ceb83cfefe52d14b4df7da034deecddf714b4ff2c75d98ee35469cd/pycocotools-2.0.8-cp311-cp311-musllinux_1_1_aarch64.whl", hash = "sha256:59eb7b1839f269262456347b6fe2bb88a8be56b32d87fab946483746e1f18a07", size = 438662, upload-time = "2024-06-17T04:26:29.712Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/0f/890e1e5d6c9f773fb5f5903ca8f75425b1c0cec8f71c1322f481f26a0138/pycocotools-2.0.8-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:05480f731fcd7c5d05389081f84198f3b8117f4560227185bc462cccb5c79181", size = 456444, upload-time = "2024-06-17T04:26:31.007Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/f5/dfa78dc72e47dfe1ada7b37fedcb338454750470358a6dfcfdfda35fa337/pycocotools-2.0.8-cp311-cp311-win_amd64.whl", hash = "sha256:e680e27e58b840c105fa09a3bb1d91706038c5c8d7b7bf09c2e5ecbd1b05ad7f", size = 85304, upload-time = "2024-06-17T04:26:32.365Z" },
-    { url = "https://files.pythonhosted.org/packages/43/2a/7a461713fd3ff474bd12420b8e402c248b7821f295031f2ac632c0949740/pycocotools-2.0.8-cp311-cp311-win_arm64.whl", hash = "sha256:16c5a1d2c8726149b5a0e6fe95095ffc172d4012ece5dee9b5beeef708fc0284", size = 71417, upload-time = "2024-06-17T04:26:33.271Z" },
-]
-
-[[package]]
 name = "pycparser"
 version = "2.23"
 source = { registry = "https://pypi.org/simple" }
@@ -1407,6 +1404,7 @@ dependencies = [
     { name = "bbalg" },
     { name = "datasets" },
     { name = "esp-ppq" },
+    { name = "faster-coco-eval" },
     { name = "huggingface-hub" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -1418,7 +1416,6 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "pyarrow" },
-    { name = "pycocotools" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "sit4onnx" },
@@ -1434,6 +1431,7 @@ requires-dist = [
     { name = "bbalg", specifier = "==1.0.2" },
     { name = "datasets", specifier = "==4.3.0" },
     { name = "esp-ppq", specifier = "==1.2.3" },
+    { name = "faster-coco-eval", specifier = "==1.7.1" },
     { name = "huggingface-hub", specifier = "==1.0.1" },
     { name = "matplotlib", specifier = "==3.10.7" },
     { name = "numpy", specifier = "==1.26.4" },
@@ -1445,7 +1443,6 @@ requires-dist = [
     { name = "pandas", specifier = "==2.3.3" },
     { name = "pillow", specifier = "==12.0.0" },
     { name = "pyarrow", specifier = "==22.0.0" },
-    { name = "pycocotools", specifier = "==2.0.8" },
     { name = "pyyaml", specifier = "==6.0.2" },
     { name = "requests", specifier = "==2.32.5" },
     { name = "sit4onnx", specifier = "==1.0.10" },
