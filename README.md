@@ -1835,6 +1835,7 @@ overlayed on the detection image.
 | `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
 | `--use-iou-aware-head` | UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers. | `False` |
 | `--quality-power` | Exponent for quality score when using IoU-aware head scoring. | `1.0` |
+| `--score-mode` | Score composition mode for anchor head (`obj_quality_cls`, `quality_cls`, `obj_cls`). | `None` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
@@ -1867,6 +1868,20 @@ overlayed on the detection image.
 | `--conf-thresh` | Confidence threshold for decoding. | `0.3` |
 | `--topk` | Top-K for CNN decoding. | `50` |
 | `--use-amp` | Enable automatic mixed precision. | `False` |
+| `--qat` | Enable QAT via `torch.ao.quantization`. | `False` |
+| `--qat-backend` | Quantization backend for QAT (`fbgemm` or `qnnpack`). | `fbgemm` |
+| `--qat-fuse` | Fuse Conv+BN(+ReLU) before QAT. | `False` |
+| `--qat-disable-observer-epoch` | Epoch (1-based) to disable observers (`0` to skip). | `2` |
+| `--qat-freeze-bn-epoch` | Epoch (1-based) to freeze BN stats (`0` to skip). | `3` |
+| `--w-bits` | Fake-quant bits for weights (UltraTinyOD only, `0` disables). | `0` |
+| `--a-bits` | Fake-quant bits for activations (UltraTinyOD only, `0` disables). | `0` |
+| `--quant-target` | Quantization target for UltraTinyOD (`backbone`, `head`, `both`, `none`). | `both` |
+| `--lowbit-quant-target` | Low-bit quantization target (defaults to `--quant-target`). | `None` |
+| `--lowbit-w-bits` | Low-bit weight bits (defaults to `--w-bits`). | `None` |
+| `--lowbit-a-bits` | Low-bit activation bits (defaults to `--a-bits`). | `None` |
+| `--highbit-quant-target` | High-bit quantization target (`backbone`, `head`, `both`, `none`). | `none` |
+| `--highbit-w-bits` | High-bit weight bits. | `8` |
+| `--highbit-a-bits` | High-bit activation bits. | `8` |
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
 | `--use-ema` | Enable EMA of model weights for evaluation/checkpointing. | `False` |
 | `--ema-decay` | EMA decay factor (ignored if EMA disabled). | `0.9998` |
@@ -1888,6 +1903,7 @@ overlayed on the detection image.
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--utod-residual` | Enable residual skips inside the UltraTinyOD backbone. | `False` |
 | `--utod-head-ese` | UltraTinyOD head: apply lightweight eSE on shared features. | `False` |
+| `--utod-sppf-scale` | UltraTinyOD SPPF-min: per-branch scale matching before concat (`none`, `bn`, `conv`). | `none` |
 | `--utod-context-rfb` | UltraTinyOD head: add a receptive-field block (dilated + wide depthwise) before prediction layers. | `False` |
 | `--utod-context-dilation` | Dilation used in UltraTinyOD receptive-field block (only when `--utod-context-rfb`). | `2` |
 | `--utod-large-obj-branch` | UltraTinyOD head: add a downsampled large-object refinement branch (no FPN). | `False` |
@@ -1901,6 +1917,16 @@ overlayed on the detection image.
 | `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
 | `--anchor-assigner` | Anchor assigner strategy (`legacy`, `simota`). | `legacy` |
 | `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`, `ce`). | `bce` |
+| `--loss-weight-box` | Loss weight for anchor box regression. | `1.0` |
+| `--loss-weight-obj` | Loss weight for anchor objectness. | `1.0` |
+| `--loss-weight-cls` | Loss weight for anchor classification. | `1.0` |
+| `--loss-weight-quality` | Loss weight for anchor quality head. | `1.0` |
+| `--obj-loss` | Objectness loss type for anchor head (`bce`, `smoothl1`). | `bce` |
+| `--obj-target` | Objectness target for anchor head (`auto`, `binary`, `iou`). | `auto` |
+| `--multi-label-mode` | Multi-label mode for anchor heads (`none`, `single`, `separate`). | `none` |
+| `--multi-label-det-classes` | Comma-separated class ids for detection head when `--multi-label-mode separate`. | `None` |
+| `--multi-label-attr-classes` | Comma-separated class ids for attribute head when `--multi-label-mode separate`. | `None` |
+| `--multi-label-attr-weight` | Loss weight for attribute head when `--multi-label-mode separate`. | `1.0` |
 | `--simota-topk` | Top-K IoUs for dynamic-k in SimOTA. | `10` |
 | `--last-se` | Apply SE/eSE only on the last CNN block. | `none` |
 | `--use-batchnorm` | Enable BatchNorm layers during training/export. | `False` |
