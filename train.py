@@ -17,6 +17,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from faster_coco_eval import COCO, COCOeval_faster
 
 from uhd.data import YoloDataset, detection_collate
 from uhd.losses import anchor_loss, anchor_attr_loss, centernet_loss, detr_loss
@@ -895,16 +896,6 @@ def _infer_cnn_feat_channels(model: torch.nn.Module, use_anchor: bool, num_class
 
 
 def run_coco_eval(images, annos, dets, class_ids, per_class=False):
-    try:
-        try:
-            from faster_coco_eval.api import COCO, COCOeval  # type: ignore
-        except ImportError:
-            from pycocotools.coco import COCO  # type: ignore
-            from pycocotools.cocoeval import COCOeval  # type: ignore
-    except Exception as e:
-        print(f"COCO eval skipped: {e}")
-        return {}
-
     coco_gt = COCO()
     coco_gt.dataset = {
         "images": images,
@@ -913,7 +904,7 @@ def run_coco_eval(images, annos, dets, class_ids, per_class=False):
     }
     coco_gt.createIndex()
     coco_dt = coco_gt.loadRes(dets) if dets else coco_gt.loadRes([])
-    coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
+    coco_eval = COCOeval_faster(coco_gt, coco_dt, iouType="bbox")
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
