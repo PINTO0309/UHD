@@ -2054,7 +2054,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=64
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w64_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
@@ -2082,7 +2082,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=96
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w96_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
@@ -2110,7 +2110,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=128
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w128_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
@@ -2138,7 +2138,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=160
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w160_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
@@ -2166,7 +2166,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=192
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w192_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
@@ -2194,7 +2194,7 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
   SIZE=64x64
   ANCHOR=8
   CNNWIDTH=256
-  RESIZEMODE=opencv_inter_nearest_y
+  RESIZEMODE=opencv_inter_nearest
   CKPT=runs/ultratinyod_res_anc8_w256_loese_64x64_lr0.005_impaug/best_utod_0001_map_0.00000.pt
   uv run python export_onnx.py \
   --checkpoint ${CKPT} \
