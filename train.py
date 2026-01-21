@@ -123,7 +123,11 @@ def step_qat_schedule(model: torch.nn.Module, epoch: int, disable_obs_epoch: int
 def parse_args():
     parser = argparse.ArgumentParser(description="Ultra-lightweight detection trainer (CNN/Transformer).")
     parser.add_argument("--arch", choices=["cnn", "transformer", "ultratinyod"], default="cnn")
-    parser.add_argument("--image-dir", default="data/wholebody34/obj_train_data", help="Directory with images and YOLO txt labels.")
+    parser.add_argument(
+        "--image-dir",
+        default=None,
+        help="Directory with images and YOLO txt labels (required when not using --train-list/--val-list).",
+    )
     parser.add_argument(
         "--train-list",
         default=None,
@@ -719,8 +723,9 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
     if args.train_list or args.val_list:
         if not (args.train_list and args.val_list):
             raise ValueError("--train-list and --val-list must be provided together.")
+        image_dir = args.image_dir or ""
         train_ds = YoloDataset(
-            image_dir=args.image_dir,
+            image_dir=image_dir,
             list_path=args.train_list,
             split="all",
             val_split=0.0,
@@ -732,7 +737,7 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
             augment_cfg=aug_cfg,
         )
         val_ds = YoloDataset(
-            image_dir=args.image_dir,
+            image_dir=image_dir,
             list_path=args.val_list,
             split="all",
             val_split=0.0,
@@ -753,6 +758,8 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
                 print(f"val-only: restricting validation set to {len(val_ds.items)} samples (val-count={val_cap}).")
         return train_ds, val_ds
 
+    if not args.image_dir:
+        raise ValueError("--image-dir is required when not using --train-list/--val-list.")
     base = YoloDataset(
         image_dir=args.image_dir,
         list_path=None,
