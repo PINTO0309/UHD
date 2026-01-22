@@ -2299,7 +2299,8 @@ def main():
         if "quality_power" in meta:
             quality_power = float(meta["quality_power"])
         if "score_mode" in meta and meta["score_mode"] is not None:
-            score_mode = str(meta["score_mode"])
+            if not (args.val_only and args.score_mode is not None):
+                score_mode = str(meta["score_mode"])
         if "utod_head_ese" in meta:
             utod_head_ese = bool(meta["utod_head_ese"])
         if "last_se" in meta and meta["last_se"]:

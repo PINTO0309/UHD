@@ -1837,7 +1837,7 @@ overlayed on the detection image.
 | `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
 | `--use-iou-aware-head` | UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers. | `False` |
 | `--quality-power` | Exponent for quality score when using IoU-aware head scoring. | `1.0` |
-| `--score-mode` | Score composition mode for anchor head (`obj_quality_cls`, `quality_cls`, `obj_cls`). | `None` |
+| `--score-mode` | Score composition mode for anchor head (`obj_quality_cls`, `quality_cls`, `obj_cls`). Normally overridden by checkpoint meta; with `--val-only` and explicit `--score-mode`, CLI takes priority. | `None` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
