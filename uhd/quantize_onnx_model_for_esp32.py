@@ -34,19 +34,16 @@ def _parse_img_size(value):
         return None
     if isinstance(value, (list, tuple)) and len(value) == 2:
         h, w = int(value[0]), int(value[1])
-        if h != w:
-            print(f"[WARN] Non-square img_size {h}x{w}; using {h}.")
-        return h
+        return (h, w)
     s = str(value).strip().lower()
     if "x" in s:
         parts = s.split("x")
         if len(parts) == 2:
             h, w = int(float(parts[0])), int(float(parts[1]))
-            if h != w:
-                print(f"[WARN] Non-square img_size {h}x{w}; using {h}.")
-            return h
+            return (h, w)
     try:
-        return int(float(s))
+        size = int(float(s))
+        return (size, size)
     except Exception:
         return None
 
@@ -68,8 +65,8 @@ def _load_onnx_metadata(onnx_model_path):
             info["input_channels"] = int(c) if c not in (None, 0) else None
             if h not in (None, 0) and w not in (None, 0):
                 info["input_hw"] = (int(h), int(w))
-                if info["img_size"] is None and h == w:
-                    info["img_size"] = int(h)
+                if info["img_size"] is None:
+                    info["img_size"] = (int(h), int(w))
     return info
 
 
@@ -295,7 +292,7 @@ class ImageCalibrationDataset(Dataset):
             raise ValueError(f"Failed to read image: {img_path}")
         im_rgb = cv2.cvtColor(im_bgr, cv2.COLOR_BGR2RGB)
         arr = im_rgb.astype(np.float32) / 255.0
-        arr_resized = resize_image_numpy(arr, size=(self.img_w, self.img_h), mode=self.resize_mode)
+        arr_resized = resize_image_numpy(arr, size=(self.img_h, self.img_w), mode=self.resize_mode)
         arr_resized = np.ascontiguousarray(arr_resized)
         img_tensor = torch.from_numpy(arr_resized).permute(2, 0, 1)
         return img_tensor, {}
@@ -343,7 +340,7 @@ def build_arg_parser():
         "--img-size",
         type=str,
         default=None,
-        help="Square input size used for calibration (e.g., 64 or 64x64). Defaults to ONNX metadata when available.",
+        help="Input size used for calibration (e.g., 64 or 64x80). Defaults to ONNX metadata when available.",
     )
     parser.add_argument(
         "--resize-mode",
@@ -439,7 +436,7 @@ def main():
     meta_info = _load_onnx_metadata(onnx_model_path)
     img_size = _parse_img_size(args.img_size) if args.img_size is not None else meta_info.get("img_size")
     if img_size is None:
-        img_size = 64
+        img_size = (64, 64)
     resize_mode = args.resize_mode or meta_info.get("resize_mode") or "opencv_inter_nearest"
     if export_dir is None:
         export_dir = os.path.dirname(espdl_model_path) or "."
@@ -456,7 +453,7 @@ def main():
             list_path=args.list_path,
             split=args.split,
             val_split=args.val_split,
-            img_size=(img_size, img_size),
+            img_size=img_size,
             resize_mode=resize_mode,
             augment=False,
             class_ids=class_ids,
@@ -465,7 +462,7 @@ def main():
         dataset = ImageCalibrationDataset(
             image_dir=args.image_dir,
             list_path=args.list_path,
-            img_size=(img_size, img_size),
+            img_size=img_size,
             resize_mode=resize_mode,
         )
     # The dataloader shuffle setting must be set to False.
