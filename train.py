@@ -412,6 +412,7 @@ def parse_args():
     parser.add_argument("--loss-weight-obj", type=float, default=1.0, help="Loss weight for anchor objectness.")
     parser.add_argument("--loss-weight-cls", type=float, default=1.0, help="Loss weight for anchor classification.")
     parser.add_argument("--loss-weight-quality", type=float, default=1.0, help="Loss weight for anchor quality head.")
+    parser.add_argument("--disable-cls", action="store_true", help="Disable cls branch entirely (classless anchor head).")
     parser.add_argument(
         "--obj-loss",
         choices=["bce", "smoothl1"],
@@ -453,7 +454,7 @@ def parse_args():
     parser.add_argument("--quality-power", type=float, default=1.0, help="Exponent for quality score when using IoU-aware head scoring.")
     parser.add_argument(
         "--score-mode",
-        choices=["obj_quality_cls", "quality_cls", "obj_cls"],
+        choices=["obj_quality_cls", "quality_cls", "obj_cls", "obj_quality", "quality", "obj"],
         default=None,
         help="Score composition mode for anchor head (overrides defaults when set).",
     )
@@ -1260,7 +1261,7 @@ def train_one_epoch(
                                     t_obj_logit = _interp_anchor_scores(t_obj_logit, (sh, sw))
                                     if t_quality_logit is not None:
                                         t_quality_logit = _interp_anchor_scores(t_quality_logit, (sh, sw))
-                                if distill_kl > 0:
+                                if distill_kl > 0 and num_classes > 0:
                                     temp = max(distill_temperature, 1e-6)
                                     if num_classes == 1:
                                         with torch.amp.autocast(device_type=device.type, enabled=False):
@@ -2103,6 +2104,7 @@ def main():
     loss_weight_obj = float(args.loss_weight_obj)
     loss_weight_cls = float(args.loss_weight_cls)
     loss_weight_quality = float(args.loss_weight_quality)
+    disable_cls = bool(args.disable_cls)
     obj_loss_type = args.obj_loss
     obj_target = args.obj_target
     simota_topk = int(args.simota_topk)
@@ -2154,7 +2156,7 @@ def main():
     img_size_str = f"{img_h}x{img_w}"
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, score_mode, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, score_mode, disable_cls, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
@@ -2301,6 +2303,8 @@ def main():
         if "score_mode" in meta and meta["score_mode"] is not None:
             if not (args.val_only and args.score_mode is not None):
                 score_mode = str(meta["score_mode"])
+        if "disable_cls" in meta:
+            disable_cls = bool(meta["disable_cls"])
         if "utod_head_ese" in meta:
             utod_head_ese = bool(meta["utod_head_ese"])
         if "last_se" in meta and meta["last_se"]:
@@ -2416,6 +2420,35 @@ def main():
     if args.arch == "ultratinyod":
         use_anchor = True
     anchor_head = bool(use_anchor or args.arch == "ultratinyod")
+    if disable_cls:
+        if not anchor_head:
+            raise ValueError("--disable-cls is only supported with anchor heads (cnn+--use-anchor or ultratinyod).")
+        if num_classes != 1:
+            raise ValueError("--disable-cls assumes a single-class dataset; set --classes to one class or disable this flag.")
+        if multi_label_mode != "none":
+            raise ValueError("--disable-cls is incompatible with multi-label modes.")
+        if attr_num_classes > 0:
+            raise ValueError("--disable-cls is incompatible with attribute heads.")
+        det_num_classes = 0
+        det_class_indices = [0]
+        det_class_map = {}
+        attr_class_indices = []
+        attr_class_map = {}
+        if score_mode is None:
+            if use_iou_aware_head:
+                score_mode = "quality"
+            elif use_improved_head:
+                score_mode = "obj_quality"
+            else:
+                score_mode = "obj"
+        else:
+            score_mode_l = str(score_mode).lower()
+            if score_mode_l in ("obj_quality_cls", "obj_quality"):
+                score_mode = "obj_quality"
+            elif score_mode_l in ("quality_cls", "quality"):
+                score_mode = "quality"
+            elif score_mode_l in ("obj_cls", "obj", "cls"):
+                score_mode = "obj"
     if arch_cnn_like and distill_feat > 0 and not (teacher_backbone or teacher_ckpt):
         print("distill-feat requested but no teacher backbone or teacher checkpoint provided; disabling feature distillation.")
         distill_feat = 0.0
@@ -2520,6 +2553,7 @@ def main():
         dim_feedforward=args.dim_feedforward,
         num_classes=det_num_classes,
         attr_num_classes=attr_num_classes,
+        disable_cls=disable_cls,
         use_skip=use_skip,
         activation=activation,
         use_fpn=use_fpn,
@@ -2564,7 +2598,41 @@ def main():
         highbit_quant_target=highbit_quant_target,
         highbit_w_bits=highbit_w_bits,
         highbit_a_bits=highbit_a_bits,
-    ).to(device)
+    )
+    if args.arch != "ultratinyod":
+        print("[WARN] Untrained ONNX export is supported only for arch=ultratinyod; skipping.")
+    else:
+        try:
+            from export_onnx import UltraTinyODRawWithAnchors, export_onnx as _export_onnx
+            out_path = os.path.join(run_dir, "untrained.onnx")
+            export_module = UltraTinyODRawWithAnchors(model)
+            has_quality = bool(getattr(model.head, "has_quality", False))
+            disable_cls_local = bool(getattr(model.head, "disable_cls", False))
+            if disable_cls_local:
+                raw_name = "txtywh_obj_quality_x8" if has_quality else "txtywh_obj_x8"
+                output_names = [raw_name, "anchors", "wh_scale"]
+            else:
+                output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
+            if resize_mode == YUV422_RESIZE_MODE:
+                input_name = "input_yuv422"
+            elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):
+                input_name = "input_y"
+            else:
+                input_name = "input_rgb"
+            _export_onnx(
+                export_module,
+                out_path,
+                img_size=(img_h, img_w),
+                opset=17,
+                simplify=True,
+                output_names=output_names,
+                input_channels=input_channels,
+                input_name=input_name,
+            )
+            print(f"[INFO] Exported untrained ONNX: {out_path}")
+        except Exception as exc:
+            print(f"[WARN] Failed to export untrained ONNX: {exc}")
+    model = model.to(device)
     output_stride = getattr(model, "out_stride", output_stride)
     if use_anchor and anchors_tensor is not None and hasattr(model, "set_anchors"):
         model.set_anchors(anchors_tensor)
@@ -2801,6 +2869,18 @@ def main():
             t_attr_num_classes = len(t_attr_ids) if t_multi_label_mode == "separate" else 0
             if t_multi_label_mode == "separate" and t_det_ids:
                 t_num_classes = len(t_det_ids)
+            t_disable_cls = bool(t_meta.get("disable_cls", False))
+            if t_disable_cls:
+                t_num_classes = 0
+                t_attr_num_classes = 0
+                t_multi_label_mode = "none"
+                t_score_mode_l = str(t_score_mode or "").lower()
+                if t_score_mode_l in ("obj_quality_cls", "obj_quality"):
+                    t_score_mode = "obj_quality"
+                elif t_score_mode_l in ("quality_cls", "quality"):
+                    t_score_mode = "quality"
+                elif t_score_mode_l in ("obj_cls", "obj", "cls"):
+                    t_score_mode = "obj"
             t_use_batchnorm = bool(t_meta.get("use_batchnorm", use_batchnorm))
             teacher_model = build_model(
                 t_arch,
@@ -2808,6 +2888,7 @@ def main():
                 width=t_cnn_width,
                 num_classes=t_num_classes,
                 attr_num_classes=t_attr_num_classes,
+                disable_cls=t_disable_cls,
                 use_skip=t_use_skip,
                 activation=t_activation,
                 use_fpn=t_use_fpn,
@@ -3118,6 +3199,7 @@ def main():
                     "obj_loss_type": obj_loss_type,
                     "obj_target": obj_target,
                     "simota_topk": simota_topk,
+                    "disable_cls": disable_cls,
                     "last_se": last_se,
                     "last_width_scale": last_width_scale,
                     "output_stride": output_stride,
@@ -3224,6 +3306,7 @@ def main():
             "obj_loss_type": obj_loss_type,
             "obj_target": obj_target,
             "simota_topk": simota_topk,
+            "disable_cls": disable_cls,
             "last_se": last_se,
             "last_width_scale": last_width_scale,
             "output_stride": output_stride,

@@ -92,8 +92,13 @@ class OutputSpec:
         if not output_names:
             return cls()
         name_map = {str(name).lower(): idx for idx, name in enumerate(output_names)}
+        raw_idx = None
+        for raw_name in ("txtywh_obj_quality_cls_x8", "txtywh_obj_quality_x8", "txtywh_obj_x8"):
+            if raw_name in name_map:
+                raw_idx = name_map.get(raw_name)
+                break
         return cls(
-            raw_idx=name_map.get("txtywh_obj_quality_cls_x8"),
+            raw_idx=raw_idx,
             box_idx=name_map.get("box"),
             obj_idx=name_map.get("obj"),
             quality_idx=name_map.get("quality"),
@@ -103,7 +108,7 @@ class OutputSpec:
         )
 
     def has_raw_parts(self) -> bool:
-        return self.box_idx is not None and self.obj_idx is not None and self.cls_idx is not None
+        return self.box_idx is not None and self.obj_idx is not None
 
     def extract_raw(
         self,
@@ -118,17 +123,19 @@ class OutputSpec:
             raise ValueError("Unable to locate raw output; export the ONNX with raw outputs.")
         box_idx = cast(int, self.box_idx)
         obj_idx = cast(int, self.obj_idx)
-        cls_idx = cast(int, self.cls_idx)
         box = outputs[box_idx]
         obj = outputs[obj_idx]
-        cls = outputs[cls_idx]
         parts = [box, obj]
         if use_quality:
             if self.quality_idx is None:
                 raise ValueError("use_quality is True but quality output is missing.")
             parts.append(outputs[cast(int, self.quality_idx)])
-        parts.append(cls)
+        if self.cls_idx is not None:
+            cls_idx = cast(int, self.cls_idx)
+            parts.append(outputs[cls_idx])
         pred = torch.cat(parts, dim=1)
+        if self.cls_idx is None:
+            num_classes = 0
         perm = build_raw_map_perm(num_anchors=num_anchors, num_classes=num_classes, use_quality=use_quality)
         return pred.index_select(1, perm.to(pred.device))
 
@@ -501,6 +508,7 @@ class QATTrainer:
         anchors: torch.Tensor,
         wh_scale: Optional[torch.Tensor],
         num_classes: int,
+        eval_num_classes: Optional[int],
         use_quality: bool,
         device: torch.device,
         iou_loss: str = "giou",
@@ -517,6 +525,7 @@ class QATTrainer:
         self.graph = graph
         self.output_spec = output_spec
         self.num_classes = int(num_classes)
+        self.eval_num_classes = int(eval_num_classes) if eval_num_classes is not None else int(num_classes)
         self.use_quality = bool(use_quality)
         self.anchors = anchors.to(self._device)
         self.wh_scale = wh_scale.to(self._device) if wh_scale is not None else None
@@ -618,7 +627,7 @@ class QATTrainer:
             )
             preds.extend(decoded)
             targets.extend(tgt)
-        metrics = evaluate_map(preds, targets, num_classes=self.num_classes, iou_thresh=iou_thresh)
+        metrics = evaluate_map(preds, targets, num_classes=self.eval_num_classes, iou_thresh=iou_thresh)
         map50 = float(metrics.get("mAP@0.5", 0.0))
         print(f"Eval mAP@0.5: {map50:.4f}")
         return map50
@@ -672,6 +681,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calib-steps", type=int, default=32)
     parser.add_argument("--use-quality", action="store_true", help="Force quality head on.")
     parser.add_argument("--no-quality", action="store_true", help="Force quality head off.")
+    parser.add_argument("--disable-cls", action="store_true", help="Disable cls branch (classless anchor head).")
     parser.add_argument("--iou-loss", choices=["iou", "giou", "ciou"], default="giou")
     parser.add_argument("--anchor-assigner", choices=["legacy", "simota"], default="legacy")
     parser.add_argument("--anchor-cls-loss", choices=["bce", "focal"], default="bce")
@@ -873,6 +883,13 @@ def main() -> None:
 
     output_names = load_output_names(ppq_onnx_path)
     output_spec = OutputSpec.from_output_names(output_names)
+    disable_cls = bool(args.disable_cls)
+    if output_names:
+        lower = {str(name).lower() for name in output_names}
+        if "txtywh_obj_quality_x8" in lower or "txtywh_obj_x8" in lower:
+            disable_cls = True
+    if output_spec.has_raw_parts() and output_spec.cls_idx is None:
+        disable_cls = True
 
     anchors_np, wh_scale_np = load_anchors_wh_scale_from_npy(args.onnx_model)
     if anchors_np is None or wh_scale_np is None:
@@ -905,6 +922,10 @@ def main() -> None:
         raise ValueError("Anchors not found in ONNX outputs or initializers.")
 
     num_classes = len(class_ids)
+    if disable_cls and num_classes != 1:
+        raise ValueError("--disable-cls assumes a single-class dataset; set --class-ids to one class or disable this flag.")
+    det_num_classes = 0 if disable_cls else num_classes
+    eval_num_classes = max(1, num_classes) if disable_cls else num_classes
     prefer_quality = None
     if args.use_quality and args.no_quality:
         raise ValueError("Specify only one of --use-quality or --no-quality.")
@@ -912,6 +933,15 @@ def main() -> None:
         prefer_quality = True
     if args.no_quality:
         prefer_quality = False
+    score_mode = str(args.score_mode)
+    if disable_cls and score_mode:
+        mode_l = score_mode.lower()
+        if mode_l in ("obj_quality_cls", "obj_quality"):
+            score_mode = "obj_quality"
+        elif mode_l in ("quality_cls", "quality"):
+            score_mode = "quality"
+        elif mode_l in ("obj_cls", "obj", "cls"):
+            score_mode = "obj"
 
     with torch.no_grad():
         if hasattr(executor, "forward"):
@@ -920,13 +950,13 @@ def main() -> None:
             raw_outputs = executor.forward_with_gradient(torch.zeros(input_shape, device=device))
     raw_pred = output_spec.extract_raw(
         raw_outputs,
-        num_classes=num_classes,
+        num_classes=det_num_classes,
         use_quality=prefer_quality if prefer_quality is not None else (output_spec.quality_idx is not None),
         num_anchors=int(anchors.shape[0]),
     )
     use_quality = infer_use_quality(
         raw_pred,
-        num_classes=num_classes,
+        num_classes=det_num_classes,
         num_anchors=int(anchors.shape[0]),
         prefer_quality=prefer_quality,
     )
@@ -936,7 +966,8 @@ def main() -> None:
         output_spec=output_spec,
         anchors=anchors,
         wh_scale=wh_scale,
-        num_classes=num_classes,
+        num_classes=det_num_classes,
+        eval_num_classes=eval_num_classes,
         use_quality=use_quality,
         device=device,
         iou_loss=args.iou_loss,
@@ -963,7 +994,7 @@ def main() -> None:
                 val_loader,
                 conf_thresh=float(args.conf_thresh),
                 nms_thresh=float(args.nms_thresh),
-                score_mode=str(args.score_mode),
+                score_mode=str(score_mode),
                 quality_power=float(args.quality_power),
                 iou_thresh=float(args.iou_thresh),
             )

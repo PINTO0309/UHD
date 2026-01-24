@@ -256,6 +256,7 @@ def anchor_loss(
     b, _, h, w = pred.shape
     na = anchors.shape[0]
     extra = 1 if use_quality else 0
+    use_cls = int(num_classes) > 0
     pred = pred.view(b, na, 5 + extra + num_classes, h, w).permute(0, 1, 3, 4, 2)
     tx = pred[..., 0]
     ty = pred[..., 1]
@@ -306,7 +307,8 @@ def anchor_loss(
                 if gi < 0 or gj < 0 or gi >= w or gj >= h:
                     continue
                 target_obj[bi, a, gj, gi] = 1.0
-                target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
+                if use_cls:
+                    target_cls[bi, a, gj, gi, int(cls.item())] = 1.0
                 target_box[bi, a, gj, gi] = box
                 if use_quality and target_quality is not None:
                     # placeholder, actual IoU will be filled after pred_box computed
@@ -323,11 +325,11 @@ def anchor_loss(
             pb = torch.nan_to_num(pb, nan=0.0, posinf=1e4, neginf=0.0)
             boxes = torch.nan_to_num(boxes, nan=0.0, posinf=1.0, neginf=0.0)
             obj_b = obj_logit[bi].reshape(-1)
-            cls_b = cls_logit[bi].reshape(-1, num_classes)
+            cls_b = cls_logit[bi].reshape(-1, num_classes) if use_cls else None
             ious = box_iou(pb, boxes)  # N x G
             assigned = torch.zeros(pb.shape[0], dtype=torch.bool, device=device)
             for gt_idx in range(boxes.shape[0]):
-                cls_id = int(labels[gt_idx].item())
+                cls_id = int(labels[gt_idx].item()) if use_cls else 0
                 if ious.numel() == 0:
                     continue
                 iou_g = torch.nan_to_num(ious[:, gt_idx], nan=0.0, posinf=0.0, neginf=0.0)
@@ -342,11 +344,14 @@ def anchor_loss(
                 if dynamic_k < topk:
                     topk_idx = topk_idx[:dynamic_k]
                 # build cost: cls + 3*(1-iou)
-                cls_target = torch.ones_like(topk_idx, dtype=torch.float32, device=device)
-                pred_cls_logit = cls_b[topk_idx, cls_id]
-                cls_cost = F.binary_cross_entropy_with_logits(pred_cls_logit, cls_target, reduction="none")
                 iou_cost = 1.0 - iou_g[topk_idx]
-                cost = cls_cost + 3.0 * iou_cost
+                if use_cls and cls_b is not None:
+                    cls_target = torch.ones_like(topk_idx, dtype=torch.float32, device=device)
+                    pred_cls_logit = cls_b[topk_idx, cls_id]
+                    cls_cost = F.binary_cross_entropy_with_logits(pred_cls_logit, cls_target, reduction="none")
+                    cost = cls_cost + 3.0 * iou_cost
+                else:
+                    cost = 3.0 * iou_cost
                 # select lowest cost anchors (dynamic_k)
                 order = torch.argsort(cost)
                 selected = topk_idx[order[:dynamic_k]]
@@ -371,10 +376,11 @@ def anchor_loss(
                         gj = rem // w
                         gi = rem % w
                     # For IoU-aware heads, keep cls target high (1.0) and let quality carry IoU.
-                    cls_target_val = 1.0 if use_quality else iou_g[idx]
-                    current = target_cls[bi, a, gj, gi, cls_id]
-                    if cls_target_val > current:
-                        target_cls[bi, a, gj, gi, cls_id] = cls_target_val
+                    if use_cls:
+                        cls_target_val = 1.0 if use_quality else iou_g[idx]
+                        current = target_cls[bi, a, gj, gi, cls_id]
+                        if cls_target_val > current:
+                            target_cls[bi, a, gj, gi, cls_id] = cls_target_val
     else:
         raise ValueError(f"Unknown assigner: {assigner}")
 
@@ -410,22 +416,25 @@ def anchor_loss(
             tq = iou_val.detach().clamp(min=0.0, max=1.0).to(target_quality.dtype)
             target_quality[pos_mask] = tq
             quality_loss = bce_obj(qual_logit, target_quality)
-        if cls_loss_type == "vfl":
-            # varifocal: target carries IoU quality; negatives are zero
-            t = torch.zeros_like(cls_logit)
-            t[pos_mask] = target_cls[pos_mask].to(t.dtype)
-            cls_loss = varifocal_loss(cls_logit, t, alpha=0.75, gamma=2.0)
-        elif cls_loss_type == "ce":
-            if num_classes <= 1:
-                cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+        if use_cls:
+            if cls_loss_type == "vfl":
+                # varifocal: target carries IoU quality; negatives are zero
+                t = torch.zeros_like(cls_logit)
+                t[pos_mask] = target_cls[pos_mask].to(t.dtype)
+                cls_loss = varifocal_loss(cls_logit, t, alpha=0.75, gamma=2.0)
+            elif cls_loss_type == "ce":
+                if num_classes <= 1:
+                    cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+                else:
+                    cls_targets = target_cls[pos_mask]
+                    cls_target_idx = cls_targets.argmax(dim=-1)
+                    cls_weight = cls_targets.max(dim=-1).values
+                    ce = F.cross_entropy(cls_logit[pos_mask], cls_target_idx, reduction="none")
+                    cls_loss = (ce * cls_weight.to(ce.dtype)).sum() / max(1, num_pos)
             else:
-                cls_targets = target_cls[pos_mask]
-                cls_target_idx = cls_targets.argmax(dim=-1)
-                cls_weight = cls_targets.max(dim=-1).values
-                ce = F.cross_entropy(cls_logit[pos_mask], cls_target_idx, reduction="none")
-                cls_loss = (ce * cls_weight.to(ce.dtype)).sum() / max(1, num_pos)
+                cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
         else:
-            cls_loss = bce_cls(cls_logit[pos_mask], target_cls[pos_mask]) / max(1, num_pos)
+            cls_loss = torch.tensor(0.0, device=device)
     else:
         box_loss = torch.tensor(0.0, device=device)
         cls_loss = torch.tensor(0.0, device=device)

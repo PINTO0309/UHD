@@ -465,11 +465,12 @@ class UltraTinyODConfig:
     - anchors     : [(w, h), ...] のリスト（入力に対する正規化値, e.g., w=0.125 は 8px/64px）
     - stride      : この Head が担当する stride (通常 8、主に情報用途)
     - cls_bottleneck_ratio : cls ブランチのチャネル圧縮率 (0<r<=1)
+    - disable_cls : cls ブランチを無効化（classless head）
     - use_improved_head : 追加の品質スコア・WHスケーリング等を有効化
     - use_head_ese : Head入口にeSEを挿入して軽量に文脈強調
     - use_iou_aware_head : IoU/quality をクラス信頼度に直結させるタスクアラインドヘッド
     - quality_power : quality スコアの指数。IoU-aware スコアリングの鋭さを調整
-    - score_mode : 推論スコアの合成方法 (obj_quality_cls / quality_cls / obj_cls)
+    - score_mode : 推論スコアの合成方法 (obj_quality_cls / quality_cls / obj_cls / obj_quality / quality / obj)
     - sppf_scale_mode : SPPF-min concat前のスケール整合 (none/bn/conv)
     """
 
@@ -478,6 +479,7 @@ class UltraTinyODConfig:
     stride: int = 8
     anchors: Optional[Sequence[Tuple[float, float]]] = None
     cls_bottleneck_ratio: float = 0.5
+    disable_cls: bool = False
     use_improved_head: bool = False
     use_head_ese: bool = False
     use_iou_aware_head: bool = False
@@ -515,12 +517,31 @@ class UltraTinyODConfig:
         self.anchors = [(float(w), float(h)) for w, h in self.anchors]
         self.attr_num_classes = int(max(0, self.attr_num_classes))
         self.cls_bottleneck_ratio = float(max(0.05, min(1.0, self.cls_bottleneck_ratio)))
+        self.disable_cls = bool(getattr(self, "disable_cls", False))
+        if self.disable_cls:
+            self.attr_num_classes = 0
         self.use_iou_aware_head = bool(self.use_iou_aware_head)
         self.quality_power = float(max(0.0, self.quality_power))
         if self.score_mode is not None:
             mode = str(self.score_mode).lower()
-            if mode not in ("obj_quality_cls", "quality_cls", "obj_cls"):
+            valid = {
+                "obj_quality_cls",
+                "quality_cls",
+                "obj_cls",
+                "obj_quality",
+                "quality",
+                "obj",
+                "cls",
+            }
+            if mode not in valid:
                 mode = "obj_quality_cls"
+            if self.disable_cls:
+                if mode in ("obj_quality_cls", "obj_quality"):
+                    mode = "obj_quality"
+                elif mode in ("quality_cls", "quality"):
+                    mode = "quality"
+                elif mode in ("obj_cls", "obj", "cls"):
+                    mode = "obj"
             self.score_mode = mode
         self.use_fpn = bool(self.use_fpn)
         self.use_fpn_strict = bool(self.use_fpn_strict)
@@ -572,8 +593,9 @@ class UltraTinyODHead(nn.Module):
         super().__init__()
         self.w_bits = _normalize_bits(getattr(cfg, "w_bits", 0))
         self.a_bits = _normalize_bits(getattr(cfg, "a_bits", 0))
-        self.nc = cfg.num_classes
-        self.attr_nc = int(getattr(cfg, "attr_num_classes", 0))
+        self.disable_cls = bool(getattr(cfg, "disable_cls", False))
+        self.nc = 0 if self.disable_cls else int(getattr(cfg, "num_classes", 1))
+        self.attr_nc = 0 if self.disable_cls else int(getattr(cfg, "attr_num_classes", 0))
         self.stride = cfg.stride
         self.in_channels = in_channels
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
@@ -604,9 +626,17 @@ class UltraTinyODHead(nn.Module):
             self.register_buffer("wh_scale", torch.ones(self.num_anchors, 2, dtype=torch.float32))
         # task-aligned score uses quality*cls (no obj) when enabled
         if getattr(cfg, "score_mode", None):
-            self.score_mode = str(cfg.score_mode).lower()
+            mode = str(cfg.score_mode).lower()
         else:
-            self.score_mode = "quality_cls" if self.use_iou_aware_head else "obj_quality_cls"
+            mode = "quality_cls" if self.use_iou_aware_head else "obj_quality_cls"
+        if self.disable_cls:
+            if mode in ("obj_quality_cls", "obj_quality"):
+                mode = "obj_quality"
+            elif mode in ("quality_cls", "quality"):
+                mode = "quality"
+            elif mode in ("obj_cls", "obj", "cls"):
+                mode = "obj"
+        self.score_mode = mode
         self.quality_power = float(max(0.0, self.quality_power))
         self.has_quality_head = self.has_quality
 
@@ -688,34 +718,41 @@ class UltraTinyODHead(nn.Module):
         )
 
         # cls ブランチ
-        if self.use_iou_aware_head:
-            self.cls_tower = nn.Sequential(
-                ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-            )
+        if self.disable_cls:
+            self.cls_tower = None
+            self.cls_reduce = None
+            self.cls_conv = None
+            self.cls_out = None
+            self.attr_out = None
         else:
-            self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
-            self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
-        self.cls_out = nn.Conv2d(
-            self.cls_mid,
-            self.num_anchors * self.nc,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=True,
-        )
-        if self.attr_nc > 0:
-            self.attr_out = nn.Conv2d(
+            if self.use_iou_aware_head:
+                self.cls_tower = nn.Sequential(
+                    ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                    DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                    DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                )
+            else:
+                self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+                self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+            self.cls_out = nn.Conv2d(
                 self.cls_mid,
-                self.num_anchors * self.attr_nc,
+                self.num_anchors * self.nc,
                 kernel_size=1,
                 stride=1,
                 padding=0,
                 bias=True,
             )
-        else:
-            self.attr_out = None
+            if self.attr_nc > 0:
+                self.attr_out = nn.Conv2d(
+                    self.cls_mid,
+                    self.num_anchors * self.attr_nc,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                )
+            else:
+                self.attr_out = None
         self.out_w_quant = FakeQuantizer(self.w_bits, per_channel=True, ch_axis=0) if self.w_bits else None
 
         perm = self._build_raw_map_perm()
@@ -792,32 +829,34 @@ class UltraTinyODHead(nn.Module):
                     padding=0,
                     bias=True,
                 ).to(anchor_tensor.device)
-            self.cls_out = nn.Conv2d(
-                self.cls_mid,
-                self.num_anchors * self.nc,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            ).to(anchor_tensor.device)
-            if self.attr_out is not None:
-                self.attr_out = nn.Conv2d(
+            if not self.disable_cls:
+                self.cls_out = nn.Conv2d(
                     self.cls_mid,
-                    self.num_anchors * self.attr_nc,
+                    self.num_anchors * self.nc,
                     kernel_size=1,
                     stride=1,
                     padding=0,
                     bias=True,
                 ).to(anchor_tensor.device)
+                if self.attr_out is not None:
+                    self.attr_out = nn.Conv2d(
+                        self.cls_mid,
+                        self.num_anchors * self.attr_nc,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                        bias=True,
+                    ).to(anchor_tensor.device)
             nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
             if self.has_quality:
                 nn.init.kaiming_normal_(self.quality_out.weight, mode="fan_out", nonlinearity="relu")
                 if self.use_improved_head and isinstance(self.wh_scale, nn.Parameter):
                     self.wh_scale = nn.Parameter(torch.ones(self.num_anchors, 2, device=anchor_tensor.device))
-            nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
-            if self.attr_out is not None:
-                nn.init.kaiming_normal_(self.attr_out.weight, mode="fan_out", nonlinearity="relu")
+            if not self.disable_cls:
+                nn.init.kaiming_normal_(self.cls_out.weight, mode="fan_out", nonlinearity="relu")
+                if self.attr_out is not None:
+                    nn.init.kaiming_normal_(self.attr_out.weight, mode="fan_out", nonlinearity="relu")
             self.reset_output_bias()
             if not self.use_improved_head:
                 self.wh_scale = torch.ones(self.num_anchors, 2, device=anchor_tensor.device)
@@ -870,15 +909,16 @@ class UltraTinyODHead(nn.Module):
                     self.quality_conv.fuse_model(qat=qat)
         if hasattr(self.obj_conv, "fuse_model"):
             self.obj_conv.fuse_model(qat=qat)
-        if self.use_iou_aware_head:
-            for layer in self.cls_tower:
-                if hasattr(layer, "fuse_model"):
-                    layer.fuse_model(qat=qat)
-        else:
-            if hasattr(self.cls_reduce, "fuse_model"):
-                self.cls_reduce.fuse_model(qat=qat)
-            if hasattr(self.cls_conv, "fuse_model"):
-                self.cls_conv.fuse_model(qat=qat)
+        if not self.disable_cls:
+            if self.use_iou_aware_head:
+                for layer in self.cls_tower:
+                    if hasattr(layer, "fuse_model"):
+                        layer.fuse_model(qat=qat)
+            else:
+                if hasattr(self.cls_reduce, "fuse_model"):
+                    self.cls_reduce.fuse_model(qat=qat)
+                if hasattr(self.cls_conv, "fuse_model"):
+                    self.cls_conv.fuse_model(qat=qat)
 
     def reset_output_bias(self, p_obj: float = 0.01, p_cls: float = 0.01) -> None:
         """Set conservative initial biases to reduce early false positives."""
@@ -892,10 +932,11 @@ class UltraTinyODHead(nn.Module):
                 self.obj_out.bias.copy_(bias.view(-1))
         if self.has_quality and self.quality_out.bias is not None:
             nn.init.constant_(self.quality_out.bias, 0.0)
-        if self.cls_out.bias is not None:
-            nn.init.constant_(self.cls_out.bias, cls_bias)
-        if self.attr_out is not None and self.attr_out.bias is not None:
-            nn.init.constant_(self.attr_out.bias, cls_bias)
+        if not self.disable_cls:
+            if self.cls_out is not None and self.cls_out.bias is not None:
+                nn.init.constant_(self.cls_out.bias, cls_bias)
+            if self.attr_out is not None and self.attr_out.bias is not None:
+                nn.init.constant_(self.attr_out.bias, cls_bias)
 
     def forward(
         self,
@@ -998,15 +1039,18 @@ class UltraTinyODHead(nn.Module):
                 quality_feat = self.quality_conv(x)
             quality = self._conv2d_out(self.quality_out, quality_feat)
         # cls ブランチ
-        if self.use_iou_aware_head:
-            cls_feat = self.cls_tower(x)
-        else:
-            cls_feat = self.cls_reduce(x)
-            cls_feat = self.cls_conv(cls_feat)
-        cls = self._conv2d_out(self.cls_out, cls_feat)
         attr = None
-        if self.attr_out is not None:
-            attr = self._conv2d_out(self.attr_out, cls_feat)
+        if self.disable_cls:
+            cls = x.new_zeros((b, 0, h, w))
+        else:
+            if self.use_iou_aware_head:
+                cls_feat = self.cls_tower(x)
+            else:
+                cls_feat = self.cls_reduce(x)
+                cls_feat = self.cls_conv(cls_feat)
+            cls = self._conv2d_out(self.cls_out, cls_feat)
+            if self.attr_out is not None:
+                attr = self._conv2d_out(self.attr_out, cls_feat)
 
         return box, obj, quality, cls, attr
 
@@ -1159,6 +1203,7 @@ class UltraTinyOD(nn.Module):
         self.score_mode = getattr(self.head, "score_mode", "obj_quality_cls")
         self.quality_power = getattr(self.head, "quality_power", 1.0)
         self.attr_num_classes = int(getattr(config, "attr_num_classes", 0))
+        self.disable_cls = bool(getattr(self.head, "disable_cls", False))
         self.activation = act_name
 
         # モデル初期化（簡易版）

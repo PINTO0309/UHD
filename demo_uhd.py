@@ -223,7 +223,7 @@ def _infer_anchor_count_from_channels(c: int) -> Optional[int]:
     """Heuristic to guess anchor count from channel size."""
     candidates = [3, 4, 5, 6, 8, 9, 12, 16]
     for na in candidates:
-        if c % na == 0 and (c // na) >= 6:
+        if c % na == 0 and (c // na) >= 5:
             return na
     return None
 
@@ -240,12 +240,12 @@ def _build_fallback_anchors(na: int) -> np.ndarray:
 
 def _detect_raw_parts(outputs_info) -> Optional[dict]:
     name_map = {o.name.lower(): o.name for o in outputs_info}
-    if "box" in name_map and "obj" in name_map and "cls" in name_map:
+    if "box" in name_map and "obj" in name_map:
         return {
             "box": name_map["box"],
             "obj": name_map["obj"],
             "quality": name_map.get("quality"),
-            "cls": name_map["cls"],
+            "cls": name_map.get("cls"),
             "attr": name_map.get("attr"),
         }
     return None
@@ -253,29 +253,29 @@ def _detect_raw_parts(outputs_info) -> Optional[dict]:
 
 def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
     name_map = {d.get("name", "").lower(): d for d in output_details}
-    if "box" in name_map and "obj" in name_map and "cls" in name_map:
+    if "box" in name_map and "obj" in name_map:
         raw_parts = {
             "box": name_map["box"]["index"],
             "obj": name_map["obj"]["index"],
             "quality": name_map.get("quality", {}).get("index") if "quality" in name_map else None,
-            "cls": name_map["cls"]["index"],
+            "cls": name_map.get("cls", {}).get("index") if "cls" in name_map else None,
             "attr": name_map.get("attr", {}).get("index") if "attr" in name_map else None,
         }
         detail_map = {d["index"]: d for d in output_details}
         box_detail = detail_map.get(raw_parts["box"])
         obj_detail = detail_map.get(raw_parts["obj"])
-        cls_detail = detail_map.get(raw_parts["cls"])
-        if not box_detail or not obj_detail or not cls_detail:
+        cls_detail = detail_map.get(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
+        if not box_detail or not obj_detail:
             return None
         box_shape = box_detail.get("shape")
         obj_shape = obj_detail.get("shape")
-        cls_shape = cls_detail.get("shape")
-        if box_shape is None or obj_shape is None or cls_shape is None:
+        cls_shape = cls_detail.get("shape") if cls_detail else None
+        if box_shape is None or obj_shape is None:
             return None
         a = int(obj_shape[-1])
         if a <= 0 or int(box_shape[-1]) != 4 * a:
             return None
-        if int(cls_shape[-1]) % a != 0:
+        if cls_shape is not None and int(cls_shape[-1]) % a != 0:
             return None
         if raw_parts.get("quality") is not None:
             quality_detail = detail_map.get(raw_parts["quality"])
@@ -322,7 +322,7 @@ def _infer_raw_parts_litert(
             cls_idx = a_candidates[1]
             quality_idx = None
 
-    if obj_idx is None or cls_idx is None:
+    if obj_idx is None:
         return None
 
     return {"box": box_idx, "obj": obj_idx, "quality": quality_idx, "cls": cls_idx}
@@ -332,12 +332,12 @@ def _assemble_raw_from_parts(
     box: np.ndarray,
     obj: np.ndarray,
     quality: Optional[np.ndarray],
-    cls: np.ndarray,
+    cls: Optional[np.ndarray],
 ) -> Tuple[np.ndarray, int]:
-    if box is None or obj is None or cls is None:
-        raise ValueError("Missing box/obj/cls output for raw parts assembly.")
-    if box.ndim != 4 or obj.ndim != 4 or cls.ndim != 4:
-        raise ValueError("Expected 4D tensors for box/obj/cls outputs.")
+    if box is None or obj is None:
+        raise ValueError("Missing box/obj output for raw parts assembly.")
+    if box.ndim != 4 or obj.ndim != 4:
+        raise ValueError("Expected 4D tensors for box/obj outputs.")
     b, c_box, h, w = box.shape
     _, c_obj, _, _ = obj.shape
     na = int(c_obj)
@@ -345,9 +345,14 @@ def _assemble_raw_from_parts(
         raise ValueError("Invalid anchor count from obj output.")
     if c_box != na * 4:
         raise ValueError(f"Unexpected box channels: {c_box} (anchors={na})")
-    if cls.shape[1] % na != 0:
-        raise ValueError(f"Unexpected cls channels: {cls.shape[1]} (anchors={na})")
-    nc = int(cls.shape[1] // na)
+    if cls is not None:
+        if cls.ndim != 4:
+            raise ValueError("Expected 4D tensor for cls output.")
+        if cls.shape[1] % na != 0:
+            raise ValueError(f"Unexpected cls channels: {cls.shape[1]} (anchors={na})")
+        nc = int(cls.shape[1] // na)
+    else:
+        nc = 0
 
     box = box.reshape(b, na, 4, h, w)
     obj = obj.reshape(b, na, 1, h, w)
@@ -357,8 +362,9 @@ def _assemble_raw_from_parts(
             raise ValueError(f"Unexpected quality shape: {quality.shape}")
         quality = quality.reshape(b, na, 1, h, w)
         parts.append(quality)
-    cls = cls.reshape(b, na, nc, h, w)
-    parts.append(cls)
+    if cls is not None and nc > 0:
+        cls = cls.reshape(b, na, nc, h, w)
+        parts.append(cls)
 
     merged = np.concatenate(parts, axis=2)
     raw = merged.reshape(b, na * merged.shape[2], h, w)
@@ -441,6 +447,7 @@ def inspect_resize_info(onnx_path: str) -> dict:
         "resize_mode": None,
         "score_mode": None,
         "quality_power": None,
+        "disable_cls": False,
         "multi_label_mode": None,
         "multi_label_det_classes": None,
         "multi_label_attr_classes": None,
@@ -459,6 +466,8 @@ def inspect_resize_info(onnx_path: str) -> dict:
         info["score_mode"] = meta.get("score_mode") or None
     if "quality_power" in meta:
         info["quality_power"] = _parse_meta_float(meta.get("quality_power"))
+    if "disable_cls" in meta:
+        info["disable_cls"] = str(meta.get("disable_cls")).lower() == "true"
     if "multi_label_mode" in meta:
         info["multi_label_mode"] = (meta.get("multi_label_mode") or "none").lower()
     if "multi_label_det_classes" in meta:
@@ -530,6 +539,9 @@ def decode_ultratinyod_raw(
         raise ValueError(f"Channel/anchor mismatch: C={c}, anchors={na}")
     per_anchor = c // na
     quality_extra = 1 if has_quality and per_anchor >= 6 else 0
+    num_classes = per_anchor - (5 + quality_extra)
+    if num_classes < 0:
+        raise ValueError(f"Unexpected channels per anchor: {per_anchor} (quality={quality_extra})")
 
     pred = raw_out.reshape(b, na, per_anchor, h, w).transpose(0, 1, 3, 4, 2)
     tx = pred[..., 0]
@@ -538,10 +550,10 @@ def decode_ultratinyod_raw(
     th = pred[..., 3]
     obj = pred[..., 4]
     quality = pred[..., 5] if quality_extra else None
-    cls_logits = pred[..., (5 + quality_extra) :]
+    cls_logits = pred[..., (5 + quality_extra) :] if num_classes > 0 else None
 
     obj_sig = sigmoid_np(obj)
-    cls_sig = sigmoid_np(cls_logits)
+    cls_sig = sigmoid_np(cls_logits) if cls_logits is not None else None
     quality_sig = sigmoid_np(quality) if quality is not None else None
     qp = float(quality_power) if quality_power is not None else 1.0
     if quality_sig is not None and qp != 1.0:
@@ -551,13 +563,16 @@ def decode_ultratinyod_raw(
         score_base = np.ones_like(obj_sig, dtype=np.float32)
     elif mode == "quality_cls" and quality_sig is not None:
         score_base = quality_sig
+    elif mode == "quality" and quality_sig is not None:
+        score_base = quality_sig
     elif mode == "obj_cls":
+        score_base = obj_sig
+    elif mode == "obj":
         score_base = obj_sig
     else:
         score_base = obj_sig
         if quality_sig is not None:
             score_base = score_base * quality_sig
-    scores = score_base[..., None] * cls_sig  # [B, A, H, W, C]
 
     gy, gx = np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
     gx = gx.reshape(1, 1, h, w)
@@ -625,6 +640,48 @@ def decode_ultratinyod_raw(
         if not dets:
             return np.zeros((0, 6), dtype=np.float32)
         return dets[0]
+
+    if num_classes <= 0:
+        scores_flat = score_base.reshape(b, -1)
+        if conf_thresh > 0:
+            scores_flat = np.where(scores_flat >= conf_thresh, scores_flat, np.zeros_like(scores_flat))
+        k = min(int(topk), scores_flat.shape[1])
+        top_idx = np.argsort(-scores_flat, axis=1)[:, :k]
+        top_scores = np.take_along_axis(scores_flat, top_idx, axis=1)
+        top_cls = np.zeros_like(top_scores, dtype=np.float32)
+        top_cell = top_idx
+        cx_flat = cx.reshape(b, -1)
+        cy_flat = cy.reshape(b, -1)
+        bw_flat = bw.reshape(b, -1)
+        bh_flat = bh.reshape(b, -1)
+        top_cx = np.take_along_axis(cx_flat, top_cell, axis=1)
+        top_cy = np.take_along_axis(cy_flat, top_cell, axis=1)
+        top_bw = np.take_along_axis(bw_flat, top_cell, axis=1)
+        top_bh = np.take_along_axis(bh_flat, top_cell, axis=1)
+        dets = []
+        for i in range(b):
+            mask = (top_scores[i] > 0.0)
+            if not np.any(mask):
+                continue
+            stacked = np.stack(
+                [
+                    top_scores[i][mask],
+                    top_cls[i][mask].astype(np.float32),
+                    top_cx[i][mask],
+                    top_cy[i][mask],
+                    top_bw[i][mask],
+                    top_bh[i][mask],
+                ],
+                axis=-1,
+            )
+            finite_mask = np.all(np.isfinite(stacked), axis=-1)
+            stacked = stacked[finite_mask]
+            dets.append(stacked)
+        if not dets:
+            return np.zeros((0, 6), dtype=np.float32)
+        return dets[0]
+
+    scores = score_base[..., None] * cls_sig  # [B, A, H, W, C]
 
     mode_label = str(multi_label_mode or "none").lower()
     if mode_label in ("single", "separate"):
@@ -703,9 +760,18 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     resize_mode = resize_info.get("resize_mode")
     score_mode = resize_info.get("score_mode")
     quality_power = resize_info.get("quality_power")
+    disable_cls = bool(resize_info.get("disable_cls", False))
     multi_label_mode = resize_info.get("multi_label_mode") or "none"
     det_class_indices = resize_info.get("multi_label_det_classes")
     attr_class_indices = resize_info.get("multi_label_attr_classes")
+    if disable_cls and score_mode:
+        mode_l = str(score_mode).lower()
+        if mode_l in ("obj_quality_cls", "obj_quality"):
+            score_mode = "obj_quality"
+        elif mode_l in ("quality_cls", "quality"):
+            score_mode = "quality"
+        elif mode_l in ("obj_cls", "obj", "cls"):
+            score_mode = "obj"
     if dynamic_resize:
         print(f"[INFO] Detected input Resize in ONNX (mode={resize_mode or 'unknown'})")
     else:
@@ -760,7 +826,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
             box = out_map.get(raw_parts["box"])
             obj = out_map.get(raw_parts["obj"])
             quality = out_map.get(raw_parts.get("quality") or "")
-            cls = out_map.get(raw_parts["cls"])
+            cls = out_map.get(raw_parts["cls"]) if raw_parts.get("cls") else None
             if obj is not None:
                 na = int(obj.shape[1])
                 if anchor_hint is None:
@@ -801,6 +867,22 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     else:
         kind = "raw output + demo post-process"
     print(f"[INFO] Detected {kind} (output shape: {output_shape})")
+    if raw_parts is not None and not raw_parts.get("cls"):
+        disable_cls = True
+    if not disable_cls and raw_channels is not None:
+        na_guess = None
+        if anchors is not None and anchors.shape[0] > 0:
+            na_guess = int(anchors.shape[0])
+        elif anchor_hint:
+            na_guess = int(anchor_hint)
+        if na_guess and raw_channels % na_guess == 0:
+            per_anchor = int(raw_channels) // int(na_guess)
+            if per_anchor == 5:
+                disable_cls = True
+            elif per_anchor == 6 and (has_quality or wh_scale is not None):
+                disable_cls = True
+    if disable_cls and not score_mode:
+        score_mode = "obj_quality" if (has_quality or wh_scale is not None) else "obj"
     return session, {
         "decoded": decoded,
         "anchors": anchors,
@@ -816,6 +898,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "resize_mode": resize_mode,
         "score_mode": score_mode,
         "quality_power": quality_power,
+        "disable_cls": disable_cls,
         "multi_label_mode": multi_label_mode,
         "det_class_indices": det_class_indices,
         "attr_class_indices": attr_class_indices,
@@ -856,6 +939,7 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
                 break
 
     raw_channels = None
+    disable_cls = False
     raw_output = None
     if decoded_output is None and raw_parts is None:
         for o in output_details:
@@ -874,12 +958,12 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
         obj_detail = detail_map.get(raw_parts["obj"])
         box_detail = detail_map.get(raw_parts["box"])
         quality_detail = detail_map.get(raw_parts.get("quality")) if raw_parts.get("quality") is not None else None
-        cls_detail = detail_map.get(raw_parts["cls"])
-        if obj_detail and box_detail and cls_detail:
+        cls_detail = detail_map.get(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
+        if obj_detail and box_detail:
             na = int(obj_detail.get("shape")[-1])
             c_box = int(box_detail.get("shape")[-1])
             c_quality = int(quality_detail.get("shape")[-1]) if quality_detail else 0
-            c_cls = int(cls_detail.get("shape")[-1])
+            c_cls = int(cls_detail.get("shape")[-1]) if cls_detail else 0
             if c_box != na * 4 and quality_detail and c_quality == na * 4:
                 c_box, c_quality = c_quality, c_box
             raw_channels = c_box + na + c_quality + c_cls
@@ -895,6 +979,10 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
             per_anchor = int(raw_channels) // int(na_hint)
             if per_anchor >= 7:
                 has_quality = True
+            if per_anchor == 5:
+                disable_cls = True
+            elif per_anchor == 6 and has_quality:
+                disable_cls = True
 
     input_shape = input_details.get("shape")
     input_hw = None
@@ -920,6 +1008,9 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
     if output_shape is None and output_details:
         output_shape = output_details[0].get("shape")
     print(f"[INFO] Detected {kind} (output shape: {output_shape})")
+    score_mode = None
+    if disable_cls:
+        score_mode = "obj_quality" if has_quality else "obj"
     return interpreter, {
         "decoded": decoded_output is not None,
         "anchors": anchors,
@@ -935,8 +1026,9 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
         "raw_parts": raw_parts,
         "dynamic_resize": dynamic_resize,
         "resize_mode": resize_mode,
-        "score_mode": None,
+        "score_mode": score_mode,
         "quality_power": None,
+        "disable_cls": disable_cls or (raw_parts is not None and not raw_parts.get("cls")),
         "multi_label_mode": "none",
         "det_class_indices": None,
         "attr_class_indices": None,
@@ -955,6 +1047,15 @@ def run_and_decode_onnx(
 ) -> np.ndarray:
     score_mode = session_info.get("score_mode", "obj_quality_cls")
     quality_power = session_info.get("quality_power", 1.0)
+    disable_cls = bool(session_info.get("disable_cls", False))
+    if disable_cls and score_mode:
+        mode_l = str(score_mode).lower()
+        if mode_l in ("obj_quality_cls", "obj_quality"):
+            score_mode = "obj_quality"
+        elif mode_l in ("quality_cls", "quality"):
+            score_mode = "quality"
+        elif mode_l in ("obj_cls", "obj", "cls"):
+            score_mode = "obj"
     multi_label_mode = session_info.get("multi_label_mode", "none")
     det_class_indices = session_info.get("det_class_indices")
     attr_class_indices = session_info.get("attr_class_indices")
@@ -963,7 +1064,7 @@ def run_and_decode_onnx(
         anchors = session_info.get("anchors")
         wh_scale = session_info.get("wh_scale")
 
-        outputs = [parts["box"], parts["obj"], parts.get("quality"), parts["cls"]]
+        outputs = [parts["box"], parts["obj"], parts.get("quality"), parts.get("cls")]
         if parts.get("attr") is not None:
             outputs.append(parts.get("attr"))
         outputs = [o for o in outputs if o]
@@ -975,10 +1076,10 @@ def run_and_decode_onnx(
         box = out_map.get(parts["box"])
         obj = out_map.get(parts["obj"])
         quality = out_map.get(parts.get("quality") or "")
-        cls = out_map.get(parts["cls"])
+        cls = out_map.get(parts["cls"]) if parts.get("cls") else None
         attr = out_map.get(parts.get("attr") or "")
 
-        if box is None or obj is None or cls is None:
+        if box is None or obj is None:
             raise RuntimeError("Missing raw parts outputs from ONNX session.")
 
         for name, val in out_map.items():
@@ -1085,6 +1186,15 @@ def run_and_decode_litert(
 ) -> np.ndarray:
     score_mode = session_info.get("score_mode", "obj_quality_cls")
     quality_power = session_info.get("quality_power", 1.0)
+    disable_cls = bool(session_info.get("disable_cls", False))
+    if disable_cls and score_mode:
+        mode_l = str(score_mode).lower()
+        if mode_l in ("obj_quality_cls", "obj_quality"):
+            score_mode = "obj_quality"
+        elif mode_l in ("quality_cls", "quality"):
+            score_mode = "quality"
+        elif mode_l in ("obj_cls", "obj", "cls"):
+            score_mode = "obj"
     multi_label_mode = session_info.get("multi_label_mode", "none")
     det_class_indices = session_info.get("det_class_indices")
     interpreter.set_tensor(session_info["input_index"], inp)
@@ -1106,7 +1216,7 @@ def run_and_decode_litert(
 
         box = _get_tensor(raw_parts["box"])
         obj = _get_tensor(raw_parts["obj"])
-        cls = _get_tensor(raw_parts["cls"])
+        cls = _get_tensor(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
         quality = _get_tensor(raw_parts["quality"]) if raw_parts.get("quality") is not None else None
 
         na = int(obj.shape[-1])
@@ -1114,9 +1224,9 @@ def run_and_decode_litert(
             raise ValueError(f"Unexpected box channels {box.shape[-1]} for anchors={na}.")
         if quality is not None and quality.shape[-1] != na:
             raise ValueError(f"Unexpected quality channels {quality.shape[-1]} for anchors={na}.")
-        if cls.shape[-1] % na != 0:
+        if cls is not None and cls.shape[-1] % na != 0:
             raise ValueError(f"Unexpected cls channels {cls.shape[-1]} for anchors={na}.")
-        if session_info.get("swap_logit_range") and quality is not None and quality.shape == cls.shape and quality.shape[-1] == na:
+        if cls is not None and session_info.get("swap_logit_range") and quality is not None and quality.shape == cls.shape and quality.shape[-1] == na:
             qmax = float(np.max(quality))
             cmax = float(np.max(cls))
             qhist = session_info.setdefault("swap_logit_qmax", [])
@@ -1143,7 +1253,7 @@ def run_and_decode_litert(
 
         raw_box = _nhwc_to_nchw(box)
         raw_obj = _nhwc_to_nchw(obj)
-        raw_cls = _nhwc_to_nchw(cls)
+        raw_cls = _nhwc_to_nchw(cls) if cls is not None else None
         raw_quality = _nhwc_to_nchw(quality) if quality is not None else None
 
         raw, _ = _assemble_raw_from_parts(raw_box, raw_obj, raw_quality, raw_cls)
@@ -1426,7 +1536,7 @@ def build_args():
         "--score-mode",
         type=str,
         default=None,
-        choices=["obj_quality_cls", "quality_cls", "obj_cls", "cls"],
+        choices=["obj_quality_cls", "quality_cls", "obj_cls", "obj_quality", "quality", "obj", "cls"],
         help="Score mode for raw outputs (defaults to model metadata when available).",
     )
     parser.add_argument(

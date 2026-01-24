@@ -837,6 +837,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             use_iou_aware_head=bool(kwargs.get("use_iou_aware_head", False)),
             quality_power=float(kwargs.get("quality_power", 1.0)),
             score_mode=kwargs.get("score_mode"),
+            disable_cls=bool(kwargs.get("disable_cls", False)),
             activation=utod_activation,
             use_context_rfb=bool(kwargs.get("utod_context_rfb", False)),
             context_dilation=int(kwargs.get("utod_context_dilation", 2)),

@@ -1837,7 +1837,7 @@ overlayed on the detection image.
 | `--use-improved-head` | UltraTinyOD only: enable quality-aware head (IoU-aware obj, IoU score branch, learnable WH scale, extra context). | `False` |
 | `--use-iou-aware-head` | UltraTinyOD head: task-aligned IoU-aware scoring (quality*cls) with split towers. | `False` |
 | `--quality-power` | Exponent for quality score when using IoU-aware head scoring. | `1.0` |
-| `--score-mode` | Score composition mode for anchor head (`obj_quality_cls`, `quality_cls`, `obj_cls`). Normally overridden by checkpoint meta; with `--val-only` and explicit `--score-mode`, CLI takes priority. | `None` |
+| `--score-mode` | Score composition mode for anchor head (`obj_quality_cls`, `quality_cls`, `obj_cls`, `obj_quality`, `quality`, `obj`). Normally overridden by checkpoint meta; with `--val-only` and explicit `--score-mode`, CLI takes priority. | `None` |
 | `--teacher-ckpt` | Teacher checkpoint path for distillation. | `None` |
 | `--teacher-arch` | Teacher architecture override. | `None` |
 | `--teacher-num-queries` | Teacher DETR queries. | `None` |
@@ -1922,6 +1922,7 @@ Notes:
 | `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
 | `--anchor-assigner` | Anchor assigner strategy (`legacy`, `simota`). | `legacy` |
 | `--anchor-cls-loss` | Anchor classification loss (`bce`, `vfl`, `ce`). | `bce` |
+| `--disable-cls` | Disable cls branch entirely (classless anchor head; intended for single-class datasets). | `False` |
 | `--loss-weight-box` | Loss weight for anchor box regression. | `1.0` |
 | `--loss-weight-obj` | Loss weight for anchor objectness. | `1.0` |
 | `--loss-weight-cls` | Loss weight for anchor classification. | `1.0` |
@@ -1981,6 +1982,7 @@ All custom backbones can optionally apply SE/eSE on the backbone output via `--b
 - `cls`: Classification loss on per-class logits for positive anchors (BCE/VFL/CE per `--anchor-cls-loss`)
 - `box`: (1 - IoU/GIoU/CIoU) on decoded boxes for positive anchors; IoU flavor set by `--iou-loss`
 - `quality` (improved head only): BCE on IoU-linked quality logit; obj targetもIoUでスケールされる
+- `--disable-cls` を指定すると cls ブランチ/損失は無効化され、予測は classless (`cls=0`) として扱われます。
 
 </details>
 
