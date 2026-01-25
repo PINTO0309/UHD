@@ -285,6 +285,15 @@ class UltraTinyODWithPost(nn.Module):
         )
         return detections
 
+    # Softplus optimization
+    def _softplus(x: torch.Tensor) -> torch.Tensor:
+        a = torch.abs(x)
+        b = torch.exp(-a)
+        c = torch.log(1.0 + b)
+        d = torch.relu(x)
+        y = d + c
+        return y
+
     def forward(self, x: torch.Tensor):
         feat = self.model.backbone(x)
         box, obj, quality, cls, attr_logits = self.model.head.forward_raw_parts(
@@ -327,16 +336,17 @@ class UltraTinyODWithPost(nn.Module):
         gx = gx.view(1, 1, h, w)
         gy = gy.view(1, 1, h, w)
 
-        anchors = self.model.head.anchors.to(pred.device)
+        anchors = self.model.head.anchors.to(tx.device)
         if self.model.use_improved_head:
-            anchors = anchors * self.model.head.wh_scale.to(pred.device)
+            anchors = anchors * self.model.head.wh_scale.to(tx.device)
         pw = anchors[:, 0].view(1, na, 1, 1)
         ph = anchors[:, 1].view(1, na, 1, 1)
 
         cx = (tx.sigmoid() + gx) / float(w)
         cy = (ty.sigmoid() + gy) / float(h)
-        bw = pw * F.softplus(tw)
-        bh = ph * F.softplus(th)
+
+        bw: torch.Tensor = pw * self._softplus(tw)
+        bh: torch.Tensor = ph * self._softplus(th)
 
         score_base = self._score_base(obj_scores, quality_scores)
         if use_cls and self.multi_label_mode in ("single", "separate"):
@@ -376,7 +386,7 @@ class UltraTinyODWithPost(nn.Module):
             top_bw = torch.gather(bw_flat, 1, top_idx)
             top_bh = torch.gather(bh_flat, 1, top_idx)
             if self.det_class_indices is not None:
-                cm = torch.tensor(self.det_class_indices, device=pred.device, dtype=top_cls.dtype)
+                cm = torch.tensor(self.det_class_indices, device=top_cls.device, dtype=top_cls.dtype)
                 top_cls = cm[top_cls]
         else:
             scores_flat = score_base.view(b, -1)
@@ -384,7 +394,7 @@ class UltraTinyODWithPost(nn.Module):
                 scores_flat = torch.where(scores_flat >= self.conf_thresh, scores_flat, torch.zeros_like(scores_flat))
             k = min(self.topk, scores_flat.shape[1])
             top_scores, top_idx = torch.topk(scores_flat, k=k, dim=1)
-            top_cls = torch.zeros_like(top_scores, dtype=torch.float32, device=pred.device)
+            top_cls = torch.zeros_like(top_scores, dtype=torch.float32, device=top_scores.device)
             cx_flat = cx.view(b, -1)
             cy_flat = cy.view(b, -1)
             bw_flat = bw.view(b, -1)
