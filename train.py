@@ -238,13 +238,28 @@ def parse_args():
     parser.add_argument("--teacher-backbone", default=None, help="Path to teacher backbone checkpoint for feature distillation (e.g., DINOv3).")
     parser.add_argument("--teacher-backbone-arch", default=None, help="Teacher backbone architecture hint (e.g., dinov3_vits16, dinov3_vitb16).")
     parser.add_argument("--teacher-backbone-norm", default="imagenet", choices=["imagenet", "none"], help="Normalization applied to teacher backbone input.")
-    parser.add_argument("--distill-kl", type=float, default=0.0, help="Weight for KL distillation loss (transformer).")
-    parser.add_argument("--distill-box-l1", type=float, default=0.0, help="Weight for box L1 distillation (transformer).")
+    parser.add_argument(
+        "--distill-kl",
+        type=float,
+        default=0.0,
+        help="Weight for KL distillation loss (anchor/centernet/transformer).",
+    )
+    parser.add_argument(
+        "--distill-box-l1",
+        type=float,
+        default=0.0,
+        help="Weight for box L1 distillation (anchor/centernet/transformer).",
+    )
     parser.add_argument("--distill-obj", type=float, default=0.0, help="Weight for objectness distillation (anchor head).")
     parser.add_argument("--distill-quality", type=float, default=0.0, help="Weight for quality-score distillation (anchor head).")
     parser.add_argument("--distill-cosine", action="store_true", help="Use cosine ramp-up of distill weights over epochs.")
     parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for teacher logits in distillation.")
-    parser.add_argument("--distill-feat", type=float, default=0.0, help="Weight for feature-map distillation from teacher backbone (CNN only).")
+    parser.add_argument(
+        "--distill-feat",
+        type=float,
+        default=0.0,
+        help="Weight for feature-map distillation from teacher backbone/model (CNN only).",
+    )
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--optimizer", choices=["adamw", "sgd"], default="adamw", help="Optimizer to use (UltraTinyOD can benefit from SGD).")
