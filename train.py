@@ -5,7 +5,7 @@ import os
 import random
 import math
 from copy import deepcopy
-from typing import Dict, Sequence, Optional, Tuple, List
+from typing import Dict, Sequence, Optional, Tuple, List, Set
 
 import numpy as np
 import torch
@@ -700,18 +700,36 @@ def _remove_dir(path: str):
         pass
 
 
-def _prune_epoch_dirs(run_dir: str, keep: int = 10):
-    dirs = []
+def _collect_best_epochs(run_dir: str, arch_tag: str, keep: int = 10) -> Set[int]:
+    pattern = os.path.join(run_dir, f"best_{arch_tag}_*_map_*.pt")
+    epochs = []
+    for p in glob.glob(pattern):
+        parsed = _parse_best_filename(p)
+        if parsed is None:
+            continue
+        _, epoch, _ = parsed
+        epochs.append(epoch)
+    epochs = sorted(set(epochs), reverse=True)
+    return set(epochs[:keep])
+
+
+def _prune_epoch_dirs(run_dir: str, keep: int = 10, best_epochs: Optional[Set[int]] = None):
+    best_dirs = []
+    other_dirs = []
     for name in os.listdir(run_dir):
         full = os.path.join(run_dir, name)
-        if os.path.isdir(full) and name.isdigit():
-            try:
-                mtime = os.path.getmtime(full)
-            except OSError:
-                continue
-            dirs.append((mtime, full))
-    dirs.sort(key=lambda x: x[0], reverse=True)  # newest first
-    for _, path in dirs[keep:]:
+        if not (os.path.isdir(full) and name.isdigit()):
+            continue
+        try:
+            epoch = int(name)
+        except ValueError:
+            continue
+        if best_epochs is not None and epoch in best_epochs:
+            best_dirs.append((epoch, full))
+        else:
+            other_dirs.append((epoch, full))
+    other_dirs.sort(key=lambda x: x[0], reverse=True)  # newest epoch first
+    for _, path in other_dirs[keep:]:
         try:
             for root, _, files in os.walk(path, topdown=False):
                 for f in files:
@@ -3027,6 +3045,15 @@ def main():
         writer.close()
         return
 
+    arch_tag = "utod" if args.arch == "ultratinyod" else ("cnn" if args.arch == "cnn" else "tf")
+    keep_eval_samples = bool(teacher_ckpt) and (
+        distill_kl > 0
+        or distill_box_l1 > 0
+        or distill_obj > 0
+        or distill_quality > 0
+        or distill_feat > 0
+    )
+
     for epoch in range(start_epoch, args.epochs):
         if args.qat:
             step_qat_schedule(model, epoch, args.qat_disable_observer_epoch, args.qat_freeze_bn_epoch)
@@ -3167,7 +3194,6 @@ def main():
 
             # Save checkpoints: best only when improved mAP; keep latest 10 by recency
             map_val = metrics.get("mAP@0.5", 0.0)
-            arch_tag = "utod" if args.arch == "ultratinyod" else ("cnn" if args.arch == "cnn" else "tf")
             if map_val > best_map:
                 best_map = map_val
                 state_metrics = metrics
@@ -3275,7 +3301,8 @@ def main():
                 _prune_best(run_dir, arch_tag, keep=10)
             else:
                 # Remove eval sample dir if not a new best
-                _remove_dir(epoch_dir)
+                if not keep_eval_samples:
+                    _remove_dir(epoch_dir)
 
         # Save last checkpoint every epoch (keep latest 10)
         state_for_last = {
@@ -3380,7 +3407,11 @@ def main():
         last_path = os.path.join(run_dir, last_name)
         torch.save(state_for_last, last_path)
         _prune_last(run_dir, keep=10)
-        _prune_epoch_dirs(run_dir, keep=10)
+        if keep_eval_samples:
+            best_epochs = _collect_best_epochs(run_dir, arch_tag, keep=10)
+            _prune_epoch_dirs(run_dir, keep=10, best_epochs=best_epochs)
+        else:
+            _prune_epoch_dirs(run_dir, keep=10)
 
         scheduler.step()
 
