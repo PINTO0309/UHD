@@ -1002,8 +1002,13 @@ class UltraTinyODHead(nn.Module):
         return raw_map, decoded
 
     def forward_raw_parts(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor, Optional[torch.Tensor]]:
+        self,
+        x: torch.Tensor,
+        need_obj: bool = True,
+        need_quality: bool = True,
+        need_cls: bool = True,
+        need_attr: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Return raw head outputs without concatenation (box, obj, quality, cls)."""
         b, c, h, w = x.shape
 
@@ -1028,11 +1033,13 @@ class UltraTinyODHead(nn.Module):
             box_feat = self.box_conv(x)
         box = self._conv2d_out(self.box_out, box_feat)
         # obj ブランチ
-        obj = self.obj_conv(x)
-        obj = self._conv2d_out(self.obj_out, obj)
+        obj = None
+        if need_obj:
+            obj = self.obj_conv(x)
+            obj = self._conv2d_out(self.obj_out, obj)
         # quality ブランチ
         quality = None
-        if self.has_quality:
+        if self.has_quality and need_quality:
             if self.use_iou_aware_head:
                 quality_feat = self.quality_tower(x)
             else:
@@ -1041,16 +1048,19 @@ class UltraTinyODHead(nn.Module):
         # cls ブランチ
         attr = None
         if self.disable_cls:
-            cls = x.new_zeros((b, 0, h, w))
+            cls = x.new_zeros((b, 0, h, w)) if need_cls else None
         else:
-            if self.use_iou_aware_head:
-                cls_feat = self.cls_tower(x)
-            else:
-                cls_feat = self.cls_reduce(x)
-                cls_feat = self.cls_conv(cls_feat)
-            cls = self._conv2d_out(self.cls_out, cls_feat)
-            if self.attr_out is not None:
-                attr = self._conv2d_out(self.attr_out, cls_feat)
+            cls = None
+            if need_cls or (need_attr and self.attr_out is not None):
+                if self.use_iou_aware_head:
+                    cls_feat = self.cls_tower(x)
+                else:
+                    cls_feat = self.cls_reduce(x)
+                    cls_feat = self.cls_conv(cls_feat)
+                if need_cls:
+                    cls = self._conv2d_out(self.cls_out, cls_feat)
+                if need_attr and self.attr_out is not None:
+                    attr = self._conv2d_out(self.attr_out, cls_feat)
 
         return box, obj, quality, cls, attr
 
