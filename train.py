@@ -3028,7 +3028,7 @@ def main():
             def _fmt_anchors(vals):
                 if not vals:
                     return "[]"
-                return "[" + ", ".join(f\"({w:.6f},{h:.6f})\" for w, h in vals) + "]"
+                return "[" + ", ".join(f"({w:.6f},{h:.6f})" for w, h in vals) + "]"
             _log_line(f"Override anchors (prev): {_fmt_anchors(prev_anchor_list)}")
             _log_line(f"Override anchors (new):  {_fmt_anchors(anchor_list)}")
             print(f"Overrode student anchors with teacher anchors (num_anchors={num_anchors}).")
