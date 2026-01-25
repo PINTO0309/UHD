@@ -1885,9 +1885,6 @@ overlayed on the detection image.
 | `--highbit-w-bits` | High-bit weight bits. | `8` |
 | `--highbit-a-bits` | High-bit activation bits. | `8` |
 | `--aug-config` | YAML for augmentations (applied in listed order). | `uhd/aug.yaml` |
-
-Notes:
-- When `--train-list`/`--val-list` are not provided, the split from `--train-split`/`--val-split` is written to `train.txt` and `val.txt` in the parent directory of `--image-dir`.
 | `--use-ema` | Enable EMA of model weights for evaluation/checkpointing. | `False` |
 | `--ema-decay` | EMA decay factor (ignored if EMA disabled). | `0.9998` |
 | `--coco-eval` | Run COCO-style evaluation. | `False` |
@@ -1944,11 +1941,12 @@ Notes:
 | `--dim-feedforward` | Transformer feedforward dimension. | `128` |
 | `--use-fpn` | Enable simple FPN for transformer backbone. | `False` |
 
-Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
-- `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
-- `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8). Channel widths and blocks per stage can be overridden via `--backbone-channels` / `--backbone-blocks`; optional long skips across stages via `--backbone-skip`; optional lightweight FPN fusion via `--backbone-fpn`.
-- `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with progressive widening and doubled refinements, ending at ~128ch, stride 8.
-All custom backbones can optionally apply SE/eSE on the backbone output via `--backbone-se {none,se,ese}`.
+- When `--train-list`/`--val-list` are not provided, the split from `--train-split`/`--val-split` is written to `train.txt` and `val.txt` in the parent directory of `--image-dir`.
+- Tiny CNN backbones (`--backbone`, optional; default keeps the original built-in CNN):
+  - `microcspnet`: CSP-tiny style stem (16/32/64/128) compressed to 64ch, stride 8 output.
+  - `ultratinyresnet`: 16→24→32→48 channel ResNet-like stack with three downsample steps (stride 8). Channel widths and blocks per stage can be overridden via `--backbone-channels` / `--backbone-blocks`; optional long skips across stages via `--backbone-skip`; optional lightweight FPN fusion via `--backbone-fpn`.
+  - `enhanced-shufflenet`: Enhanced ShuffleNetV2+ inspired (arXiv:2111.00902) with progressive widening and doubled refinements, ending at ~128ch, stride 8.
+- All custom backbones can optionally apply SE/eSE on the backbone output via `--backbone-se {none,se,ese}`.
 
 </details>
 
