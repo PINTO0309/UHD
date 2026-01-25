@@ -239,6 +239,11 @@ def parse_args():
     parser.add_argument("--teacher-backbone-arch", default=None, help="Teacher backbone architecture hint (e.g., dinov3_vits16, dinov3_vitb16).")
     parser.add_argument("--teacher-backbone-norm", default="imagenet", choices=["imagenet", "none"], help="Normalization applied to teacher backbone input.")
     parser.add_argument(
+        "--override-from-teacher-anchors",
+        action="store_true",
+        help="When distilling, override student anchors with teacher anchors (requires --teacher-ckpt).",
+    )
+    parser.add_argument(
         "--distill-kl",
         type=float,
         default=0.0,
@@ -2110,6 +2115,7 @@ def main():
     teacher_backbone = args.teacher_backbone
     teacher_backbone_arch = args.teacher_backbone_arch
     teacher_backbone_norm = args.teacher_backbone_norm
+    override_from_teacher_anchors = bool(args.override_from_teacher_anchors)
     teacher_ckpt = args.teacher_ckpt
     teacher_arch = args.teacher_arch
     teacher_num_queries = args.teacher_num_queries
@@ -2984,6 +2990,48 @@ def main():
             print(f"Teacher arch {t_arch} not supported for distillation (only transformer/cnn/ultratinyod). Skipping teacher.")
     if teacher_model_arch:
         teacher_arch = teacher_model_arch
+
+    distill_active = (
+        distill_kl > 0
+        or distill_box_l1 > 0
+        or distill_obj > 0
+        or distill_quality > 0
+        or distill_feat > 0
+    )
+    if override_from_teacher_anchors:
+        if not teacher_ckpt:
+            print("[WARN] --override-from-teacher-anchors set but no --teacher-ckpt provided; ignoring.")
+        elif args.val_only:
+            print("[WARN] --override-from-teacher-anchors ignored for --val-only.")
+        elif not distill_active:
+            print("[WARN] --override-from-teacher-anchors set but no distill losses active; ignoring.")
+        elif not arch_cnn_like:
+            print("[WARN] --override-from-teacher-anchors is only supported for CNN/UltraTinyOD; ignoring.")
+        elif not use_anchor:
+            print("[WARN] --override-from-teacher-anchors set but student is not using anchor head; ignoring.")
+        elif not teacher_use_anchor or teacher_anchor_tensor is None:
+            print("[WARN] --override-from-teacher-anchors set but teacher anchors unavailable; ignoring.")
+        else:
+            prev_num_anchors = int(anchors_tensor.shape[0]) if anchors_tensor is not None else None
+            prev_anchor_list = anchor_list
+            if prev_anchor_list is None and anchors_tensor is not None:
+                prev_anchor_list = [tuple(map(float, a)) for a in anchors_tensor.detach().cpu().numpy().tolist()]
+            anchors_tensor = teacher_anchor_tensor.detach().to(device)
+            num_anchors = int(anchors_tensor.shape[0])
+            anchor_list = [tuple(map(float, a)) for a in anchors_tensor.detach().cpu().numpy().tolist()]
+            if hasattr(model, "set_anchors"):
+                model.set_anchors(anchors_tensor)
+                if ema_helper is not None and hasattr(ema_helper.ema, "set_anchors"):
+                    ema_helper.ema.set_anchors(anchors_tensor)
+            if prev_num_anchors is not None and prev_num_anchors != num_anchors:
+                print("[WARN] Teacher anchors count differs; student head was re-initialized.")
+            def _fmt_anchors(vals):
+                if not vals:
+                    return "[]"
+                return "[" + ", ".join(f\"({w:.6f},{h:.6f})\" for w, h in vals) + "]"
+            _log_line(f"Override anchors (prev): {_fmt_anchors(prev_anchor_list)}")
+            _log_line(f"Override anchors (new):  {_fmt_anchors(anchor_list)}")
+            print(f"Overrode student anchors with teacher anchors (num_anchors={num_anchors}).")
 
     if args.val_only:
         sample_dir = os.path.join(run_dir, "val_only")
