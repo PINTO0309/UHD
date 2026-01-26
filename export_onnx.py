@@ -286,8 +286,8 @@ class UltraTinyODWithPost(nn.Module):
         return detections
 
     # Softplus optimization
-    def _softplus(x: torch.Tensor) -> torch.Tensor:
-        a = torch.abs(x)
+    def _softplus(self, x: torch.Tensor) -> torch.Tensor:
+        a = torch.relu(x) + torch.relu(-x) # abs
         b = torch.exp(-a)
         c = torch.log(1.0 + b)
         d = torch.relu(x)
@@ -409,6 +409,119 @@ class UltraTinyODWithPost(nn.Module):
             dim=-1,
         )
         return detections
+
+
+class UltraTinyODPrimitivePost(nn.Module):
+    """
+    Primitive postprocess that avoids topk/where/min/max/stack/cat by returning
+    decoded boxes and score maps without filtering.
+    """
+
+    def __init__(
+        self,
+        model: UltraTinyOD,
+        multi_label_mode: str = "none",
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.has_quality = bool(getattr(model.head, "has_quality", False))
+        self.score_mode = getattr(model, "score_mode", getattr(model.head, "score_mode", "obj_quality_cls"))
+        self.quality_power = float(getattr(model, "quality_power", getattr(model.head, "quality_power", 1.0)))
+        self.disable_cls = bool(getattr(model.head, "disable_cls", False))
+        self.multi_label_mode = (multi_label_mode or "none").lower()
+        self.use_cls = (not self.disable_cls) and int(getattr(model.head, "nc", 0)) > 0
+        self.has_attr = getattr(model.head, "attr_out", None) is not None
+        self.need_obj, self.need_quality, self.need_cls, self.need_attr = self._infer_needed_branches()
+
+    def _infer_needed_branches(self):
+        smode = (self.score_mode or "obj_quality_cls").lower()
+        need_quality = self.has_quality and smode in ("obj_quality_cls", "obj_quality", "quality_cls", "quality")
+        need_obj = smode in ("obj_quality_cls", "obj_quality", "obj_cls", "obj")
+        if smode in ("quality_cls", "quality") and not self.has_quality:
+            need_obj = True
+        need_cls = self.use_cls and (self.multi_label_mode in ("single", "separate") or smode in ("obj_quality_cls", "quality_cls", "obj_cls", "cls"))
+        need_attr = self.multi_label_mode == "separate" and self.has_attr
+        return need_obj, need_quality, need_cls, need_attr
+
+    def _score_base(self, obj: torch.Tensor, quality: Optional[torch.Tensor]) -> torch.Tensor:
+        quality_use = quality
+        if quality_use is not None and self.quality_power != 1.0:
+            quality_use = torch.pow(quality_use, self.quality_power)
+        smode = (self.score_mode or "obj_quality_cls").lower()
+        if smode == "quality_cls" and quality_use is not None:
+            score_base = quality_use
+        elif smode == "quality" and quality_use is not None:
+            score_base = quality_use
+        elif smode == "obj_cls":
+            score_base = obj
+        elif smode == "obj":
+            score_base = obj
+        elif smode == "cls":
+            score_base = torch.ones_like(obj)
+        else:
+            score_base = obj
+            if quality_use is not None:
+                score_base = score_base * quality_use
+        return score_base
+
+    def _softplus(self, x: torch.Tensor) -> torch.Tensor:
+        a = torch.relu(x) + torch.relu(-x) # abs
+        b = torch.exp(-a)
+        c = torch.log(1.0 + b)
+        d = torch.relu(x)
+        y = d + c
+        return y
+
+    def forward(self, x: torch.Tensor):
+        feat = self.model.backbone(x)
+        box, obj, quality, cls, attr = self.model.head.forward_raw_parts(
+            feat,
+            need_obj=self.need_obj,
+            need_quality=self.need_quality,
+            need_cls=self.need_cls,
+            need_attr=self.need_attr,
+        )
+        b, _, h, w = box.shape
+        na = self.model.num_anchors
+        box_map = box.view(b, na, 4, h, w).permute(0, 1, 3, 4, 2)
+        tx = box_map[..., 0]
+        ty = box_map[..., 1]
+        tw = box_map[..., 2]
+        th = box_map[..., 3]
+        obj_scores = obj.view(b, na, h, w).sigmoid() if obj is not None else tx.new_zeros((b, na, h, w))
+        quality_scores = quality.view(b, na, h, w).sigmoid() if quality is not None else None
+        if cls is not None:
+            cls_logits = cls.view(b, na, -1, h, w).permute(0, 1, 3, 4, 2)
+            cls_scores = cls_logits.sigmoid()
+        else:
+            cls_scores = None
+        if attr is not None:
+            attr_scores = attr.view(b, na, -1, h, w).permute(0, 1, 3, 4, 2).sigmoid()
+        else:
+            attr_scores = None
+
+        gx = torch.arange(w, device=tx.device).view(1, 1, 1, w).expand(1, 1, h, w)
+        gy = torch.arange(h, device=tx.device).view(1, 1, h, 1).expand(1, 1, h, w)
+
+        anchors = self.model.head.anchors.to(tx.device)
+        if self.model.use_improved_head:
+            anchors = anchors * self.model.head.wh_scale.to(tx.device)
+        pw = anchors[:, 0].view(1, na, 1, 1)
+        ph = anchors[:, 1].view(1, na, 1, 1)
+
+        cx = (tx.sigmoid() + gx) / float(w)
+        cy = (ty.sigmoid() + gy) / float(h)
+        bw = pw * self._softplus(tw)
+        bh = ph * self._softplus(th)
+
+        score_base = self._score_base(obj_scores, quality_scores)
+
+        outputs = (cx, cy, bw, bh, score_base)
+        if cls_scores is not None:
+            outputs = outputs + (cls_scores,)
+        if attr_scores is not None:
+            outputs = outputs + (attr_scores,)
+        return outputs
 
 
 class UltraTinyODRawWithAnchors(nn.Module):
@@ -821,6 +934,11 @@ def build_argparser():
     parser.add_argument("--no-merge-postprocess", dest="merge_postprocess", action="store_false", help="Export raw model only.")
     parser.set_defaults(merge_postprocess=True)
     parser.add_argument(
+        "--merge-primitive-postprocess",
+        action="store_true",
+        help="Merge a primitive postprocess that avoids min/max/where/topk/stack/cat and returns decoded maps.",
+    )
+    parser.add_argument(
         "--noconcat_box_obj_quality_cls",
         action="store_true",
         help="When exporting raw model, do not concatenate box/obj/quality/cls into a single tensor.",
@@ -841,6 +959,10 @@ def main():
     args = parser.parse_args()
     if args.noconcat_box_obj_quality_cls and args.merge_postprocess:
         parser.error("--noconcat_box_obj_quality_cls requires --no-merge-postprocess.")
+    if args.merge_primitive_postprocess and not args.merge_postprocess:
+        parser.error("--merge-primitive-postprocess cannot be used with --no-merge-postprocess.")
+    if args.merge_primitive_postprocess and args.noconcat_box_obj_quality_cls:
+        parser.error("--merge-primitive-postprocess cannot be used with --noconcat_box_obj_quality_cls.")
 
     ckpt_path = args.checkpoint or args.weights
     state, meta = load_checkpoint(ckpt_path)
@@ -893,7 +1015,17 @@ def main():
         if anchors_tensor.ndim == 2 and anchors_tensor.shape[1] == 2:
             model.head.set_anchors(anchors_tensor)
 
-    if not args.merge_postprocess:
+    if args.merge_primitive_postprocess:
+        export_module = UltraTinyODPrimitivePost(
+            model,
+            multi_label_mode=multi_label_mode,
+        )
+        output_names = ["cx", "cy", "bw", "bh", "score"]
+        if getattr(export_module, "need_cls", False):
+            output_names.append("cls_scores")
+        if getattr(export_module, "need_attr", False):
+            output_names.append("attr_scores")
+    elif not args.merge_postprocess:
         if args.noconcat_box_obj_quality_cls:
             export_module = UltraTinyODRawPartsWithAnchors(model, multi_label_mode=multi_label_mode)
             output_names = ["box"]
@@ -998,6 +1130,9 @@ def main():
             ",".join(getattr(export_module, "raw_concat_fields", [])) if hasattr(export_module, "raw_concat_fields") else None
         )
         raw_concat_layout = "anchor_interleaved"
+    postprocess_mode = "full" if args.merge_postprocess else "raw"
+    if args.merge_primitive_postprocess:
+        postprocess_mode = "primitive"
 
     update_metadata_props(
         args.output,
@@ -1013,6 +1148,7 @@ def main():
             "disable_cls": str(bool(getattr(model.head, "disable_cls", False))).lower(),
             "raw_concat_fields": raw_concat_fields,
             "raw_concat_layout": raw_concat_layout,
+            "postprocess_mode": postprocess_mode,
             "multi_label_mode": (
                 meta.get("multi_label_mode")
                 if isinstance(meta, dict) and meta.get("multi_label_mode")
