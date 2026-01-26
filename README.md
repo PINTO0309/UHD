@@ -2047,6 +2047,108 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 
 ## ONNX export
 
+### 1. No-Decode Post-Process - 1 class
+
+<details><summary>Click to expand</summary>
+
+```
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=32
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/ultratinyod_anc8_w32_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0287_map_0.29338.pt
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
+--opset 17 \
+--no-merge-postprocess \
+--noconcat_box_obj_quality_cls
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=40
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/ultratinyod_anc8_w40_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0232_map_0.31172.pt
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
+--opset 17 \
+--no-merge-postprocess \
+--noconcat_box_obj_quality_cls
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl
+```
+<img width="640" alt="image" src="https://github.com/user-attachments/assets/c6d5475a-c56a-4019-a24d-45543fafa4ff" />
+
+</details>
+
+### 2. Decoded Post-Process - 1 class
+
+<details><summary>Click to expand</summary>
+
+```
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=32
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/ultratinyod_anc8_w32_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0287_map_0.29338.pt
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
+--opset 17 \
+--merge-primitive-postprocess
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=40
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/ultratinyod_anc8_w40_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0232_map_0.31172.pt
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
+--opset 17 \
+--merge-primitive-postprocess
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl
+```
+<img width="640" alt="image" src="https://github.com/user-attachments/assets/2b734171-b2db-4914-9524-bc3b58fff6d9" />
+
+</details>
+
+### 3. No-Decode Post-Process - multi-class
+
 <details><summary>Click to expand</summary>
 
 - Export a checkpoint to ONNX (auto-detects arch from checkpoint unless overridden):
