@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+uv run python demo_uhd.py \
+--camera 0 \
+--img-size 64x64 \
+--onnx ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx
+
+uv run python demo_uhd.py \
+--camera 0 \
+--img-size 64x64 \
+--onnx ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.onnx
+"""
 import argparse
 import os
 os.environ["QT_LOGGING_RULES"] = "*.warning=false"
@@ -249,6 +260,34 @@ def _detect_raw_parts(outputs_info) -> Optional[dict]:
             "attr": name_map.get("attr"),
         }
     return None
+
+
+def _detect_primitive_outputs(outputs_info) -> Optional[dict]:
+    name_map = {o.name.lower(): o.name for o in outputs_info}
+
+    def _pick(*names: str) -> Optional[str]:
+        for n in names:
+            if n in name_map:
+                return name_map[n]
+        return None
+
+    cx = _pick("cx")
+    cy = _pick("cy")
+    bw = _pick("bw")
+    bh = _pick("bh")
+    score = _pick("score", "score_base", "scoremap", "score_map")
+    if not (cx and cy and bw and bh and score):
+        return None
+
+    return {
+        "cx": cx,
+        "cy": cy,
+        "bw": bw,
+        "bh": bh,
+        "score": score,
+        "cls_scores": _pick("cls_scores", "cls_score", "cls"),
+        "attr_scores": _pick("attr_scores", "attr_score", "attr"),
+    }
 
 
 def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
@@ -750,6 +789,209 @@ def decode_ultratinyod_raw(
         dets.append(stacked)
     if not dets:
         return np.zeros((0, 6), dtype=np.float32)
+        return dets[0]
+
+
+def decode_ultratinyod_maps(
+    cx: np.ndarray,
+    cy: np.ndarray,
+    bw: np.ndarray,
+    bh: np.ndarray,
+    score: np.ndarray,
+    conf_thresh: float,
+    topk: int = 100,
+    multi_label_mode: str = "none",
+    det_class_indices: Optional[List[int]] = None,
+    cls_scores: Optional[np.ndarray] = None,
+    attr_scores: Optional[np.ndarray] = None,
+    attr_class_indices: Optional[List[int]] = None,
+) -> np.ndarray:
+    if cx.ndim == 3:
+        cx = cx[None, ...]
+    if cy.ndim == 3:
+        cy = cy[None, ...]
+    if bw.ndim == 3:
+        bw = bw[None, ...]
+    if bh.ndim == 3:
+        bh = bh[None, ...]
+    if score.ndim == 3:
+        score = score[None, ...]
+
+    if cx.ndim != 4 or cy.ndim != 4 or bw.ndim != 4 or bh.ndim != 4 or score.ndim != 4:
+        raise ValueError("Primitive map outputs must be 4D (B, A, H, W).")
+    b, na, h, w = score.shape
+
+    def _prep_scores(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        if arr.ndim == 4:
+            if arr.shape[1] % na == 0:
+                c = int(arr.shape[1] // na)
+                return arr.reshape(b, na, c, h, w).transpose(0, 1, 3, 4, 2)
+            return arr[..., None]
+        if arr.ndim == 5:
+            return arr
+        raise ValueError(f"Unexpected scores ndim={arr.ndim}")
+
+    cls_scores = _prep_scores(cls_scores)
+    attr_scores = _prep_scores(attr_scores)
+
+    def _topk_multi_label(
+        scores_in: np.ndarray,
+        cx_in: np.ndarray,
+        cy_in: np.ndarray,
+        bw_in: np.ndarray,
+        bh_in: np.ndarray,
+        class_map: Optional[List[int]],
+    ) -> np.ndarray:
+        bsz, _, _, _, c = scores_in.shape
+        scores_flat = scores_in.reshape(bsz, -1)
+        if conf_thresh > 0:
+            scores_flat = np.where(scores_flat >= conf_thresh, scores_flat, np.zeros_like(scores_flat))
+        k = min(int(topk), scores_flat.shape[1])
+        top_idx = np.argsort(-scores_flat, axis=1)[:, :k]
+        top_scores = np.take_along_axis(scores_flat, top_idx, axis=1)
+        top_cls = top_idx % c
+        top_cell = top_idx // c
+
+        cx_flat = cx_in.reshape(bsz, -1)
+        cy_flat = cy_in.reshape(bsz, -1)
+        bw_flat = bw_in.reshape(bsz, -1)
+        bh_flat = bh_in.reshape(bsz, -1)
+        top_cx = np.take_along_axis(cx_flat, top_cell, axis=1)
+        top_cy = np.take_along_axis(cy_flat, top_cell, axis=1)
+        top_bw = np.take_along_axis(bw_flat, top_cell, axis=1)
+        top_bh = np.take_along_axis(bh_flat, top_cell, axis=1)
+        if class_map is not None and len(class_map) == c:
+            cm = np.asarray(class_map, dtype=np.float32)
+            top_cls = cm[top_cls]
+        dets = []
+        for i in range(bsz):
+            mask = (top_scores[i] > 0.0)
+            if not np.any(mask):
+                continue
+            stacked = np.stack(
+                [
+                    top_scores[i][mask],
+                    top_cls[i][mask].astype(np.float32),
+                    top_cx[i][mask],
+                    top_cy[i][mask],
+                    top_bw[i][mask],
+                    top_bh[i][mask],
+                ],
+                axis=-1,
+            )
+            finite_mask = np.all(np.isfinite(stacked), axis=-1)
+            stacked = stacked[finite_mask]
+            dets.append(stacked)
+        if not dets:
+            return np.zeros((0, 6), dtype=np.float32)
+        return dets[0]
+
+    if cls_scores is None:
+        scores_flat = score.reshape(b, -1)
+        if conf_thresh > 0:
+            scores_flat = np.where(scores_flat >= conf_thresh, scores_flat, np.zeros_like(scores_flat))
+        k = min(int(topk), scores_flat.shape[1])
+        top_idx = np.argsort(-scores_flat, axis=1)[:, :k]
+        top_scores = np.take_along_axis(scores_flat, top_idx, axis=1)
+        top_cls = np.zeros_like(top_scores, dtype=np.float32)
+        top_cell = top_idx
+
+        cx_flat = cx.reshape(b, -1)
+        cy_flat = cy.reshape(b, -1)
+        bw_flat = bw.reshape(b, -1)
+        bh_flat = bh.reshape(b, -1)
+        top_cx = np.take_along_axis(cx_flat, top_cell, axis=1)
+        top_cy = np.take_along_axis(cy_flat, top_cell, axis=1)
+        top_bw = np.take_along_axis(bw_flat, top_cell, axis=1)
+        top_bh = np.take_along_axis(bh_flat, top_cell, axis=1)
+
+        dets = []
+        for i in range(b):
+            mask = (top_scores[i] > 0.0)
+            if not np.any(mask):
+                continue
+            stacked = np.stack(
+                [
+                    top_scores[i][mask],
+                    top_cls[i][mask].astype(np.float32),
+                    top_cx[i][mask],
+                    top_cy[i][mask],
+                    top_bw[i][mask],
+                    top_bh[i][mask],
+                ],
+                axis=-1,
+            )
+            finite_mask = np.all(np.isfinite(stacked), axis=-1)
+            stacked = stacked[finite_mask]
+            dets.append(stacked)
+        if not dets:
+            return np.zeros((0, 6), dtype=np.float32)
+        return dets[0]
+
+    scores = score[..., None] * cls_scores
+    mode_label = str(multi_label_mode or "none").lower()
+    if mode_label in ("single", "separate"):
+        det_scores = scores
+        class_map = det_class_indices
+        if mode_label == "separate" and attr_scores is not None:
+            det_scores = np.concatenate([det_scores, score[..., None] * attr_scores], axis=-1)
+            if det_class_indices is not None or attr_class_indices is not None:
+                det_map = det_class_indices or list(range(det_scores.shape[-1] - attr_scores.shape[-1]))
+                attr_map = attr_class_indices or list(range(attr_scores.shape[-1]))
+                class_map = det_map + attr_map
+        return _topk_multi_label(det_scores, cx, cy, bw, bh, class_map)
+
+    if conf_thresh > 0:
+        scores = np.where(scores >= conf_thresh, scores, np.zeros_like(scores))
+    best_cls = scores.argmax(axis=-1)
+    best_scores = scores.max(axis=-1)
+
+    cx_flat = cx.reshape(b, -1)
+    cy_flat = cy.reshape(b, -1)
+    bw_flat = bw.reshape(b, -1)
+    bh_flat = bh.reshape(b, -1)
+    scores_flat = best_scores.reshape(b, -1)
+    cls_flat = best_cls.reshape(b, -1)
+
+    k = min(int(topk), scores_flat.shape[1])
+    top_idx = np.argsort(-scores_flat, axis=1)[:, :k]
+
+    def _gather(t: np.ndarray) -> np.ndarray:
+        return np.take_along_axis(t, top_idx, axis=1)
+
+    top_scores = _gather(scores_flat)
+    top_cls = _gather(cls_flat)
+    if det_class_indices is not None and len(det_class_indices) > 0:
+        cm = np.asarray(det_class_indices, dtype=np.float32)
+        top_cls = cm[top_cls]
+    top_cx = _gather(cx_flat)
+    top_cy = _gather(cy_flat)
+    top_bw = _gather(bw_flat)
+    top_bh = _gather(bh_flat)
+
+    dets = []
+    for i in range(b):
+        mask = (top_scores[i] > 0.0)
+        if not np.any(mask):
+            continue
+        stacked = np.stack(
+            [
+                top_scores[i][mask],
+                top_cls[i][mask].astype(np.float32),
+                top_cx[i][mask],
+                top_cy[i][mask],
+                top_bw[i][mask],
+                top_bh[i][mask],
+            ],
+            axis=-1,
+        )
+        finite_mask = np.all(np.isfinite(stacked), axis=-1)
+        stacked = stacked[finite_mask]
+        dets.append(stacked)
+    if not dets:
+        return np.zeros((0, 6), dtype=np.float32)
     return dets[0]
 
 
@@ -781,9 +1023,10 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     outputs_info = session.get_outputs()
     anchor_hint = _parse_anchor_hint_from_path(onnx_path)
     raw_parts = _detect_raw_parts(outputs_info)
+    primitive_outputs = _detect_primitive_outputs(outputs_info)
 
     decoded_output = None
-    if raw_parts is None:
+    if raw_parts is None and primitive_outputs is None:
         for o in outputs_info:
             if _is_decoded_shape(o.shape):
                 decoded_output = o.name
@@ -795,7 +1038,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
     raw_channels = None
     raw_output = None
 
-    if decoded_output is None:
+    if decoded_output is None and primitive_outputs is None:
         # Probe with a dummy forward to inspect actual shapes and capture anchors/wh_scale outputs if present.
         _, c_in, h_in, w_in = input_info.shape
 
@@ -858,16 +1101,24 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
             output_shape = outs[0].shape if outs else outputs_info[0].shape
     else:
         decoded = True
-        output_shape = next(o.shape for o in outputs_info if o.name == decoded_output)
+        if decoded_output is not None:
+            output_shape = next(o.shape for o in outputs_info if o.name == decoded_output)
+        else:
+            decoded = False
+            output_shape = {k: next(o.shape for o in outputs_info if o.name == v) for k, v in primitive_outputs.items() if v}
 
     if decoded:
         kind = "decoded output"
+    elif primitive_outputs is not None:
+        kind = "primitive decoded maps"
     elif raw_parts is not None:
         kind = "raw parts output + demo post-process"
     else:
         kind = "raw output + demo post-process"
     print(f"[INFO] Detected {kind} (output shape: {output_shape})")
     if raw_parts is not None and not raw_parts.get("cls"):
+        disable_cls = True
+    if primitive_outputs is not None and not primitive_outputs.get("cls_scores"):
         disable_cls = True
     if not disable_cls and raw_channels is not None:
         na_guess = None
@@ -894,6 +1145,7 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         "decoded_output": decoded_output,
         "raw_output": raw_output,
         "raw_parts": raw_parts,
+        "primitive_outputs": primitive_outputs,
         "dynamic_resize": dynamic_resize,
         "resize_mode": resize_mode,
         "score_mode": score_mode,
@@ -1059,6 +1311,28 @@ def run_and_decode_onnx(
     multi_label_mode = session_info.get("multi_label_mode", "none")
     det_class_indices = session_info.get("det_class_indices")
     attr_class_indices = session_info.get("attr_class_indices")
+    if session_info.get("primitive_outputs"):
+        parts = session_info["primitive_outputs"]
+        outputs = [parts["cx"], parts["cy"], parts["bw"], parts["bh"], parts["score"]]
+        if parts.get("cls_scores") is not None:
+            outputs.append(parts["cls_scores"])
+        if parts.get("attr_scores") is not None:
+            outputs.append(parts["attr_scores"])
+        run_outs = session.run(outputs, {session_info["input_name"]: inp})
+        out_map = {name: val for name, val in zip(outputs, run_outs)}
+        return decode_ultratinyod_maps(
+            out_map[parts["cx"]],
+            out_map[parts["cy"]],
+            out_map[parts["bw"]],
+            out_map[parts["bh"]],
+            out_map[parts["score"]],
+            conf_thresh=0.0,
+            multi_label_mode=multi_label_mode,
+            det_class_indices=det_class_indices,
+            cls_scores=out_map.get(parts.get("cls_scores") or ""),
+            attr_scores=out_map.get(parts.get("attr_scores") or ""),
+            attr_class_indices=attr_class_indices,
+        )
     if session_info.get("raw_parts"):
         parts = session_info["raw_parts"]
         anchors = session_info.get("anchors")
@@ -1376,6 +1650,7 @@ def run_images(
     actual_size: bool,
     use_nms: bool,
     nms_iou: float,
+    use_dynamic_threshold: bool,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1401,7 +1676,7 @@ def run_images(
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         used_thresh = conf_thresh
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
-        if not boxes and dets.size > 0 and conf_thresh > 0.05:
+        if use_dynamic_threshold and not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
             used_thresh = fallback_thresh
@@ -1424,6 +1699,7 @@ def run_camera(
     actual_size: bool = False,
     use_nms: bool = False,
     nms_iou: float = 0.8,
+    use_dynamic_threshold: bool = False,
 ) -> None:
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
@@ -1448,7 +1724,7 @@ def run_camera(
         dets = run_and_decode(session, session_info, inp, conf_thresh)
         used_thresh = conf_thresh
         boxes = postprocess(dets, (target_h, target_w), conf_thresh)
-        if not boxes and dets.size > 0 and conf_thresh > 0.05:
+        if use_dynamic_threshold and not boxes and dets.size > 0 and conf_thresh > 0.05:
             fallback_thresh = max(0.05, conf_thresh * 0.5)
             boxes = postprocess(dets, (target_h, target_w), fallback_thresh)
             used_thresh = fallback_thresh
@@ -1531,7 +1807,7 @@ def build_args():
     model.add_argument("--tflite", help="Path to LiteRT (TFLite) model.")
     parser.add_argument("--output", type=str, default="demo_output", help="Output directory for image mode.")
     parser.add_argument("--img-size", type=str, default="64x64", help="Input size HxW, e.g., 64x64.")
-    parser.add_argument("--conf-thresh", type=float, default=0.45, help="Confidence threshold.")
+    parser.add_argument("--conf-thresh", type=float, default=0.80, help="Confidence threshold.")
     parser.add_argument(
         "--score-mode",
         type=str,
@@ -1570,8 +1846,13 @@ def build_args():
     parser.add_argument(
         "--nms-iou",
         type=float,
-        default=0.8,
+        default=0.45,
         help="IoU threshold for NMS (effective only when --use-nms is set).",
+    )
+    parser.add_argument(
+        "--use-dynamic-threshold",
+        action="store_true",
+        help="Enable dynamic confidence threshold fallback when no boxes are found.",
     )
     return parser
 
@@ -1606,6 +1887,7 @@ def main():
             args.actual_size,
             args.use_nms,
             args.nms_iou,
+            args.use_dynamic_threshold,
         )
     else:
         record_path = Path(args.record) if args.record else None
@@ -1619,6 +1901,7 @@ def main():
             args.actual_size,
             args.use_nms,
             args.nms_iou,
+            args.use_dynamic_threshold,
         )
 
 
