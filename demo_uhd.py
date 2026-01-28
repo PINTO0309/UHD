@@ -251,10 +251,10 @@ def _build_fallback_anchors(na: int) -> np.ndarray:
 
 def _detect_raw_parts(outputs_info) -> Optional[dict]:
     name_map = {o.name.lower(): o.name for o in outputs_info}
-    if "box" in name_map and "obj" in name_map:
+    if "box" in name_map and ("obj" in name_map or "quality" in name_map):
         return {
             "box": name_map["box"],
-            "obj": name_map["obj"],
+            "obj": name_map.get("obj"),
             "quality": name_map.get("quality"),
             "cls": name_map.get("cls"),
             "attr": name_map.get("attr"),
@@ -292,28 +292,34 @@ def _detect_primitive_outputs(outputs_info) -> Optional[dict]:
 
 def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
     name_map = {d.get("name", "").lower(): d for d in output_details}
-    if "box" in name_map and "obj" in name_map:
+    if "box" in name_map and ("obj" in name_map or "quality" in name_map):
         raw_parts = {
             "box": name_map["box"]["index"],
-            "obj": name_map["obj"]["index"],
+            "obj": name_map.get("obj", {}).get("index") if "obj" in name_map else None,
             "quality": name_map.get("quality", {}).get("index") if "quality" in name_map else None,
             "cls": name_map.get("cls", {}).get("index") if "cls" in name_map else None,
             "attr": name_map.get("attr", {}).get("index") if "attr" in name_map else None,
         }
         detail_map = {d["index"]: d for d in output_details}
         box_detail = detail_map.get(raw_parts["box"])
-        obj_detail = detail_map.get(raw_parts["obj"])
+        obj_detail = detail_map.get(raw_parts["obj"]) if raw_parts.get("obj") is not None else None
         cls_detail = detail_map.get(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
-        if not box_detail or not obj_detail:
+        if not box_detail:
             return None
         box_shape = box_detail.get("shape")
-        obj_shape = obj_detail.get("shape")
+        obj_shape = obj_detail.get("shape") if obj_detail else None
         cls_shape = cls_detail.get("shape") if cls_detail else None
-        if box_shape is None or obj_shape is None:
+        if box_shape is None:
             return None
-        a = int(obj_shape[-1])
-        if a <= 0 or int(box_shape[-1]) != 4 * a:
-            return None
+        a = None
+        if obj_shape is not None:
+            a = int(obj_shape[-1])
+            if a <= 0 or int(box_shape[-1]) != 4 * a:
+                return None
+        else:
+            if int(box_shape[-1]) % 4 != 0:
+                return None
+            a = int(box_shape[-1]) // 4
         if cls_shape is not None and int(cls_shape[-1]) % a != 0:
             return None
         if raw_parts.get("quality") is not None:
@@ -321,6 +327,8 @@ def _detect_raw_parts_litert(output_details: List[dict]) -> Optional[dict]:
             quality_shape = quality_detail.get("shape") if quality_detail else None
             if quality_shape is None or int(quality_shape[-1]) != a:
                 return None
+        if raw_parts.get("obj") is None and raw_parts.get("quality") is None:
+            return None
         return raw_parts
     return None
 
@@ -369,17 +377,26 @@ def _infer_raw_parts_litert(
 
 def _assemble_raw_from_parts(
     box: np.ndarray,
-    obj: np.ndarray,
+    obj: Optional[np.ndarray],
     quality: Optional[np.ndarray],
     cls: Optional[np.ndarray],
 ) -> Tuple[np.ndarray, int]:
-    if box is None or obj is None:
-        raise ValueError("Missing box/obj output for raw parts assembly.")
-    if box.ndim != 4 or obj.ndim != 4:
-        raise ValueError("Expected 4D tensors for box/obj outputs.")
+    if box is None:
+        raise ValueError("Missing box output for raw parts assembly.")
+    if box.ndim != 4:
+        raise ValueError("Expected 4D tensor for box output.")
     b, c_box, h, w = box.shape
-    _, c_obj, _, _ = obj.shape
-    na = int(c_obj)
+    na = None
+    if obj is not None:
+        if obj.ndim != 4:
+            raise ValueError("Expected 4D tensor for obj output.")
+        _, c_obj, _, _ = obj.shape
+        na = int(c_obj)
+    else:
+        if c_box % 4 != 0:
+            raise ValueError(f"Unexpected box channels: {c_box} (cannot infer anchors).")
+        na = int(c_box // 4)
+        obj = np.zeros((b, na, h, w), dtype=box.dtype)
     if na <= 0:
         raise ValueError("Invalid anchor count from obj output.")
     if c_box != na * 4:
@@ -1067,19 +1084,22 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
                     has_quality = True
         if raw_parts is not None:
             box = out_map.get(raw_parts["box"])
-            obj = out_map.get(raw_parts["obj"])
+            obj = out_map.get(raw_parts["obj"]) if raw_parts.get("obj") else None
             quality = out_map.get(raw_parts.get("quality") or "")
             cls = out_map.get(raw_parts["cls"]) if raw_parts.get("cls") else None
+            na = None
             if obj is not None:
                 na = int(obj.shape[1])
-                if anchor_hint is None:
-                    anchor_hint = na
-                c_box = int(box.shape[1]) if box is not None else 0
-                c_obj = int(obj.shape[1])
-                c_quality = int(quality.shape[1]) if quality is not None else 0
-                c_cls = int(cls.shape[1]) if cls is not None else 0
-                raw_channels = c_box + c_obj + c_quality + c_cls
-                has_quality = has_quality or quality is not None or wh_scale is not None
+            elif box is not None and int(box.shape[1]) % 4 == 0:
+                na = int(box.shape[1] // 4)
+            if na is not None and anchor_hint is None:
+                anchor_hint = na
+            c_box = int(box.shape[1]) if box is not None else 0
+            c_obj = int(obj.shape[1]) if obj is not None else 0
+            c_quality = int(quality.shape[1]) if quality is not None else 0
+            c_cls = int(cls.shape[1]) if cls is not None else 0
+            raw_channels = c_box + c_obj + c_quality + c_cls
+            has_quality = has_quality or quality is not None or wh_scale is not None
         if raw_output is None and raw_parts is None and outputs_info:
             raw_output = outputs_info[0].name
             raw_shape = outs[0].shape if outs else outputs_info[0].shape
@@ -1207,18 +1227,24 @@ def load_litert_session(tflite_path: str, img_size: Tuple[int, int]):
                 raw_channels = int(shape[-1])
     elif raw_parts is not None:
         detail_map = {d["index"]: d for d in output_details}
-        obj_detail = detail_map.get(raw_parts["obj"])
+        obj_detail = detail_map.get(raw_parts["obj"]) if raw_parts.get("obj") is not None else None
         box_detail = detail_map.get(raw_parts["box"])
         quality_detail = detail_map.get(raw_parts.get("quality")) if raw_parts.get("quality") is not None else None
         cls_detail = detail_map.get(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
-        if obj_detail and box_detail:
-            na = int(obj_detail.get("shape")[-1])
-            c_box = int(box_detail.get("shape")[-1])
-            c_quality = int(quality_detail.get("shape")[-1]) if quality_detail else 0
-            c_cls = int(cls_detail.get("shape")[-1]) if cls_detail else 0
-            if c_box != na * 4 and quality_detail and c_quality == na * 4:
-                c_box, c_quality = c_quality, c_box
-            raw_channels = c_box + na + c_quality + c_cls
+        if box_detail:
+            if obj_detail is not None:
+                na = int(obj_detail.get("shape")[-1])
+            else:
+                box_ch = int(box_detail.get("shape")[-1])
+                na = int(box_ch // 4) if box_ch % 4 == 0 else None
+            if na is not None:
+                c_box = int(box_detail.get("shape")[-1])
+                c_obj = int(obj_detail.get("shape")[-1]) if obj_detail else 0
+                c_quality = int(quality_detail.get("shape")[-1]) if quality_detail else 0
+                c_cls = int(cls_detail.get("shape")[-1]) if cls_detail else 0
+                if c_box != na * 4 and quality_detail and c_quality == na * 4:
+                    c_box, c_quality = c_quality, c_box
+                raw_channels = c_box + c_obj + c_quality + c_cls
 
     sidecar_path = Path(tflite_path)
     anchors = _load_litert_sidecar(sidecar_path, "anchors")
@@ -1338,7 +1364,7 @@ def run_and_decode_onnx(
         anchors = session_info.get("anchors")
         wh_scale = session_info.get("wh_scale")
 
-        outputs = [parts["box"], parts["obj"], parts.get("quality"), parts.get("cls")]
+        outputs = [parts.get("box"), parts.get("obj"), parts.get("quality"), parts.get("cls")]
         if parts.get("attr") is not None:
             outputs.append(parts.get("attr"))
         outputs = [o for o in outputs if o]
@@ -1348,13 +1374,15 @@ def run_and_decode_onnx(
         out_map = {name: val for name, val in zip(outputs, run_outs)}
 
         box = out_map.get(parts["box"])
-        obj = out_map.get(parts["obj"])
+        obj = out_map.get(parts["obj"]) if parts.get("obj") else None
         quality = out_map.get(parts.get("quality") or "")
         cls = out_map.get(parts["cls"]) if parts.get("cls") else None
         attr = out_map.get(parts.get("attr") or "")
 
-        if box is None or obj is None:
-            raise RuntimeError("Missing raw parts outputs from ONNX session.")
+        if box is None:
+            raise RuntimeError("Missing box output from ONNX session.")
+        if obj is None and quality is None:
+            raise RuntimeError("Missing obj/quality outputs from ONNX session.")
 
         for name, val in out_map.items():
             if val.ndim == 2 and val.shape[1] == 2:
@@ -1368,7 +1396,7 @@ def run_and_decode_onnx(
         raw, _ = _assemble_raw_from_parts(box, obj, quality, cls)
 
         if anchors is None:
-            na = int(obj.shape[1])
+            na = int(obj.shape[1]) if obj is not None else int(box.shape[1] // 4)
             na_hint = session_info.get("anchor_hint")
             na = na_hint if na_hint is not None else na
             anchors = _build_fallback_anchors(int(na))
@@ -1489,11 +1517,16 @@ def run_and_decode_litert(
             return val
 
         box = _get_tensor(raw_parts["box"])
-        obj = _get_tensor(raw_parts["obj"])
+        obj = _get_tensor(raw_parts["obj"]) if raw_parts.get("obj") is not None else None
         cls = _get_tensor(raw_parts["cls"]) if raw_parts.get("cls") is not None else None
         quality = _get_tensor(raw_parts["quality"]) if raw_parts.get("quality") is not None else None
 
-        na = int(obj.shape[-1])
+        if obj is not None:
+            na = int(obj.shape[-1])
+        else:
+            if int(box.shape[-1]) % 4 != 0:
+                raise ValueError(f"Unexpected box channels {box.shape[-1]} (cannot infer anchors).")
+            na = int(box.shape[-1]) // 4
         if box.shape[-1] != na * 4:
             raise ValueError(f"Unexpected box channels {box.shape[-1]} for anchors={na}.")
         if quality is not None and quality.shape[-1] != na:
@@ -1526,7 +1559,7 @@ def run_and_decode_litert(
             return np.transpose(arr, (0, 3, 1, 2))
 
         raw_box = _nhwc_to_nchw(box)
-        raw_obj = _nhwc_to_nchw(obj)
+        raw_obj = _nhwc_to_nchw(obj) if obj is not None else None
         raw_cls = _nhwc_to_nchw(cls) if cls is not None else None
         raw_quality = _nhwc_to_nchw(quality) if quality is not None else None
 
