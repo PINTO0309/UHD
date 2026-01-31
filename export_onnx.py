@@ -148,6 +148,15 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
             sppf_scale_mode = "conv"
         elif any(k.startswith("backbone.sppf.scale_x.weight") for k in state.keys()):
             sppf_scale_mode = "bn"
+    dw_mode = str(meta.get("utod_conv", "dw") or "dw").lower() if isinstance(meta, dict) else "dw"
+    if dw_mode not in ("dw", "std"):
+        dw_mode = "dw"
+    has_dw = any(k.startswith("backbone.block1.dw.") for k in state.keys())
+    has_std = any(k.startswith("backbone.block1.conv.") for k in state.keys())
+    if has_std and not has_dw:
+        dw_mode = "std"
+    elif has_dw and not has_std:
+        dw_mode = "dw"
 
     cfg = UltraTinyODConfig(
         num_classes=num_classes,
@@ -167,6 +176,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         large_obj_branch_depth=large_obj_depth,
         large_obj_branch_expansion=large_obj_ch_scale,
         sppf_scale_mode=sppf_scale_mode,
+        dw_mode=dw_mode,
     )
     overrides = {
         "num_classes": num_classes,
@@ -192,6 +202,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "large_obj_branch_depth": large_obj_depth,
         "large_obj_branch_expansion": large_obj_ch_scale,
         "sppf_scale_mode": sppf_scale_mode,
+        "dw_mode": dw_mode,
     }
     return cfg, overrides
 

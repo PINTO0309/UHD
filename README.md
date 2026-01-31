@@ -1905,6 +1905,7 @@ overlayed on the detection image.
 | `--use-skip` | Enable skip-style fusion in the CNN head (sums pooled shallow features into the final stage). Stored in checkpoints and restored on resume. | `False` |
 | `--utod-residual` | Enable residual skips inside the UltraTinyOD backbone. | `False` |
 | `--utod-head-ese` | UltraTinyOD head: apply lightweight eSE on shared features. | `False` |
+| `--utod-conv` | UltraTinyOD conv mode (`dw` depthwise separable, `std` standard conv). | `dw` |
 | `--utod-sppf-scale` | UltraTinyOD SPPF-min: per-branch scale matching before concat (`none`, `bn`, `conv`). | `none` |
 | `--utod-context-rfb` | UltraTinyOD head: add a receptive-field block (dilated + wide depthwise) before prediction layers. | `False` |
 | `--utod-context-dilation` | Dilation used in UltraTinyOD receptive-field block (only when `--utod-context-rfb`). | `2` |

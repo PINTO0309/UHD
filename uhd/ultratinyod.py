@@ -170,7 +170,7 @@ class ConvBNAct(nn.Module):
 
 class DWConv(nn.Module):
     """
-    Depthwise Separable Conv
+    Depthwise Separable Conv (or standard Conv when disabled)
     - 3x3 depthwise conv + 1x1 pointwise conv
     - UltraTinyOD の主力ブロック（FLOPs を大きく削減）
     """
@@ -185,47 +185,74 @@ class DWConv(nn.Module):
         act_name: str = "silu",
         w_bits: int = 0,
         a_bits: int = 0,
+        use_depthwise: bool = True,
     ):
         super().__init__()
-        # depthwise
-        self.dw = ConvBNAct(
-            c_in,
-            c_in,
-            k=k,
-            s=s,
-            p=k // 2,
-            g=c_in,
-            bias=False,
-            act=act,
-            act_name=act_name,
-            w_bits=w_bits,
-            a_bits=a_bits,
-        )
-        # pointwise
-        self.pw = ConvBNAct(
-            c_in,
-            c_out,
-            k=1,
-            s=1,
-            p=0,
-            g=1,
-            bias=False,
-            act=act,
-            act_name=act_name,
-            w_bits=w_bits,
-            a_bits=a_bits,
-        )
+        self.use_depthwise = bool(use_depthwise)
+        if self.use_depthwise:
+            # depthwise
+            self.dw = ConvBNAct(
+                c_in,
+                c_in,
+                k=k,
+                s=s,
+                p=k // 2,
+                g=c_in,
+                bias=False,
+                act=act,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
+            # pointwise
+            self.pw = ConvBNAct(
+                c_in,
+                c_out,
+                k=1,
+                s=1,
+                p=0,
+                g=1,
+                bias=False,
+                act=act,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
+            self.conv = None
+        else:
+            self.dw = None
+            self.pw = None
+            # standard conv replacement (single 3x3)
+            self.conv = ConvBNAct(
+                c_in,
+                c_out,
+                k=k,
+                s=s,
+                p=k // 2,
+                g=1,
+                bias=False,
+                act=act,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.dw(x)
-        x = self.pw(x)
-        return x
+        if self.use_depthwise:
+            x = self.dw(x)
+            x = self.pw(x)
+            return x
+        return self.conv(x)
 
     def fuse_model(self, qat: bool = False) -> None:
-        if hasattr(self.dw, "fuse_model"):
-            self.dw.fuse_model(qat=qat)
-        if hasattr(self.pw, "fuse_model"):
-            self.pw.fuse_model(qat=qat)
+        if self.use_depthwise:
+            if hasattr(self.dw, "fuse_model"):
+                self.dw.fuse_model(qat=qat)
+            if hasattr(self.pw, "fuse_model"):
+                self.pw.fuse_model(qat=qat)
+        else:
+            if hasattr(self.conv, "fuse_model"):
+                self.conv.fuse_model(qat=qat)
 
 
 class EfficientSE(nn.Module):
@@ -242,18 +269,27 @@ class EfficientSE(nn.Module):
 
 
 class ReceptiveFieldEnhancer(nn.Module):
-    """Lightweight receptive-field block mixing dilated and wide depthwise convs."""
+    """Lightweight receptive-field block mixing dilated and wide convs."""
 
-    def __init__(self, channels: int, dilation: int = 2, act_name: str = "silu", w_bits: int = 0, a_bits: int = 0) -> None:
+    def __init__(
+        self,
+        channels: int,
+        dilation: int = 2,
+        act_name: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
+        use_depthwise: bool = True,
+    ) -> None:
         super().__init__()
         d = max(1, int(dilation))
+        groups = channels if use_depthwise else 1
         self.branch_dilated = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=d, dilation=d, groups=channels, bias=False),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=d, dilation=d, groups=groups, bias=False),
             nn.BatchNorm2d(channels, eps=1e-3, momentum=0.03),
             _make_activation(act_name),
         )
         self.branch_wide = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=5, stride=1, padding=2, groups=channels, bias=False),
+            nn.Conv2d(channels, channels, kernel_size=5, stride=1, padding=2, groups=groups, bias=False),
             nn.BatchNorm2d(channels, eps=1e-3, momentum=0.03),
             _make_activation(act_name),
         )
@@ -382,25 +418,63 @@ class UltraTinyODBackbone(nn.Module):
         w_bits: int = 0,
         a_bits: int = 0,
         sppf_scale_mode: str = "none",
+        use_depthwise: bool = True,
     ):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
         self.use_residual = bool(use_residual)
         self.out_stride = int(out_stride)
+        self.use_depthwise = bool(use_depthwise)
         act_name = activation
         # 64 -> 32
         self.stem = ConvBNAct(in_channels, c_stem, k=3, s=2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)
 
         # 32 -> 16
-        self.block1 = DWConv(c_stem, c_stem * 2, k=3, s=2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)   # 16 -> 32
+        self.block1 = DWConv(
+            c_stem,
+            c_stem * 2,
+            k=3,
+            s=2,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+            use_depthwise=self.use_depthwise,
+        )   # 16 -> 32
         # 16 -> 8 (stride 8) or keep 16 (stride 4)
         stride_block2 = 2 if self.out_stride >= 8 else 1
-        self.block2 = DWConv(c_stem * 2, c_stem * 4, k=3, s=stride_block2, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 32 -> 64
+        self.block2 = DWConv(
+            c_stem * 2,
+            c_stem * 4,
+            k=3,
+            s=stride_block2,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+            use_depthwise=self.use_depthwise,
+        )  # 32 -> 64
         # 8 -> 8 or 8 -> 4 (stride16 case)
         stride_block3 = 2 if self.out_stride == 16 else 1
-        self.block3 = DWConv(c_stem * 4, c_stem * 8, k=3, s=stride_block3, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 64 -> 128
-        self.block4 = DWConv(c_stem * 8, c_stem * 8, k=3, s=1, act_name=act_name, w_bits=w_bits, a_bits=a_bits)  # 128 -> 128
+        self.block3 = DWConv(
+            c_stem * 4,
+            c_stem * 8,
+            k=3,
+            s=stride_block3,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+            use_depthwise=self.use_depthwise,
+        )  # 64 -> 128
+        self.block4 = DWConv(
+            c_stem * 8,
+            c_stem * 8,
+            k=3,
+            s=1,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+            use_depthwise=self.use_depthwise,
+        )  # 128 -> 128
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
             self.block3_skip = ConvBNAct(
@@ -472,6 +546,7 @@ class UltraTinyODConfig:
     - quality_power : quality スコアの指数。IoU-aware スコアリングの鋭さを調整
     - score_mode : 推論スコアの合成方法 (obj_quality_cls / quality_cls / obj_cls / obj_quality / quality / obj)
     - sppf_scale_mode : SPPF-min concat前のスケール整合 (none/bn/conv)
+    - dw_mode : Depthwise conv の使用 (dw/standard)
     """
 
     num_classes: int = 1
@@ -495,6 +570,7 @@ class UltraTinyODConfig:
     large_obj_branch_depth: int = 1
     large_obj_branch_expansion: float = 1.0
     sppf_scale_mode: str = "none"
+    dw_mode: str = "dw"
     w_bits: int = 0
     a_bits: int = 0
     quant_target: str = "both"
@@ -563,6 +639,14 @@ class UltraTinyODConfig:
         else:
             sppf_mode = "none"
         self.sppf_scale_mode = sppf_mode
+        dw_mode = str(getattr(self, "dw_mode", "dw") or "dw").lower()
+        if dw_mode in ("dw", "depthwise", "separable"):
+            dw_mode = "dw"
+        elif dw_mode in ("std", "standard", "conv", "dense", "full", "none", "no", "nodw"):
+            dw_mode = "std"
+        else:
+            dw_mode = "dw"
+        self.dw_mode = dw_mode
         self.w_bits = _normalize_bits(self.w_bits)
         self.a_bits = _normalize_bits(self.a_bits)
         self.quant_target = str(self.quant_target or "both").lower()
@@ -589,7 +673,7 @@ class UltraTinyODHead(nn.Module):
         decode=True 時には decode 結果も返す
     """
 
-    def __init__(self, in_channels: int, cfg: UltraTinyODConfig, activation: str = "silu"):
+    def __init__(self, in_channels: int, cfg: UltraTinyODConfig, activation: str = "silu", use_depthwise: bool = True):
         super().__init__()
         self.w_bits = _normalize_bits(getattr(cfg, "w_bits", 0))
         self.a_bits = _normalize_bits(getattr(cfg, "a_bits", 0))
@@ -598,6 +682,7 @@ class UltraTinyODHead(nn.Module):
         self.attr_nc = 0 if self.disable_cls else int(getattr(cfg, "attr_num_classes", 0))
         self.stride = cfg.stride
         self.in_channels = in_channels
+        self.use_depthwise = bool(use_depthwise)
         self.cls_ratio = float(getattr(cfg, "cls_bottleneck_ratio", 0.5))
         self.cls_mid = max(8, min(in_channels, int(round(in_channels * self.cls_ratio))))
         act_name = activation
@@ -641,31 +726,79 @@ class UltraTinyODHead(nn.Module):
         self.has_quality_head = self.has_quality
 
         # 軽い文脈強調
-        self.context = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+        self.context = DWConv(
+            in_channels,
+            in_channels,
+            k=3,
+            s=1,
+            act=True,
+            act_name=act_name,
+            w_bits=self.w_bits,
+            a_bits=self.a_bits,
+            use_depthwise=self.use_depthwise,
+        )
         if self.use_improved_head:
             self.context_res = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                ),
                 ConvBNAct(in_channels, in_channels, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                ),
             )
         if self.use_head_ese:
             self.head_se = EfficientSE(in_channels)
         self.head_rfb = (
-            ReceptiveFieldEnhancer(in_channels, dilation=self.context_dilation, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+            ReceptiveFieldEnhancer(
+                in_channels,
+                dilation=self.context_dilation,
+                act_name=act_name,
+                w_bits=self.w_bits,
+                a_bits=self.a_bits,
+                use_depthwise=self.use_depthwise,
+            )
             if self.use_context_rfb
             else None
         )
         if self.use_large_obj_branch:
             lob_ch = int(round(in_channels * self.large_obj_branch_expansion))
+            dw_groups = in_channels if self.use_depthwise else 1
             self.large_obj_down = nn.Sequential(
-                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, groups=in_channels, bias=False),
+                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, groups=dw_groups, bias=False),
                 nn.BatchNorm2d(in_channels, eps=1e-3, momentum=0.03),
                 _make_activation(act_name),
                 ConvBNAct(in_channels, lob_ch, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
             )
             self.large_obj_blocks = nn.Sequential(
                 *[
-                    DWConv(lob_ch, lob_ch, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+                    DWConv(
+                        lob_ch,
+                        lob_ch,
+                        k=3,
+                        s=1,
+                        act=True,
+                        act_name=act_name,
+                        w_bits=self.w_bits,
+                        a_bits=self.a_bits,
+                        use_depthwise=self.use_depthwise,
+                    )
                     for _ in range(self.large_obj_branch_depth)
                 ]
             )
@@ -676,11 +809,41 @@ class UltraTinyODHead(nn.Module):
         # box ブランチ
         if self.use_iou_aware_head:
             self.box_tower = nn.Sequential(
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                ),
+                DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                ),
             )
         else:
-            self.box_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+            self.box_conv = DWConv(
+                in_channels,
+                in_channels,
+                k=3,
+                s=1,
+                act=True,
+                act_name=act_name,
+                w_bits=self.w_bits,
+                a_bits=self.a_bits,
+                use_depthwise=self.use_depthwise,
+            )
         self.box_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 4,
@@ -692,11 +855,41 @@ class UltraTinyODHead(nn.Module):
         if self.has_quality:
             if self.use_iou_aware_head:
                 self.quality_tower = nn.Sequential(
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                    DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                    DWConv(
+                        in_channels,
+                        in_channels,
+                        k=3,
+                        s=1,
+                        act=True,
+                        act_name=act_name,
+                        w_bits=self.w_bits,
+                        a_bits=self.a_bits,
+                        use_depthwise=self.use_depthwise,
+                    ),
+                    DWConv(
+                        in_channels,
+                        in_channels,
+                        k=3,
+                        s=1,
+                        act=True,
+                        act_name=act_name,
+                        w_bits=self.w_bits,
+                        a_bits=self.a_bits,
+                        use_depthwise=self.use_depthwise,
+                    ),
                 )
             else:
-                self.quality_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+                self.quality_conv = DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                )
             self.quality_out = nn.Conv2d(
                 in_channels,
                 self.num_anchors * 1,
@@ -707,7 +900,17 @@ class UltraTinyODHead(nn.Module):
             )
 
         # obj ブランチ
-        self.obj_conv = DWConv(in_channels, in_channels, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+        self.obj_conv = DWConv(
+            in_channels,
+            in_channels,
+            k=3,
+            s=1,
+            act=True,
+            act_name=act_name,
+            w_bits=self.w_bits,
+            a_bits=self.a_bits,
+            use_depthwise=self.use_depthwise,
+        )
         self.obj_out = nn.Conv2d(
             in_channels,
             self.num_anchors * 1,
@@ -728,12 +931,42 @@ class UltraTinyODHead(nn.Module):
             if self.use_iou_aware_head:
                 self.cls_tower = nn.Sequential(
                     ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                    DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
-                    DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits),
+                    DWConv(
+                        self.cls_mid,
+                        self.cls_mid,
+                        k=3,
+                        s=1,
+                        act=True,
+                        act_name=act_name,
+                        w_bits=self.w_bits,
+                        a_bits=self.a_bits,
+                        use_depthwise=self.use_depthwise,
+                    ),
+                    DWConv(
+                        self.cls_mid,
+                        self.cls_mid,
+                        k=3,
+                        s=1,
+                        act=True,
+                        act_name=act_name,
+                        w_bits=self.w_bits,
+                        a_bits=self.a_bits,
+                        use_depthwise=self.use_depthwise,
+                    ),
                 )
             else:
                 self.cls_reduce = ConvBNAct(in_channels, self.cls_mid, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
-                self.cls_conv = DWConv(self.cls_mid, self.cls_mid, k=3, s=1, act=True, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
+                self.cls_conv = DWConv(
+                    self.cls_mid,
+                    self.cls_mid,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                )
             self.cls_out = nn.Conv2d(
                 self.cls_mid,
                 self.num_anchors * self.nc,
@@ -1154,6 +1387,8 @@ class UltraTinyOD(nn.Module):
                 config.highbit_a_bits = 8
             if not hasattr(config, "sppf_scale_mode"):
                 config.sppf_scale_mode = "none"
+            if not hasattr(config, "dw_mode"):
+                config.dw_mode = "dw"
 
         act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
 
@@ -1191,6 +1426,8 @@ class UltraTinyOD(nn.Module):
             head_w_bits = low_w
             head_a_bits = low_a
 
+        dw_mode = str(getattr(config, "dw_mode", "dw") or "dw").lower()
+        use_depthwise = dw_mode in ("dw", "depthwise", "separable")
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
             in_channels=in_channels,
@@ -1200,11 +1437,12 @@ class UltraTinyOD(nn.Module):
             w_bits=backbone_w_bits,
             a_bits=backbone_a_bits,
             sppf_scale_mode=getattr(config, "sppf_scale_mode", "none"),
+            use_depthwise=use_depthwise,
         )
         head_cfg = deepcopy(config)
         head_cfg.w_bits = head_w_bits
         head_cfg.a_bits = head_a_bits
-        self.head = UltraTinyODHead(self.backbone.out_channels, head_cfg, activation=act_name)
+        self.head = UltraTinyODHead(self.backbone.out_channels, head_cfg, activation=act_name, use_depthwise=use_depthwise)
         self.anchors = self.head.anchors
         self.out_stride = int(config.stride)
         self.use_improved_head = bool(getattr(config, "use_improved_head", False))
@@ -1215,6 +1453,7 @@ class UltraTinyOD(nn.Module):
         self.attr_num_classes = int(getattr(config, "attr_num_classes", 0))
         self.disable_cls = bool(getattr(self.head, "disable_cls", False))
         self.activation = act_name
+        self.dw_mode = "dw" if use_depthwise else "std"
 
         # モデル初期化（簡易版）
         self._init_weights()

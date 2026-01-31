@@ -827,6 +827,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         highbit_quant_target = str(kwargs.get("highbit_quant_target", "none") or "none")
         highbit_w_bits = int(kwargs.get("highbit_w_bits", 8) or 8)
         highbit_a_bits = int(kwargs.get("highbit_a_bits", 8) or 8)
+        utod_conv = str(kwargs.get("utod_conv", kwargs.get("dw_mode", "dw")) or "dw")
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             attr_num_classes=kwargs.get("attr_num_classes", 0) or 0,
@@ -845,6 +846,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             large_obj_branch_depth=int(kwargs.get("utod_large_obj_depth", 1)),
             large_obj_branch_expansion=float(kwargs.get("utod_large_obj_ch_scale", 1.0)),
             sppf_scale_mode=str(kwargs.get("utod_sppf_scale", "none") or "none"),
+            dw_mode=utod_conv,
             w_bits=lowbit_w_bits,
             a_bits=lowbit_a_bits,
             quant_target=quant_target,

@@ -350,6 +350,12 @@ def parse_args():
     parser.add_argument("--utod-residual", action="store_true", help="Enable residual skips inside the UltraTinyOD backbone.")
     parser.add_argument("--utod-head-ese", action="store_true", help="UltraTinyOD head: apply lightweight eSE on shared features.")
     parser.add_argument(
+        "--utod-conv",
+        choices=["dw", "std"],
+        default="dw",
+        help="UltraTinyOD conv mode: dw=depthwise separable (default), std=standard conv (remove depthwise).",
+    )
+    parser.add_argument(
         "--utod-sppf-scale",
         choices=["none", "bn", "conv"],
         default="none",
@@ -2156,6 +2162,9 @@ def main():
     quality_power = float(args.quality_power)
     score_mode = args.score_mode
     utod_head_ese = bool(args.utod_head_ese)
+    utod_conv = str(args.utod_conv or "dw").lower()
+    if utod_conv not in ("dw", "std"):
+        utod_conv = "dw"
     utod_context_rfb = bool(args.utod_context_rfb)
     utod_context_dilation = int(args.utod_context_dilation)
     utod_large_obj_branch = bool(args.utod_large_obj_branch)
@@ -2195,7 +2204,7 @@ def main():
     img_size_str = f"{img_h}x{img_w}"
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, use_iou_aware_head, quality_power, score_mode, disable_cls, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, utod_conv, use_iou_aware_head, quality_power, score_mode, disable_cls, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
@@ -2346,6 +2355,10 @@ def main():
             disable_cls = bool(meta["disable_cls"])
         if "utod_head_ese" in meta:
             utod_head_ese = bool(meta["utod_head_ese"])
+        if "utod_conv" in meta and meta["utod_conv"]:
+            utod_conv = str(meta["utod_conv"]).lower()
+            if utod_conv not in ("dw", "std"):
+                utod_conv = "dw"
         if "last_se" in meta and meta["last_se"]:
             last_se = meta["last_se"]
         if "last_width_scale" in meta and meta["last_width_scale"]:
@@ -2599,6 +2612,7 @@ def main():
         use_anchor=use_anchor,
         utod_use_residual=utod_residual,
         use_head_ese=utod_head_ese,
+        utod_conv=utod_conv,
         num_anchors=num_anchors,
         anchors=anchor_list,
         use_iou_aware_head=use_iou_aware_head,
@@ -2869,6 +2883,9 @@ def main():
             t_cnn_width = int(t_meta.get("cnn_width", args.cnn_width))
             t_use_improved_head = bool(t_meta.get("use_improved_head", use_improved_head))
             t_utod_head_ese = bool(t_meta.get("utod_head_ese", utod_head_ese))
+            t_utod_conv = str(t_meta.get("utod_conv", utod_conv) or "dw").lower()
+            if t_utod_conv not in ("dw", "std"):
+                t_utod_conv = "dw"
             t_use_iou_aware_head = bool(t_meta.get("use_iou_aware_head", use_iou_aware_head))
             t_quality_power = float(t_meta.get("quality_power", quality_power))
             t_score_mode = t_meta.get("score_mode", score_mode)
@@ -2942,6 +2959,7 @@ def main():
                 quality_power=t_quality_power,
                 score_mode=t_score_mode,
                 utod_head_ese=t_utod_head_ese,
+                utod_conv=t_utod_conv,
                 utod_context_rfb=t_utod_context_rfb,
                 utod_context_dilation=t_utod_context_dilation,
                 utod_large_obj_branch=t_utod_large_obj_branch,
@@ -3299,6 +3317,7 @@ def main():
                     "quality_power": quality_power,
                     "score_mode": score_mode,
                     "utod_head_ese": utod_head_ese,
+                    "utod_conv": utod_conv,
                     "utod_context_rfb": utod_context_rfb,
                     "utod_context_dilation": utod_context_dilation,
                     "utod_large_obj_branch": utod_large_obj_branch,
@@ -3407,6 +3426,7 @@ def main():
             "quality_power": quality_power,
             "score_mode": score_mode,
             "utod_head_ese": utod_head_ese,
+            "utod_conv": utod_conv,
             "utod_context_rfb": utod_context_rfb,
             "utod_context_dilation": utod_context_dilation,
             "utod_large_obj_branch": utod_large_obj_branch,
