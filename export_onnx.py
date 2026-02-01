@@ -839,6 +839,122 @@ def rename_depthwise_conv_nodes(onnx_path: str, prefix: str = "/depthwiseconv") 
     return True
 
 
+def decompose_batchnorm_to_affine(onnx_path: str) -> bool:
+    """Replace BatchNormalization with Mul/Add using folded scale/bias."""
+    try:
+        import onnx
+        from onnx import helper, numpy_helper
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"[WARN] Failed to import onnx for BN decomposition: {exc}")
+        return False
+    try:
+        model = onnx.load(onnx_path)
+    except Exception as exc:  # pragma: no cover - IO failure
+        print(f"[WARN] Failed to load ONNX for BN decomposition: {exc}")
+        return False
+    g = model.graph
+    init_by_name = {init.name: init for init in g.initializer}
+    value_names = {v.name for v in g.input}
+    value_names.update({v.name for v in g.output})
+    value_names.update({v.name for v in g.value_info})
+    value_names.update({init.name for init in g.initializer})
+    for node in g.node:
+        value_names.update(node.input)
+        value_names.update(node.output)
+    node_names = {node.name for node in g.node if node.name}
+
+    def _unique_value_name(base: str) -> str:
+        base = base or "bn_value"
+        candidate = base
+        suffix = 1
+        while candidate in value_names:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        value_names.add(candidate)
+        return candidate
+
+    def _unique_node_name(base: str) -> str:
+        if not base:
+            return ""
+        candidate = base
+        suffix = 1
+        while candidate in node_names:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        node_names.add(candidate)
+        return candidate
+
+    new_nodes = []
+    changed = 0
+    for node in g.node:
+        if node.op_type != "BatchNormalization":
+            new_nodes.append(node)
+            continue
+        if len(node.input) < 5:
+            new_nodes.append(node)
+            continue
+        x_name, scale_name, bias_name, mean_name, var_name = node.input[:5]
+        scale_init = init_by_name.get(scale_name)
+        bias_init = init_by_name.get(bias_name)
+        mean_init = init_by_name.get(mean_name)
+        var_init = init_by_name.get(var_name)
+        if scale_init is None or bias_init is None or mean_init is None or var_init is None:
+            new_nodes.append(node)
+            continue
+        eps = 1e-5
+        for attr in node.attribute:
+            if attr.name == "epsilon":
+                try:
+                    eps = float(onnx.helper.get_attribute_value(attr))
+                except Exception:
+                    eps = 1e-5
+                break
+        scale_arr = numpy_helper.to_array(scale_init)
+        bias_arr = numpy_helper.to_array(bias_init)
+        mean_arr = numpy_helper.to_array(mean_init)
+        var_arr = numpy_helper.to_array(var_init)
+        orig_dtype = scale_arr.dtype
+        scale_f = scale_arr.astype(np.float32)
+        bias_f = bias_arr.astype(np.float32)
+        mean_f = mean_arr.astype(np.float32)
+        var_f = var_arr.astype(np.float32)
+        denom = np.sqrt(var_f + eps)
+        new_scale = scale_f / denom
+        new_bias = bias_f - mean_f * new_scale
+        if new_scale.ndim == 1:
+            c = new_scale.shape[0]
+            new_scale = new_scale.reshape(1, c, 1, 1)
+            new_bias = new_bias.reshape(1, c, 1, 1)
+        new_scale = new_scale.astype(orig_dtype, copy=False)
+        new_bias = new_bias.astype(orig_dtype, copy=False)
+        scale_aff_name = _unique_value_name((node.name or node.output[0] or "bn") + "_scale")
+        bias_aff_name = _unique_value_name((node.name or node.output[0] or "bn") + "_bias")
+        g.initializer.append(numpy_helper.from_array(new_scale, name=scale_aff_name))
+        g.initializer.append(numpy_helper.from_array(new_bias, name=bias_aff_name))
+        mul_out = _unique_value_name((node.name or node.output[0] or "bn") + "_mul")
+        mul_node = helper.make_node(
+            "Mul",
+            inputs=[x_name, scale_aff_name],
+            outputs=[mul_out],
+            name=_unique_node_name((node.name or "") + "_mul"),
+        )
+        add_node = helper.make_node(
+            "Add",
+            inputs=[mul_out, bias_aff_name],
+            outputs=list(node.output),
+            name=_unique_node_name((node.name or "") + "_add"),
+        )
+        new_nodes.extend([mul_node, add_node])
+        changed += 1
+    if not changed:
+        return False
+    del g.node[:]
+    g.node.extend(new_nodes)
+    onnx.save(model, onnx_path)
+    print(f"Replaced BatchNormalization with Mul/Add: {changed}")
+    return True
+
+
 def update_metadata_props(output_path: str, props: Dict[str, str]) -> None:
     """Add/update metadata_props on an ONNX file; silently skip if onnx is unavailable."""
     try:
@@ -962,6 +1078,13 @@ def build_argparser():
         action="store_true",
         help="Add a Resize op at the graph head and make input dynamic after export/simplify.",
     )
+    parser.add_argument(
+        "--no-decompose-bn",
+        dest="decompose_bn",
+        action="store_false",
+        help="Skip BatchNormalization decomposition after export.",
+    )
+    parser.set_defaults(decompose_bn=True)
     return parser
 
 
@@ -1125,6 +1248,14 @@ def main():
         if not args.no_simplify:
             simplify_onnx_path(args.output)
             print("Re-simplified ONNX after injecting Resize.")
+
+    if args.decompose_bn:
+        if decompose_batchnorm_to_affine(args.output):
+            if not args.no_simplify:
+                simplify_onnx_path(args.output)
+                print("Re-simplified ONNX after BN decomposition.")
+        else:
+            print("No BatchNormalization nodes to decompose.")
 
     meta_score_mode = (
         meta.get("score_mode")
