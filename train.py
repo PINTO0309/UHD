@@ -425,7 +425,23 @@ def parse_args():
         help='Anchor sizes as normalized "w,h w,h ..." (e.g., "0.08,0.10 0.15,0.20 0.30,0.35").',
     )
     parser.add_argument("--auto-anchors", action="store_true", help="Compute anchors from training labels when using anchor head.")
+    parser.add_argument(
+        "--auto-anchors-alg",
+        choices=["kmeans", "logkmeans", "stratified", "stratified_large", "sml_fixed"],
+        default="kmeans",
+        help="Auto-anchors algorithm (kmeans/logkmeans/stratified/stratified_large/sml_fixed).",
+    )
     parser.add_argument("--num-anchors", type=int, default=3, help="Number of anchors to use when auto-computing.")
+    parser.add_argument(
+        "--auto-anchors-plot",
+        action="store_true",
+        help="Save a width/height distribution plot used for auto-anchors.",
+    )
+    parser.add_argument(
+        "--auto-anchors-plot-path",
+        default=None,
+        help="Output path for the auto-anchors plot (default: runs/EXP/auto_anchors_wh.png).",
+    )
     parser.add_argument("--iou-loss", choices=["iou", "giou", "ciou"], default="giou", help="IoU loss type for anchor head.")
     parser.add_argument("--anchor-assigner", choices=["legacy", "simota"], default="legacy", help="Anchor assigner strategy.")
     parser.add_argument(
@@ -553,17 +569,16 @@ def _wh_iou(boxes: np.ndarray, anchors: np.ndarray) -> np.ndarray:
     return inter / union
 
 
-def auto_compute_anchors(boxes: np.ndarray, k: int = 3, iters: int = 20) -> np.ndarray:
-    """Simple k-means on box widths/heights (normalized) using IoU distance."""
-    if boxes.size == 0:
-        return np.zeros((k, 2), dtype=np.float32)
+def _pad_boxes(boxes: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
     n = boxes.shape[0]
-    if n < k:
-        # pad with duplicates if very few boxes
-        boxes = np.concatenate([boxes, boxes[np.random.choice(n, k - n)]], axis=0)
-        n = boxes.shape[0]
-    # init centers by random choice
-    rng = np.random.default_rng(0)
+    if n >= k:
+        return boxes
+    extra = boxes[rng.choice(n, k - n, replace=True)]
+    return np.concatenate([boxes, extra], axis=0)
+
+
+def _kmeans_iou(boxes: np.ndarray, k: int, iters: int, rng: np.random.Generator) -> np.ndarray:
+    n = boxes.shape[0]
     centers = boxes[rng.choice(n, k, replace=False)]
     for _ in range(iters):
         ious = _wh_iou(boxes, centers)
@@ -579,8 +594,159 @@ def auto_compute_anchors(boxes: np.ndarray, k: int = 3, iters: int = 20) -> np.n
         if np.allclose(new_centers, centers):
             break
         centers = new_centers
-    centers = centers[np.argsort(centers.prod(axis=1))]  # sort by area
     return centers
+
+
+def _kmeans_euclid(data: np.ndarray, k: int, iters: int, rng: np.random.Generator) -> np.ndarray:
+    n = data.shape[0]
+    centers = data[rng.choice(n, k, replace=False)]
+    for _ in range(iters):
+        diff = data[:, None, :] - centers[None, :, :]
+        dist = (diff * diff).sum(axis=2)
+        assignments = dist.argmin(axis=1)
+        new_centers = []
+        for ki in range(k):
+            mask = assignments == ki
+            if mask.sum() == 0:
+                new_centers.append(centers[ki])
+            else:
+                new_centers.append(data[mask].mean(axis=0))
+        new_centers = np.stack(new_centers, axis=0)
+        if np.allclose(new_centers, centers):
+            break
+        centers = new_centers
+    return centers
+
+
+def _stratified_by_area(boxes: np.ndarray, k: int) -> np.ndarray:
+    areas = boxes[:, 0] * boxes[:, 1]
+    order = np.argsort(areas)
+    boxes_sorted = boxes[order]
+    bins = np.array_split(boxes_sorted, k)
+    centers = []
+    for chunk in bins:
+        if chunk.size == 0:
+            centers.append(boxes_sorted[0])
+        else:
+            centers.append(np.median(chunk, axis=0))
+    return np.stack(centers, axis=0)
+
+
+def _stratified_by_area_bias(boxes: np.ndarray, k: int, bias: float) -> np.ndarray:
+    areas = boxes[:, 0] * boxes[:, 1]
+    order = np.argsort(areas)
+    boxes_sorted = boxes[order]
+    n = boxes_sorted.shape[0]
+    if n == 0:
+        return np.zeros((k, 2), dtype=np.float32)
+    bias = float(bias)
+    if bias <= 0:
+        bias = 1.0
+    edges = [0]
+    for i in range(1, k):
+        q = (i / k) ** bias
+        idx = int(round(q * n))
+        idx = max(idx, edges[-1] + 1)
+        idx = min(idx, n - (k - i))
+        edges.append(idx)
+    edges.append(n)
+    centers = []
+    for i in range(k):
+        start, end = edges[i], edges[i + 1]
+        if end <= start:
+            chunk = boxes_sorted[start:start + 1]
+        else:
+            chunk = boxes_sorted[start:end]
+        centers.append(np.median(chunk, axis=0))
+    return np.stack(centers, axis=0)
+
+
+def _split_sml_by_area(boxes: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    areas = boxes[:, 0] * boxes[:, 1]
+    if areas.size == 0:
+        return boxes, boxes, boxes
+    q1, q2 = np.quantile(areas, [1.0 / 3.0, 2.0 / 3.0])
+    small = boxes[areas <= q1]
+    medium = boxes[(areas > q1) & (areas <= q2)]
+    large = boxes[areas > q2]
+    if small.size == 0:
+        small = boxes
+    if medium.size == 0:
+        medium = boxes
+    if large.size == 0:
+        large = boxes
+    return small, medium, large
+
+
+def _sml_fixed_anchors(boxes: np.ndarray, k: int, iters: int, rng: np.random.Generator) -> np.ndarray:
+    if k <= 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    small, medium, large = _split_sml_by_area(boxes)
+    fixed: List[np.ndarray] = []
+    if k == 1:
+        fixed.append(np.median(boxes, axis=0))
+    elif k == 2:
+        fixed.append(np.median(small, axis=0))
+        fixed.append(np.median(large, axis=0))
+    else:
+        fixed.append(np.median(small, axis=0))
+        fixed.append(np.median(medium, axis=0))
+        fixed.append(np.median(large, axis=0))
+    remaining = k - len(fixed)
+    if remaining > 0:
+        groups = [small, medium, large]
+        sizes = np.array([g.shape[0] for g in groups], dtype=np.float32)
+        if sizes.sum() <= 0:
+            sizes[:] = 1.0
+        raw = remaining * sizes / sizes.sum()
+        alloc = np.floor(raw).astype(int)
+        while alloc.sum() < remaining:
+            idx = int(np.argmax(raw - alloc))
+            alloc[idx] += 1
+        for group, n_extra in zip(groups, alloc):
+            if n_extra <= 0:
+                continue
+            if group.size == 0:
+                group = boxes
+            group = _pad_boxes(group, n_extra, rng)
+            extra = _kmeans_iou(group, n_extra, iters, rng)
+            for row in extra:
+                fixed.append(row)
+    centers = np.stack(fixed, axis=0)
+    centers = centers[np.argsort(centers.prod(axis=1))]
+    return centers
+
+
+def auto_compute_anchors(
+    boxes: np.ndarray,
+    k: int = 3,
+    iters: int = 20,
+    alg: str = "kmeans",
+) -> np.ndarray:
+    """Compute anchors from normalized (w,h) with selectable algorithm."""
+    if boxes.size == 0:
+        return np.zeros((k, 2), dtype=np.float32)
+    boxes = boxes[(boxes[:, 0] > 0) & (boxes[:, 1] > 0)]
+    if boxes.size == 0:
+        return np.zeros((k, 2), dtype=np.float32)
+    rng = np.random.default_rng(0)
+    boxes = _pad_boxes(boxes, k, rng)
+    alg = str(alg or "kmeans").lower()
+    if alg == "logkmeans":
+        eps = 1e-6
+        log_boxes = np.log(np.clip(boxes, eps, None))
+        centers = _kmeans_euclid(log_boxes, k, iters, rng)
+        centers = np.exp(centers)
+    elif alg in ("sml_fixed", "sml-fixed", "smlfixed"):
+        centers = _sml_fixed_anchors(boxes, k, iters, rng)
+    elif alg == "stratified":
+        centers = _stratified_by_area(boxes, k)
+    elif alg in ("stratified_large", "stratified-large", "stratifiedlarge"):
+        centers = _stratified_by_area_bias(boxes, k, bias=0.35)
+    else:
+        centers = _kmeans_iou(boxes, k, iters, rng)
+    centers = centers[np.argsort(centers.prod(axis=1))]  # sort by area
+    return centers.astype(np.float32, copy=False)
 
 
 def load_aug_config(path: str):
@@ -897,6 +1063,73 @@ def collect_box_wh(dataset) -> np.ndarray:
                     continue
                 wh_list.append((w, h))
     return np.array(wh_list, dtype=np.float32)
+
+
+def plot_anchor_wh_distribution(
+    wh: np.ndarray,
+    out_path: str,
+    anchors: Optional[np.ndarray] = None,
+    title: Optional[str] = None,
+) -> bool:
+    if wh is None or wh.size == 0:
+        print("[WARN] auto-anchors plot skipped: no width/height samples found.")
+        return False
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"[WARN] auto-anchors plot skipped: matplotlib unavailable ({exc}).")
+        return False
+    w = wh[:, 0]
+    h = wh[:, 1]
+    max_val = float(max(np.max(w), np.max(h), 1e-6))
+    lim = 1.0 if max_val <= 1.0 else max_val * 1.05
+
+    bins_list = [32, 64]
+    norms = [
+        ("linear", None),
+        ("log", LogNorm()),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(8.5, 8.0), sharex=True, sharey=True)
+    for row, (norm_name, norm) in enumerate(norms):
+        for col, bins in enumerate(bins_list):
+            ax = axes[row][col]
+            hist = ax.hist2d(
+                w,
+                h,
+                bins=bins,
+                range=[[0.0, lim], [0.0, lim]],
+                norm=norm,
+                cmin=1,
+            )
+            if anchors is not None and anchors.size > 0:
+                ax.scatter(anchors[:, 0], anchors[:, 1], c="red", s=50, marker="x", label="anchors")
+            ax.set_title(f"bins={bins} / {norm_name}")
+            fig.colorbar(hist[3], ax=ax, fraction=0.046, pad=0.02)
+    axes[1][0].set_xlabel("w (normalized)")
+    axes[1][1].set_xlabel("w (normalized)")
+    axes[0][0].set_ylabel("h (normalized)")
+    axes[1][0].set_ylabel("h (normalized)")
+    axes[0][0].set_xlim(0.0, lim)
+    axes[0][0].set_ylim(0.0, lim)
+    axes[0][0].set_aspect("equal", "box")
+    axes[0][1].set_aspect("equal", "box")
+    axes[1][0].set_aspect("equal", "box")
+    axes[1][1].set_aspect("equal", "box")
+    fig.suptitle(title or "Auto-anchors WH distribution", y=0.98)
+    if anchors is not None and anchors.size > 0:
+        axes[0][0].legend(loc="upper right", frameon=True)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return True
 
 
 def _infer_cnn_feat_channels(model: torch.nn.Module, use_anchor: bool, num_classes: int) -> int:
@@ -2139,6 +2372,7 @@ def main():
     use_anchor = bool(args.use_anchor)
     anchor_list = parse_anchors_str(args.anchors)
     auto_anchors = bool(args.auto_anchors)
+    auto_anchors_alg = str(args.auto_anchors_alg or "kmeans").lower()
     num_anchors = int(args.num_anchors if args.num_anchors else 0) or 3
     if anchor_list:
         num_anchors = len(anchor_list)
@@ -2208,7 +2442,7 @@ def main():
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
-        nonlocal use_anchor, anchor_list, auto_anchors, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, loss_weight_box, loss_weight_obj, loss_weight_cls, loss_weight_quality, obj_loss_type, obj_target, simota_topk
+        nonlocal use_anchor, anchor_list, auto_anchors, auto_anchors_alg, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, loss_weight_box, loss_weight_obj, loss_weight_cls, loss_weight_quality, obj_loss_type, obj_target, simota_topk
         nonlocal last_se, last_width_scale, output_stride
         if "cnn_width" in meta:
             ckpt_width = int(meta["cnn_width"])
@@ -2320,6 +2554,8 @@ def main():
             num_anchors = len(anchor_list)
         if "auto_anchors" in meta:
             auto_anchors = bool(meta["auto_anchors"])
+        if "auto_anchors_alg" in meta and meta["auto_anchors_alg"]:
+            auto_anchors_alg = str(meta["auto_anchors_alg"]).lower()
         if "num_anchors" in meta:
             num_anchors = int(meta["num_anchors"])
         if "iou_loss" in meta and meta["iou_loss"]:
@@ -2572,7 +2808,16 @@ def main():
             anchors_np = np.array(anchor_list, dtype=np.float32)
         elif auto_anchors:
             wh = collect_box_wh(train_ds)
-            anchors_np = auto_compute_anchors(wh, k=num_anchors)
+            anchors_np = auto_compute_anchors(wh, k=num_anchors, alg=auto_anchors_alg)
+            if args.auto_anchors_plot:
+                plot_path = args.auto_anchors_plot_path or os.path.join(run_dir, "auto_anchors_wh.png")
+                base, ext = os.path.splitext(plot_path)
+                if not ext:
+                    ext = ".png"
+                plot_path = f"{base}_{auto_anchors_alg}{ext}"
+                plot_title = f"Auto-anchors WH distribution ({auto_anchors_alg})"
+                if plot_anchor_wh_distribution(wh, plot_path, anchors=anchors_np, title=plot_title):
+                    _log_line(f"Saved auto-anchors WH plot: {plot_path}")
         else:
             anchors_np = np.array([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=np.float32)
         if anchors_np.size == 0:
@@ -2583,6 +2828,8 @@ def main():
         anchors_tensor = torch.tensor(anchors_np, dtype=torch.float32)
         anchors_tensor = anchors_tensor.to(device)
         anchor_list = [tuple(map(float, a)) for a in anchors_np.tolist()]
+    if args.auto_anchors_plot and not auto_anchors:
+        _log_line("[WARN] --auto-anchors-plot requested but --auto-anchors is not set; skipping plot.")
 
     def _load_with_log(target, state, strict: bool, label: str):
         missing, unexpected = target.load_state_dict(state, strict=strict)
@@ -3295,6 +3542,7 @@ def main():
                     "use_anchor": use_anchor,
                     "anchors": anchor_list,
                     "auto_anchors": auto_anchors,
+                    "auto_anchors_alg": auto_anchors_alg,
                     "num_anchors": num_anchors,
                     "iou_loss": iou_loss_type,
                     "anchor_assigner": anchor_assigner,
@@ -3404,6 +3652,7 @@ def main():
             "use_anchor": use_anchor,
             "anchors": anchor_list,
             "auto_anchors": auto_anchors,
+            "auto_anchors_alg": auto_anchors_alg,
             "num_anchors": num_anchors,
             "iou_loss": iou_loss_type,
             "anchor_assigner": anchor_assigner,

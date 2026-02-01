@@ -1916,6 +1916,9 @@ overlayed on the detection image.
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
 | `--anchors` | Anchor sizes as normalized `w,h` pairs (space separated). | `""` |
 | `--auto-anchors` | Compute anchors from training labels when using anchor head. | `False` |
+| `--auto-anchors-alg` | Auto-anchors algorithm (`kmeans`, `logkmeans`, `stratified`, `stratified_large`, `sml_fixed`). | `kmeans` |
+| `--auto-anchors-plot` | Save a width/height distribution plot used for auto-anchors. | `False` |
+| `--auto-anchors-plot-path` | Output path for auto-anchors plot (default `runs/EXP/auto_anchors_wh_<alg>.png`). | `None` |
 | `--num-anchors` | Number of anchors to use when auto-computing. | `3` |
 | `--iou-loss` | IoU loss type for anchor head (`iou`, `giou`, or `ciou`). | `giou` |
 | `--anchor-assigner` | Anchor assigner strategy (`legacy`, `simota`). | `legacy` |
@@ -2047,6 +2050,9 @@ The internal workings of PyTorch's downsampling and PIL's downsampling are very 
 </details>
 
 ## ONNX export
+
+Notes:
+- BatchNormalization is decomposed into Mul/Add after export by default. Disable with `--no-decompose-bn`.
 
 ### 1. No-Decode Post-Process - 1 class
 
@@ -2825,6 +2831,7 @@ Notes:
 - `--batch-size`: Calibration batch size (default `1`).
 - `--calib-steps`: Number of calibration steps (default `32`).
 - `--calib-algorithm`: Calibration algorithm (default `kl`; examples: `minmax`, `mse`, `percentile`).
+- `--use-layerwise-equalization`: Enable layerwise equalization quantization (default: disabled).
 - `--int16-op-pattern`: Regex pattern to force matched ops to int16 (repeatable).
 - `--onnx-model`: Path to the input ONNX model (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx`).
 - `--espdl-model`: Path to the output `.espdl` file (default `ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl`).
