@@ -2772,6 +2772,10 @@ def main():
                 f.write(msg + "\n")
         except OSError:
             pass
+    def _fmt_anchors(vals):
+        if not vals:
+            return "[]"
+        return "[" + ", ".join(f"({w:.6f},{h:.6f})" for w, h in vals) + "]"
     raw_swap_map, internal_swap_map = resolve_class_swap_map(aug_cfg, class_ids)
     if raw_swap_map:
         class_to_idx = {int(cid): i for i, cid in enumerate(class_ids)}
@@ -3290,13 +3294,15 @@ def main():
                     ema_helper.ema.set_anchors(anchors_tensor)
             if prev_num_anchors is not None and prev_num_anchors != num_anchors:
                 print("[WARN] Teacher anchors count differs; student head was re-initialized.")
-            def _fmt_anchors(vals):
-                if not vals:
-                    return "[]"
-                return "[" + ", ".join(f"({w:.6f},{h:.6f})" for w, h in vals) + "]"
             _log_line(f"Override anchors (prev): {_fmt_anchors(prev_anchor_list)}")
             _log_line(f"Override anchors (new):  {_fmt_anchors(anchor_list)}")
             print(f"Overrode student anchors with teacher anchors (num_anchors={num_anchors}).")
+
+    if use_anchor:
+        if (not anchor_list) and anchors_tensor is not None:
+            anchor_list = [tuple(map(float, a)) for a in anchors_tensor.detach().cpu().numpy().tolist()]
+        alg_tag = auto_anchors_alg if auto_anchors else "manual"
+        _log_line(f"Anchors (final): {_fmt_anchors(anchor_list)} (auto_anchors_alg={alg_tag})")
 
     if args.val_only:
         sample_dir = os.path.join(run_dir, "val_only")
