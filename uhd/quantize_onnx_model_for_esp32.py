@@ -393,6 +393,11 @@ def build_arg_parser():
         help="Force depthwise conv blocks (/depthwiseconv/, /dw/bn/, /dw/act/) to int16.",
     )
     parser.add_argument(
+        "--use-layerwise-equalization",
+        action="store_true",
+        help="Enable layerwise equalization quantization.",
+    )
+    parser.add_argument(
         "--onnx-model",
         default=DEFAULT_ONNX_MODEL_PATH,
         help="Path to the input ONNX model.",
@@ -501,11 +506,12 @@ def main():
     )
     # Layerwise equalization quantization
     # https://docs.espressif.com/projects/esp-dl/en/latest/tutorials/how_to_deploy_mobilenetv2.html#layerwise-equalization-quantization
-    setting.equalization = True
-    setting.equalization_setting.iterations = 4
-    setting.equalization_setting.value_threshold = .4
-    setting.equalization_setting.opt_level = 2
-    setting.equalization_setting.interested_layers = None
+    if args.use_layerwise_equalization:
+        setting.equalization = True
+        setting.equalization_setting.iterations = 4
+        setting.equalization_setting.value_threshold = .4
+        setting.equalization_setting.opt_level = 2
+        setting.equalization_setting.interested_layers = None
 
     quant_ppq_graph = espdl_quantize_onnx(
         onnx_import_file=onnx_model_path,
