@@ -174,6 +174,15 @@ def draw_boxes(img_bgr: np.ndarray, boxes: List[Tuple[float, float, float, float
     for score, x1, y1, x2, y2 in boxes:
         x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])
         cv2.rectangle(out, (x1i, y1i), (x2i, y2i), (0, 0, 255), 2)
+        label = f"{score:.2f}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        (tw, th), baseline = cv2.getTextSize(label, font, scale, thickness)
+        tx = x1i
+        ty = max(y1i - 4, th + 4)
+        cv2.rectangle(out, (tx, ty - th - baseline), (tx + tw, ty + baseline), (0, 0, 255), -1)
+        cv2.putText(out, label, (tx, ty), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
     return out
 
 
