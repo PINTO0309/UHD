@@ -23,6 +23,8 @@ data_augment_pre:
     min_boxes: 1
     max_retries: 10
     allow_empty: false
+    # use centered crop; ranges use midpoints; disables retries
+    deterministic: false
   # VerticalFlip:
   #   prob: 0.5
   # RandomScale:
