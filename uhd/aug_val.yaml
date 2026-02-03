@@ -9,7 +9,7 @@ data_augment_pre:
     # - [min, max]: target area is sampled uniformly within the range each time.
     # Note: with aspect_ratio=1.0 on non-square images, max area is capped by min(W,H)^2.
     # Example: 640x480 -> max square area 480x480 = 75% of image.
-    ratio: 0.9
+    ratio: 1.0
     min_boxes: 1
     max_retries: 10
     allow_empty: false
