@@ -307,6 +307,7 @@ def parse_args():
     parser.add_argument("--highbit-w-bits", type=int, default=8, help="High-bit weight bits (default: 8).")
     parser.add_argument("--highbit-a-bits", type=int, default=8, help="High-bit activation bits (default: 8).")
     parser.add_argument("--aug-config", default="uhd/aug.yaml", help="Path to YAML file specifying data augmentations.")
+    parser.add_argument("--val-aug-config", default=None, help="Optional YAML file for validation-time augmentations.")
     parser.add_argument("--use-ema", action="store_true", help="Enable EMA of model weights for evaluation/checkpointing.")
     parser.add_argument("--ema-decay", type=float, default=0.9998, help="EMA decay factor (ignored if EMA disabled).")
     parser.add_argument("--coco-eval", action="store_true", help="Run COCO-style evaluation (requires faster-coco-eval or pycocotools).")
@@ -937,7 +938,7 @@ def _write_split_list(path: str, items: List[Tuple[str, str]]) -> None:
             f.write(f"{img_path}\n")
 
 
-def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
+def make_datasets(args, class_ids, aug_cfg, val_aug_cfg, resize_mode: str):
     img_h, img_w = parse_img_size(args.img_size)
     if args.train_list or args.val_list:
         if not (args.train_list and args.val_list):
@@ -963,9 +964,9 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
             seed=args.seed,
             img_size=(img_h, img_w),
             resize_mode=resize_mode,
-            augment=False,
+            augment=bool(val_aug_cfg),
             class_ids=class_ids,
-            augment_cfg=aug_cfg,
+            augment_cfg=val_aug_cfg or aug_cfg,
         )
         # When running val-only, optionally cap validation set size for quick checks.
         if getattr(args, "val_only", False) and getattr(args, "val_count", None):
@@ -1038,9 +1039,9 @@ def make_datasets(args, class_ids, aug_cfg, resize_mode: str):
         seed=args.seed,
         img_size=(img_h, img_w),
         resize_mode=resize_mode,
-        augment=False,
+        augment=bool(val_aug_cfg),
         class_ids=class_ids,
-        augment_cfg=aug_cfg,
+        augment_cfg=val_aug_cfg or aug_cfg,
         items=val_items,
     )
     return train_ds, val_ds
@@ -2312,6 +2313,7 @@ def main():
         det_class_ids_raw = parse_classes(args.multi_label_det_classes)
         attr_class_ids_raw = parse_classes(args.multi_label_attr_classes)
     aug_cfg = load_aug_config(args.aug_config)
+    val_aug_cfg = load_aug_config(args.val_aug_config) if args.val_aug_config else None
     resize_mode = normalize_resize_mode(args.resize_mode)
     use_skip = bool(args.use_skip)
     utod_residual = bool(args.utod_residual)
@@ -2815,7 +2817,7 @@ def main():
     if input_channels != 3 and teacher_backbone:
         raise ValueError(f"teacher-backbone requires 3-channel RGB input; disable it when using {resize_mode}.")
 
-    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg, resize_mode=resize_mode)
+    train_ds, val_ds = make_datasets(args, class_ids, aug_cfg, val_aug_cfg, resize_mode=resize_mode)
     anchors_tensor = None
     if arch_cnn_like and anchor_head:
         if anchor_list:

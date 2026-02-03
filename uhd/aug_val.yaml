@@ -1,0 +1,15 @@
+data_augment_pre:
+  RandomCrop:
+    prob: 1.0
+    # Keep square crop (1:1). Position is random within the image.
+    # aspect_ratio is W/H. 1.0 -> square; 0.7 -> taller crop (W=0.7*H); 1.6 -> wider crop (W=1.6*H).
+    aspect_ratio: 1.0
+    # ratio controls crop area fraction (relative to full image area).
+    # - single value: target area is roughly fixed (may shrink if constrained by aspect_ratio/image size).
+    # - [min, max]: target area is sampled uniformly within the range each time.
+    # Note: with aspect_ratio=1.0 on non-square images, max area is capped by min(W,H)^2.
+    # Example: 640x480 -> max square area 480x480 = 75% of image.
+    ratio: 1.0
+    min_boxes: 1
+    max_retries: 10
+    allow_empty: false
