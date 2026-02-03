@@ -431,6 +431,12 @@ def parse_args():
         default="kmeans",
         help="Auto-anchors algorithm (kmeans/logkmeans/stratified/stratified_large/sml_fixed).",
     )
+    parser.add_argument(
+        "--auto-anchors-bias",
+        type=float,
+        default=0.20,
+        help="Bias for stratified_large auto-anchors (larger favors larger boxes).",
+    )
     parser.add_argument("--num-anchors", type=int, default=3, help="Number of anchors to use when auto-computing.")
     parser.add_argument(
         "--auto-anchors-plot",
@@ -722,6 +728,7 @@ def auto_compute_anchors(
     k: int = 3,
     iters: int = 20,
     alg: str = "kmeans",
+    bias: float = 0.20,
 ) -> np.ndarray:
     """Compute anchors from normalized (w,h) with selectable algorithm."""
     if boxes.size == 0:
@@ -742,7 +749,7 @@ def auto_compute_anchors(
     elif alg == "stratified":
         centers = _stratified_by_area(boxes, k)
     elif alg in ("stratified_large", "stratified-large", "stratifiedlarge"):
-        centers = _stratified_by_area_bias(boxes, k, bias=0.35)
+        centers = _stratified_by_area_bias(boxes, k, bias=bias)
     else:
         centers = _kmeans_iou(boxes, k, iters, rng)
     centers = centers[np.argsort(centers.prod(axis=1))]  # sort by area
@@ -2373,6 +2380,7 @@ def main():
     anchor_list = parse_anchors_str(args.anchors)
     auto_anchors = bool(args.auto_anchors)
     auto_anchors_alg = str(args.auto_anchors_alg or "kmeans").lower()
+    auto_anchors_bias = float(args.auto_anchors_bias)
     num_anchors = int(args.num_anchors if args.num_anchors else 0) or 3
     if anchor_list:
         num_anchors = len(anchor_list)
@@ -2442,7 +2450,7 @@ def main():
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
-        nonlocal use_anchor, anchor_list, auto_anchors, auto_anchors_alg, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, loss_weight_box, loss_weight_obj, loss_weight_cls, loss_weight_quality, obj_loss_type, obj_target, simota_topk
+        nonlocal use_anchor, anchor_list, auto_anchors, auto_anchors_alg, auto_anchors_bias, num_anchors, iou_loss_type, anchor_assigner, anchor_cls_loss, loss_weight_box, loss_weight_obj, loss_weight_cls, loss_weight_quality, obj_loss_type, obj_target, simota_topk
         nonlocal last_se, last_width_scale, output_stride
         if "cnn_width" in meta:
             ckpt_width = int(meta["cnn_width"])
@@ -2556,6 +2564,8 @@ def main():
             auto_anchors = bool(meta["auto_anchors"])
         if "auto_anchors_alg" in meta and meta["auto_anchors_alg"]:
             auto_anchors_alg = str(meta["auto_anchors_alg"]).lower()
+        if "auto_anchors_bias" in meta:
+            auto_anchors_bias = float(meta["auto_anchors_bias"])
         if "num_anchors" in meta:
             num_anchors = int(meta["num_anchors"])
         if "iou_loss" in meta and meta["iou_loss"]:
@@ -2812,14 +2822,18 @@ def main():
             anchors_np = np.array(anchor_list, dtype=np.float32)
         elif auto_anchors:
             wh = collect_box_wh(train_ds)
-            anchors_np = auto_compute_anchors(wh, k=num_anchors, alg=auto_anchors_alg)
+            anchors_np = auto_compute_anchors(wh, k=num_anchors, alg=auto_anchors_alg, bias=auto_anchors_bias)
             if args.auto_anchors_plot:
                 plot_path = args.auto_anchors_plot_path or os.path.join(run_dir, "auto_anchors_wh.png")
                 base, ext = os.path.splitext(plot_path)
                 if not ext:
                     ext = ".png"
-                plot_path = f"{base}_{auto_anchors_alg}{ext}"
-                plot_title = f"Auto-anchors WH distribution ({auto_anchors_alg})"
+                if auto_anchors_alg in ("stratified_large", "stratified-large", "stratifiedlarge"):
+                    plot_path = f"{base}_{auto_anchors_alg}_bias{auto_anchors_bias:.2f}{ext}"
+                    plot_title = f"Auto-anchors WH distribution ({auto_anchors_alg}, bias={auto_anchors_bias:.2f})"
+                else:
+                    plot_path = f"{base}_{auto_anchors_alg}{ext}"
+                    plot_title = f"Auto-anchors WH distribution ({auto_anchors_alg})"
                 if plot_anchor_wh_distribution(wh, plot_path, anchors=anchors_np, title=plot_title):
                     _log_line(f"Saved auto-anchors WH plot: {plot_path}")
         else:
@@ -3549,6 +3563,7 @@ def main():
                     "anchors": anchor_list,
                     "auto_anchors": auto_anchors,
                     "auto_anchors_alg": auto_anchors_alg,
+                    "auto_anchors_bias": auto_anchors_bias,
                     "num_anchors": num_anchors,
                     "iou_loss": iou_loss_type,
                     "anchor_assigner": anchor_assigner,
@@ -3659,6 +3674,7 @@ def main():
             "anchors": anchor_list,
             "auto_anchors": auto_anchors,
             "auto_anchors_alg": auto_anchors_alg,
+            "auto_anchors_bias": auto_anchors_bias,
             "num_anchors": num_anchors,
             "iou_loss": iou_loss_type,
             "anchor_assigner": anchor_assigner,
