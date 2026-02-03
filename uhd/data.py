@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .augment import build_augmentation_pipeline
+from .augment import build_augmentation_pipeline, split_augmentation_cfg
 from .resize import (
     Y_BIN_RESIZE_MODE,
     Y_ONLY_RESIZE_MODE,
@@ -100,7 +100,8 @@ class YoloDataset(Dataset):
             raise ValueError("class_ids must contain at least one class id.")
         self.class_to_idx: Dict[int, int] = {cid: i for i, cid in enumerate(self.class_ids)}
         self.augment_cfg = augment_cfg
-        self.pipeline = None
+        self.pipeline_pre = None
+        self.pipeline_post = None
         if self.augment and augment_cfg:
             # convert class_swap_map to internal indices if present
             class_swap_map = None
@@ -117,8 +118,15 @@ class YoloDataset(Dataset):
                     if int(k) in self.class_to_idx and int(v) in self.class_to_idx:
                         class_swap_map[self.class_to_idx[int(k)]] = self.class_to_idx[int(v)]
             cfg_body = augment_cfg.get("data_augment", augment_cfg) if isinstance(augment_cfg, dict) else None
-            self.pipeline = build_augmentation_pipeline(
-                cfg_body, img_w=self.img_w, img_h=self.img_h, class_swap_map=class_swap_map, dataset=self
+            cfg_pre = augment_cfg.get("data_augment_pre") if isinstance(augment_cfg, dict) else None
+            cfg_post = augment_cfg.get("data_augment_post") if isinstance(augment_cfg, dict) else None
+            if cfg_pre is None and cfg_post is None:
+                cfg_pre, cfg_post = split_augmentation_cfg(cfg_body)
+            self.pipeline_pre = build_augmentation_pipeline(
+                cfg_pre, img_w=self.img_w, img_h=self.img_h, class_swap_map=class_swap_map, dataset=self
+            )
+            self.pipeline_post = build_augmentation_pipeline(
+                cfg_post, img_w=self.img_w, img_h=self.img_h, class_swap_map=class_swap_map, dataset=self
             )
 
         if items is not None:
@@ -201,11 +209,14 @@ class YoloDataset(Dataset):
             cur_idx = idx if attempt == 0 else random.randrange(len(self.items))
             arr, boxes_np, labels_np, img_path = self._load_raw(cur_idx)
             h0, w0 = arr.shape[:2]
-            arr_resized = self.resize_image(arr, (self.img_h, self.img_w))
-            if self.pipeline:
-                img_np, boxes_np, labels_np = self.pipeline(arr_resized, boxes_np, labels_np)
+            if self.pipeline_pre:
+                img_np, boxes_np, labels_np = self.pipeline_pre(arr, boxes_np, labels_np)
             else:
-                img_np = arr_resized
+                img_np = arr
+            if img_np.shape[:2] != (self.img_h, self.img_w):
+                img_np = self.resize_image(img_np, (self.img_h, self.img_w))
+            if self.pipeline_post:
+                img_np, boxes_np, labels_np = self.pipeline_post(img_np, boxes_np, labels_np)
 
             if self.output_yuv422:
                 img_np = rgb_to_yuyv422(img_np)

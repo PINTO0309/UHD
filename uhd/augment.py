@@ -1,3 +1,4 @@
+import math
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -7,6 +8,47 @@ import torch
 import torchvision.transforms.v2 as T
 
 from .resize import resize_image_numpy
+
+GEOMETRIC_OPS = {
+    "HorizontalFlip",
+    "VerticalFlip",
+    "RandomCrop",
+    "RandomResizedCrop",
+    "RandomScale",
+    "Translation",
+    "Mosaic",
+    "CopyPaste",
+    "MixUp",
+}
+
+COLOR_OPS = {
+    "RandomHSV",
+    "RandomPhotometricDistort",
+    "Blur",
+    "MedianBlur",
+    "MotionBlur",
+    "GaussianBlur",
+    "RandomBrightness",
+    "RandomContrast",
+    "RandomSaturation",
+    "CLAHE",
+    "ToGray",
+}
+
+
+def split_augmentation_cfg(cfg: Optional[Dict]) -> Tuple[Optional[Dict], Optional[Dict]]:
+    if not cfg:
+        return None, None
+    pre: Dict = {}
+    post: Dict = {}
+    for name, aug in cfg.items():
+        if name in GEOMETRIC_OPS:
+            pre[name] = aug
+        elif name in COLOR_OPS:
+            post[name] = aug
+        else:
+            post[name] = aug
+    return pre or None, post or None
 
 def _cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
     cx, cy, w, h = boxes.T
@@ -312,23 +354,79 @@ class AugmentationPipeline:
                     boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
 
         elif name == "RandomCrop":
-            if should_apply(0.0):
+            prob = 1.0
+            crop_ratio = 0.9
+            aspect_ratio = None
+            min_boxes = 1
+            max_retries = 10
+            allow_empty = False
+            if isinstance(aug_cfg, dict):
+                prob = float(aug_cfg.get("prob", 1.0))
+                crop_ratio = aug_cfg.get("ratio", 0.9)
+                aspect_ratio = aug_cfg.get("aspect_ratio")
+                min_boxes = int(aug_cfg.get("min_boxes", 1))
+                max_retries = int(aug_cfg.get("max_retries", 10))
+                allow_empty = bool(aug_cfg.get("allow_empty", False))
+            elif aug_cfg is not None:
+                crop_ratio = float(aug_cfg)
+            if should_apply(prob):
                 h, w = img.shape[:2]
-                crop_ratio = float(aug_cfg) if not isinstance(aug_cfg, dict) else float(aug_cfg.get("ratio", 0.9))
-                ch = int(h * crop_ratio)
-                cw = int(w * crop_ratio)
-                if ch < 1 or cw < 1:
-                    return img, boxes, labels
-                y0 = random.randint(0, h - ch)
-                x0 = random.randint(0, w - cw)
-                img = img[y0 : y0 + ch, x0 : x0 + cw]
-                if boxes.size:
-                    boxes[:, 0] = (boxes[:, 0] * w - x0) / cw
-                    boxes[:, 1] = (boxes[:, 1] * h - y0) / ch
-                    boxes[:, 2] *= w / cw
-                    boxes[:, 3] *= h / ch
-                    boxes = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes)))
-                    boxes, labels = _filter_boxes(boxes, labels, min_area=1e-6)
+                orig_img = img
+                orig_boxes = boxes
+                orig_labels = labels
+                has_boxes = boxes.size > 0
+                tries = max(1, max_retries)
+                for _ in range(tries):
+                    if isinstance(crop_ratio, (list, tuple)):
+                        area_ratio = random.uniform(float(crop_ratio[0]), float(crop_ratio[1]))
+                    else:
+                        area_ratio = float(crop_ratio)
+                    area_ratio = max(1e-6, min(area_ratio, 1.0))
+                    if aspect_ratio is None:
+                        target_aspect = w / h if h > 0 else 1.0
+                    elif isinstance(aspect_ratio, (list, tuple)):
+                        target_aspect = random.uniform(float(aspect_ratio[0]), float(aspect_ratio[1]))
+                    else:
+                        target_aspect = float(aspect_ratio)
+                    if target_aspect <= 0:
+                        target_aspect = w / h if h > 0 else 1.0
+                    target_area = h * w * area_ratio
+                    if abs(target_aspect - 1.0) < 1e-6:
+                        side = int(round(math.sqrt(target_area)))
+                        side = min(max(side, 1), min(h, w))
+                        ch = cw = side
+                    else:
+                        ch = int(round((target_area / target_aspect) ** 0.5))
+                        cw = int(round(ch * target_aspect))
+                        if ch > h or cw > w:
+                            scale = min(w / max(cw, 1), h / max(ch, 1))
+                            cw = max(1, int(math.floor(cw * scale)))
+                            ch = max(1, int(math.floor(ch * scale)))
+                        ch = min(max(ch, 1), h)
+                        cw = min(max(cw, 1), w)
+                    if ch < 1 or cw < 1:
+                        continue
+                    y0 = random.randint(0, h - ch) if h > ch else 0
+                    x0 = random.randint(0, w - cw) if w > cw else 0
+                    img_crop = orig_img[y0 : y0 + ch, x0 : x0 + cw]
+                    boxes_crop = orig_boxes.copy()
+                    labels_crop = orig_labels.copy()
+                    if boxes_crop.size:
+                        boxes_crop[:, 0] = (boxes_crop[:, 0] * w - x0) / cw
+                        boxes_crop[:, 1] = (boxes_crop[:, 1] * h - y0) / ch
+                        boxes_crop[:, 2] *= w / cw
+                        boxes_crop[:, 3] *= h / ch
+                        boxes_crop = _xyxy_to_cxcywh(_clip_boxes(_cxcywh_to_xyxy(boxes_crop)))
+                        boxes_crop, labels_crop = _filter_boxes(boxes_crop, labels_crop, min_area=1e-6)
+                    if allow_empty or not has_boxes or boxes_crop.shape[0] >= min_boxes:
+                        img = img_crop
+                        boxes = boxes_crop
+                        labels = labels_crop
+                        break
+                else:
+                    img = orig_img
+                    boxes = orig_boxes
+                    labels = orig_labels
                 img = self._resize(img, (self.img_w, self.img_h))
 
         elif name == "RandomResizedCrop":
