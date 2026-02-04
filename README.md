@@ -2058,24 +2058,12 @@ Notes:
 
 <details><summary>Click to expand</summary>
 
-```
+```bash
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=32
 RESIZEMODE=opencv_inter_nearest
-CKPT=runs/ultratinyod_anc8_w32_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0287_map_0.29338.pt
-uv run python export_onnx.py \
---checkpoint ${CKPT} \
---output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
---opset 17 \
---no-merge-postprocess \
---noconcat_box_obj_quality_cls
-
-SIZE=64x64
-ANCHOR=8
-CNNWIDTH=40
-RESIZEMODE=opencv_inter_nearest
-CKPT=runs/ultratinyod_anc8_w40_lo_64x64_lr0.03_opencv_inter_nearest_cg18/best_utod_0232_map_0.31172.pt
+CKPT=runs/ultratinyod_anc8_w32_dw_64x64_lr0.00001_opencv_inter_nearest_cg17_distill/best_utod_0100_map_0.33227.pt
 uv run python export_onnx.py \
 --checkpoint ${CKPT} \
 --output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
@@ -2090,16 +2078,39 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
 --espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
 --target esp32s3 \
---calib-algorithm kl
+--calib-algorithm kl \
+--use-layerwise-equalization \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /quality_out/Conv \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu
+
+SIZE=64x64
+ANCHOR=8
+CNNWIDTH=32
+RESIZEMODE=opencv_inter_nearest
+CKPT=runs/ultratinyod_anc8_w32_dw_64x64_lr0.00001_opencv_inter_nearest_cg18_nolo_distill/best_utod_0100_map_0.32802.pt
+uv run python export_onnx.py \
+--checkpoint ${CKPT} \
+--output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost_nolo.onnx \
+--opset 17 \
+--no-merge-postprocess \
+--noconcat_box_obj_quality_cls
 
 uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest \
---onnx-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.onnx \
---espdl-model ultratinyod_anc8_w40_64x64_opencv_inter_nearest_static_nopost.espdl \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.espdl \
 --target esp32s3 \
---calib-algorithm kl
+--calib-algorithm kl \
+--use-layerwise-equalization \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /quality_out/Conv \
+--int16-op-pattern /quality_out/Conv \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu
 ```
 <img width="640" alt="image" src="https://github.com/user-attachments/assets/c6d5475a-c56a-4019-a24d-45543fafa4ff" />
 
@@ -2109,7 +2120,7 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 
 <details><summary>Click to expand</summary>
 
-```
+```bash
 SIZE=64x64
 ANCHOR=8
 CNNWIDTH=32
@@ -2479,332 +2490,51 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest \
---onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
 --target esp32s3 \
---calib-algorithm kl
+--calib-algorithm kl \
+--use-layerwise-equalization
 
 uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest \
---onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nocat.espdl \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
 --target esp32p4 \
---calib-algorithm kl
+--calib-algorithm kl \
+--use-layerwise-equalization
 
 ### Example command to minimize quantization error
 uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest \
---onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_static_nopost_nocat_acc.espdl \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
 --target esp32s3 \
 --calib-algorithm kl \
+--use-layerwise-equalization \
 --int16-op-pattern /box_out/Conv \
---int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
---int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
+--int16-op-pattern /quality_out/Conv \
 --int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
---int16-op-pattern /backbone/block2/dw/act/Relu \
---int16-op-pattern /backbone/block3_skip/conv/Conv \
---int16-op-pattern /backbone/block2/pw/conv/Conv \
---int16-op-pattern /backbone/block2/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
---int16-op-pattern /backbone/block1/dw/act/Relu \
---int16-op-pattern /backbone/sppf/cv1/conv/Conv \
---int16-op-pattern /backbone/sppf/cv1/act/Relu \
---int16-op-pattern /backbone/stem/conv/Conv \
---int16-op-pattern /backbone/stem/act/Relu \
---int16-op-pattern /large_obj_fuse/conv/Conv \
---int16-op-pattern /large_obj_fuse/act/Relu \
---int16-op-pattern /large_obj_blocks/large_obj_blocks.1/pw/conv/Conv \
---int16-op-pattern /large_obj_blocks/large_obj_blocks.0/pw/act/Relu \
---int16-op-pattern /large_obj_blocks/large_obj_blocks.0/pw/conv/Conv \
---int16-op-pattern /large_obj_blocks/large_obj_blocks.1/pw/act/Relu
-```
-```bash
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target "esp32s3" \
---calib-algorithm kl \
---int16-op-pattern "/model/backbone/block1/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv"
+--int16-op-pattern /backbone/block1/pw/act/Relu
 
 uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
+--resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.espdl \
 --target esp32s3 \
 --calib-algorithm kl \
---int16-op-pattern "/model/head/context_res/context_res.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/head/context_res/context_res.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/obj_conv/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/backbone/block1/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_down/large_obj_down.0/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/obj_conv/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.0/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w48_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/backbone/block1/dw/conv/Conv" \
---int16-op-pattern "/model/head/context/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w56_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/head/context_res/context_res.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w64_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.0/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/quality_tower/quality_tower.1/dw/conv/Conv"
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_yuv422 \
---onnx-model ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.onnx \
---espdl-model ultratinyod_res_anc8_w72_64x64_opencv_inter_nearest_yuv422_distill_static_nopost.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern "/model/head/context_res/context_res.2/dw/conv/Conv" \
---int16-op-pattern "/model/head/large_obj_blocks/large_obj_blocks.1/dw/conv/Conv" \
---int16-op-pattern "/model/head/box_tower/box_tower.1/dw/conv/Conv"
-
-#########################################################################################
-#########################################################################################
-#########################################################################################
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_y \
---onnx-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w16_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
+--use-layerwise-equalization \
 --int16-op-pattern /box_out/Conv \
---int16-op-pattern /obj_conv/pw/conv/Conv \
---int16-op-pattern /obj_conv/pw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/stem/conv/Conv \
---int16-op-pattern /backbone/stem/act/Relu \
---int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
+--int16-op-pattern /quality_out/Conv \
+--int16-op-pattern /quality_out/Conv \
 --int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu \
---int16-op-pattern /backbone/sppf/cv1/conv/Conv \
---int16-op-pattern /backbone/sppf/cv1/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
---int16-op-pattern /backbone/block2/dw/act/Relu \
---int16-op-pattern /backbone/block3_skip/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
---int16-op-pattern /backbone/block2/pw/conv/Conv \
---int16-op-pattern /backbone/block2/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
---int16-op-pattern /backbone/block1/dw/act/Relu
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_y \
---onnx-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w24_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
---int16-op-pattern /box_out/Conv \
---int16-op-pattern /obj_conv/pw/conv/Conv \
---int16-op-pattern /obj_conv/pw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/stem/conv/Conv \
---int16-op-pattern /backbone/stem/act/Relu \
---int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu \
---int16-op-pattern /backbone/sppf/cv1/conv/Conv \
---int16-op-pattern /backbone/sppf/cv1/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
---int16-op-pattern /backbone/block2/dw/act/Relu \
---int16-op-pattern /backbone/block3_skip/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
---int16-op-pattern /backbone/block2/pw/conv/Conv \
---int16-op-pattern /backbone/block2/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
---int16-op-pattern /backbone/block1/dw/act/Relu \
---int16-op-pattern /obj_out/Conv
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_y \
---onnx-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w32_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
---int16-op-pattern /box_out/Conv \
---int16-op-pattern /obj_conv/pw/conv/Conv \
---int16-op-pattern /obj_conv/pw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/stem/conv/Conv \
---int16-op-pattern /backbone/stem/act/Relu \
---int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu \
---int16-op-pattern /backbone/sppf/cv1/conv/Conv \
---int16-op-pattern /backbone/sppf/cv1/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
---int16-op-pattern /backbone/block2/dw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
---int16-op-pattern /backbone/block2/pw/conv/Conv \
---int16-op-pattern /backbone/block2/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
---int16-op-pattern /backbone/block1/dw/act/Relu \
---int16-op-pattern /depthwiseconv/obj_conv/dw/conv/Conv \
---int16-op-pattern /obj_conv/dw/act/Relu \
---int16-op-pattern /context_res/context_res.0/pw/conv/Conv \
---int16-op-pattern /context_res/context_res.0/pw/act/Relu \
---int16-op-pattern /depthwiseconv/context_res/context_res.0/dw/conv/Conv \
---int16-op-pattern /context_res/context_res.0/dw/act/Relu \
---int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.1/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.1/dw/act/Relu \
---int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
---int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
---int16-op-pattern /obj_out/Conv
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest_y \
---onnx-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat.onnx \
---espdl-model ultratinyod_res_anc8_w40_64x64_opencv_inter_nearest_y_static_nopost_nocat.espdl \
---target esp32s3 \
---calib-algorithm kl \
---int16-op-pattern /quality_tower/quality_tower.0/pw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/pw/act/Relu \
---int16-op-pattern /box_out/Conv \
---int16-op-pattern /obj_conv/pw/conv/Conv \
---int16-op-pattern /obj_conv/pw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/stem/conv/Conv \
---int16-op-pattern /backbone/stem/act/Relu \
---int16-op-pattern /depthwiseconv/quality_tower/quality_tower.0/dw/conv/Conv \
---int16-op-pattern /quality_tower/quality_tower.0/dw/act/Relu \
---int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu \
---int16-op-pattern /backbone/sppf/cv1/conv/Conv \
---int16-op-pattern /backbone/sppf/cv1/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
---int16-op-pattern /backbone/block2/dw/act/Relu \
---int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
---int16-op-pattern /backbone/block2/pw/conv/Conv \
---int16-op-pattern /backbone/block2/pw/act/Relu \
---int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
---int16-op-pattern /backbone/block1/dw/act/Relu \
---int16-op-pattern /depthwiseconv/obj_conv/dw/conv/Conv \
---int16-op-pattern /obj_conv/dw/act/Relu \
---int16-op-pattern /context_res/context_res.0/pw/conv/Conv \
---int16-op-pattern /context_res/context_res.0/pw/act/Relu \
---int16-op-pattern /depthwiseconv/context_res/context_res.0/dw/conv/Conv \
---int16-op-pattern /context_res/context_res.0/dw/act/Relu \
---int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
---int16-op-pattern /depthwiseconv/box_tower/box_tower.1/dw/conv/Conv \
---int16-op-pattern /box_tower/box_tower.1/dw/act/Relu \
---int16-op-pattern /large_obj_down/large_obj_down.3/conv/Conv \
---int16-op-pattern /large_obj_down/large_obj_down.3/act/Relu \
---int16-op-pattern /obj_out/Conv
+--int16-op-pattern /backbone/block1/pw/act/Relu
 ```
 
 Notes:
