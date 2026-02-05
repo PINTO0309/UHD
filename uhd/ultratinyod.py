@@ -1028,7 +1028,8 @@ class UltraTinyODHead(nn.Module):
         """
         if anchors is None:
             return
-        anchor_tensor = anchors.detach().to(self.box_out.weight.device)
+        # Clone to avoid in-place mutations on shared tensors during training.
+        anchor_tensor = anchors.detach().to(self.box_out.weight.device).clone()
         if anchor_tensor.ndim == 1:
             anchor_tensor = anchor_tensor.view(-1, 2)
         if anchor_tensor.ndim != 2 or anchor_tensor.shape[1] != 2:
