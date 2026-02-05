@@ -2928,11 +2928,18 @@ def main():
             export_module = UltraTinyODRawWithAnchors(model)
             has_quality = bool(getattr(model.head, "has_quality", False))
             disable_cls_local = bool(getattr(model.head, "disable_cls", False))
+            has_attr = getattr(model.head, "attr_out", None) is not None
             if disable_cls_local:
                 raw_name = "txtywh_obj_quality_x8" if has_quality else "txtywh_obj_x8"
-                output_names = [raw_name, "anchors", "wh_scale"]
+                if has_attr:
+                    output_names = [raw_name, "attr_logits", "anchors", "wh_scale"]
+                else:
+                    output_names = [raw_name, "anchors", "wh_scale"]
             else:
-                output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
+                if has_attr:
+                    output_names = ["txtywh_obj_quality_cls_x8", "attr_logits", "anchors", "wh_scale"]
+                else:
+                    output_names = ["txtywh_obj_quality_cls_x8", "anchors", "wh_scale"]
             if resize_mode == YUV422_RESIZE_MODE:
                 input_name = "input_yuv422"
             elif resize_mode in (Y_ONLY_RESIZE_MODE, Y_BIN_RESIZE_MODE, Y_TRI_RESIZE_MODE):

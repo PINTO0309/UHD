@@ -249,6 +249,40 @@ def _build_fallback_anchors(na: int) -> np.ndarray:
     )
 
 
+def _is_raw_output_name(name: str) -> bool:
+    name_l = str(name or "").lower()
+    return ("txtywh" in name_l) or ("raw" in name_l)
+
+
+def _is_attr_output_name(name: str) -> bool:
+    return "attr" in str(name or "").lower()
+
+
+def _assign_anchor_like(
+    name: str,
+    val: np.ndarray,
+    anchors: Optional[np.ndarray],
+    wh_scale: Optional[np.ndarray],
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    if val is None or val.ndim != 2 or val.shape[1] != 2:
+        return anchors, wh_scale
+    name_l = str(name or "").lower()
+    if "wh_scale" in name_l or ("scale" in name_l and "anchor" not in name_l):
+        if wh_scale is None:
+            wh_scale = val.astype(np.float32)
+        return anchors, wh_scale
+    if "anchor" in name_l:
+        if anchors is None:
+            anchors = val.astype(np.float32)
+        return anchors, wh_scale
+    # Fallback for unnamed 2D outputs.
+    if anchors is None:
+        anchors = val.astype(np.float32)
+    elif wh_scale is None:
+        wh_scale = val.astype(np.float32)
+    return anchors, wh_scale
+
+
 def _detect_raw_parts(outputs_info) -> Optional[dict]:
     name_map = {o.name.lower(): o.name for o in outputs_info}
     if "box" in name_map and ("obj" in name_map or "quality" in name_map):
@@ -1071,17 +1105,29 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
         dummy = np.zeros((1, c_probe, h_probe, w_probe), dtype=np.float32)
         outs = session.run(None, {input_info.name: dummy})
         out_map = {meta.name: val for meta, val in zip(outputs_info, outs)}
+        raw_candidates = []
         for meta, val in zip(outputs_info, outs):
-            if raw_parts is None and val.ndim == 4 and raw_output is None:
-                raw_output = meta.name
-                raw_channels = val.shape[1] if val.ndim == 4 else val.shape[-1]
-            elif val.ndim == 2 and val.shape[1] == 2:
-                name_l = meta.name.lower()
-                if anchors is None and ("anchor" in name_l or raw_output is None):
-                    anchors = val.astype(np.float32)
-                if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
-                    wh_scale = val.astype(np.float32)
+            if val.ndim == 4:
+                raw_candidates.append((meta.name, val))
+            if val.ndim == 2 and val.shape[1] == 2:
+                anchors, wh_scale = _assign_anchor_like(meta.name, val, anchors, wh_scale)
+                if wh_scale is not None:
                     has_quality = True
+        if raw_parts is None and raw_output is None and raw_candidates:
+            for name, val in raw_candidates:
+                if _is_raw_output_name(name):
+                    raw_output = name
+                    raw_channels = val.shape[1]
+                    break
+            if raw_output is None:
+                for name, val in raw_candidates:
+                    if not _is_attr_output_name(name):
+                        raw_output = name
+                        raw_channels = val.shape[1]
+                        break
+            if raw_output is None:
+                raw_output = raw_candidates[0][0]
+                raw_channels = raw_candidates[0][1].shape[1]
         if raw_parts is not None:
             box = out_map.get(raw_parts["box"])
             obj = out_map.get(raw_parts["obj"]) if raw_parts.get("obj") else None
@@ -1100,10 +1146,14 @@ def load_session(onnx_path: str, img_size: Tuple[int, int]):
             c_cls = int(cls.shape[1]) if cls is not None else 0
             raw_channels = c_box + c_obj + c_quality + c_cls
             has_quality = has_quality or quality is not None or wh_scale is not None
-        if raw_output is None and raw_parts is None and outputs_info:
-            raw_output = outputs_info[0].name
-            raw_shape = outs[0].shape if outs else outputs_info[0].shape
-            raw_channels = raw_shape[1] if isinstance(raw_shape, tuple) and len(raw_shape) >= 2 else None
+        if raw_output is None and raw_parts is None:
+            if raw_candidates:
+                raw_output = raw_candidates[0][0]
+                raw_channels = raw_candidates[0][1].shape[1]
+            elif outputs_info:
+                raw_output = outputs_info[0].name
+                raw_shape = outs[0].shape if outs else outputs_info[0].shape
+                raw_channels = raw_shape[1] if isinstance(raw_shape, tuple) and len(raw_shape) >= 2 else None
         if anchors is None or wh_scale is None:
             anchors_f, wh_scale_f, has_quality_f = load_anchors_from_onnx(onnx_path)
             anchors = anchors if anchors is not None else anchors_f
@@ -1386,11 +1436,8 @@ def run_and_decode_onnx(
 
         for name, val in out_map.items():
             if val.ndim == 2 and val.shape[1] == 2:
-                name_l = name.lower()
-                if anchors is None and ("anchor" in name_l or True):
-                    anchors = val.astype(np.float32)
-                if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
-                    wh_scale = val.astype(np.float32)
+                anchors, wh_scale = _assign_anchor_like(name, val, anchors, wh_scale)
+                if wh_scale is not None:
                     session_info["has_quality"] = True
 
         raw, _ = _assemble_raw_from_parts(box, obj, quality, cls)
@@ -1437,18 +1484,29 @@ def run_and_decode_onnx(
     # Identify raw / anchors / wh_scale in the returned list
     raw = None
     attr = None
+    raw_candidates = []
     for name, val in zip(outputs, run_outs):
-        name_l = name.lower()
-        if raw is None and val.ndim == 4:
-            raw = val
+        if val.ndim == 4:
+            raw_candidates.append((name, val))
+            if _is_attr_output_name(name):
+                attr = val
         elif val.ndim == 2 and val.shape[1] == 2:
-            if anchors is None and ("anchor" in name_l or True):
-                anchors = val.astype(np.float32)
-            if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
-                wh_scale = val.astype(np.float32)
+            anchors, wh_scale = _assign_anchor_like(name, val, anchors, wh_scale)
+            if wh_scale is not None:
                 session_info["has_quality"] = True
-        elif val.ndim == 4 and "attr" in name_l:
-            attr = val
+
+    if raw_candidates:
+        for name, val in raw_candidates:
+            if _is_raw_output_name(name):
+                raw = val
+                break
+        if raw is None:
+            for name, val in raw_candidates:
+                if not _is_attr_output_name(name):
+                    raw = val
+                    break
+        if raw is None:
+            raw = raw_candidates[0][1]
 
     if raw is None:
         raw = run_outs[0]
@@ -1601,20 +1659,32 @@ def run_and_decode_litert(
     anchors = session_info.get("anchors")
     wh_scale = session_info.get("wh_scale")
     raw = None
+    raw_candidates = []
     for detail in output_details:
         val = interpreter.get_tensor(detail["index"])
         scale, zero = detail.get("quantization", (0.0, 0))
         if np.issubdtype(detail.get("dtype", np.float32), np.integer):
             val = _dequantize_output(val, float(scale), int(zero))
-        if raw is None and val.ndim == 4:
-            raw = val
+        name = detail.get("name", "")
+        if val.ndim == 4:
+            raw_candidates.append((name, val))
         elif val.ndim == 2 and val.shape[1] == 2:
-            name_l = detail.get("name", "").lower()
-            if anchors is None and ("anchor" in name_l or True):
-                anchors = val.astype(np.float32)
-            if wh_scale is None and ("wh_scale" in name_l or "scale" in name_l):
-                wh_scale = val.astype(np.float32)
+            anchors, wh_scale = _assign_anchor_like(name, val, anchors, wh_scale)
+            if wh_scale is not None:
                 session_info["has_quality"] = True
+
+    if raw_candidates:
+        for name, val in raw_candidates:
+            if _is_raw_output_name(name):
+                raw = val
+                break
+        if raw is None:
+            for name, val in raw_candidates:
+                if not _is_attr_output_name(name):
+                    raw = val
+                    break
+        if raw is None:
+            raw = raw_candidates[0][1]
 
     if raw is None and output_details:
         detail = output_details[0]
