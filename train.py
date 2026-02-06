@@ -1938,6 +1938,7 @@ def validate(
     coco_eval: bool = False,
     coco_per_class: bool = False,
     use_anchor: bool = False,
+    sample_from_inputs: bool = False,
     anchors: torch.Tensor = None,
     iou_loss_type: str = "giou",
     anchor_assigner: str = "legacy",
@@ -2014,44 +2015,67 @@ def validate(
         }
         heatmap_handles = _register_heatmap_hooks(model, heatmap_ctx)
 
-    def render_sample(img_path, pred_list, save_path):
+    def render_sample(img_path, pred_list, save_path, img_tensor=None):
         try:
             font = ImageFont.truetype("DejaVuSans.ttf", 14)
         except Exception:
             font = ImageFont.load_default()
-        with Image.open(img_path) as im:
-            im = im.convert("RGB")
-            if sample_y_only:
-                im_np = np.asarray(im, dtype=np.float32) / 255.0
-                y = rgb_to_y(im_np)
-                if sample_y_tri:
-                    y = y_to_tri(y)
-                elif sample_y_bin:
-                    y = y_to_bin(y)
-                y_u8 = np.clip(y[..., 0] * 255.0, 0.0, 255.0).astype(np.uint8)
-                im = Image.fromarray(y_u8, mode="L").convert("RGB")
-            draw = ImageDraw.Draw(im)
-            w, h = im.size
-            for score, cls, box in pred_list:
-                cx, cy, bw, bh = box.tolist()
-                x1 = (cx - bw / 2.0) * w
-                y1 = (cy - bh / 2.0) * h
-                x2 = (cx + bw / 2.0) * w
-                y2 = (cy + bh / 2.0) * h
-                x1, x2 = sorted([x1, x2])
-                y1, y2 = sorted([y1, y2])
-                # Clamp to image bounds to avoid invalid rectangles
-                x1 = max(0.0, min(x1, w))
-                x2 = max(0.0, min(x2, w))
-                y1 = max(0.0, min(y1, h))
-                y2 = max(0.0, min(y2, h))
-                if x2 <= x1 or y2 <= y1:
-                    continue
-                color = colors[cls % len(colors)]
-                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-                draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
-            im.save(save_path)
-            return im.size
+        if img_tensor is not None:
+            img_cpu = img_tensor.detach().float().cpu()
+            if img_cpu.ndim == 3:
+                c, h, w = img_cpu.shape
+                if c == 1:
+                    y = img_cpu[0].numpy()
+                    y_u8 = np.clip(y * 255.0, 0.0, 255.0).astype(np.uint8)
+                    im = Image.fromarray(y_u8, mode="L").convert("RGB")
+                elif c == 2:
+                    # YUYV422: visualize Y channel only
+                    y = img_cpu[0].numpy()
+                    y_u8 = np.clip(y * 255.0, 0.0, 255.0).astype(np.uint8)
+                    im = Image.fromarray(y_u8, mode="L").convert("RGB")
+                else:
+                    rgb = img_cpu[:3].permute(1, 2, 0).numpy()
+                    rgb_u8 = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+                    im = Image.fromarray(rgb_u8, mode="RGB")
+            else:
+                im = None
+        else:
+            im = None
+
+        if im is None:
+            with Image.open(img_path) as im_raw:
+                im = im_raw.convert("RGB")
+                if sample_y_only:
+                    im_np = np.asarray(im, dtype=np.float32) / 255.0
+                    y = rgb_to_y(im_np)
+                    if sample_y_tri:
+                        y = y_to_tri(y)
+                    elif sample_y_bin:
+                        y = y_to_bin(y)
+                    y_u8 = np.clip(y[..., 0] * 255.0, 0.0, 255.0).astype(np.uint8)
+                    im = Image.fromarray(y_u8, mode="L").convert("RGB")
+        draw = ImageDraw.Draw(im)
+        w, h = im.size
+        for score, cls, box in pred_list:
+            cx, cy, bw, bh = box.tolist()
+            x1 = (cx - bw / 2.0) * w
+            y1 = (cy - bh / 2.0) * h
+            x2 = (cx + bw / 2.0) * w
+            y2 = (cy + bh / 2.0) * h
+            x1, x2 = sorted([x1, x2])
+            y1, y2 = sorted([y1, y2])
+            # Clamp to image bounds to avoid invalid rectangles
+            x1 = max(0.0, min(x1, w))
+            x2 = max(0.0, min(x2, w))
+            y1 = max(0.0, min(y1, h))
+            y2 = max(0.0, min(y2, h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            color = colors[cls % len(colors)]
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+            draw.text((x1, y1), f"{score:.2f}", fill=color, font=font)
+        im.save(save_path)
+        return im.size
 
     def save_heatmaps(out_dir, out_size, local_index, base_path):
         if heatmap_ctx is None:
@@ -2222,7 +2246,8 @@ def validate(
                         else:
                             sample_out_dir = sample_dir
                             save_path = os.path.join(sample_dir, f"{save_stem}.png")
-                        orig_size = render_sample(img_path, pred_img, save_path)
+                        img_tensor = imgs[b_idx] if sample_from_inputs else None
+                        orig_size = render_sample(img_path, pred_img, save_path, img_tensor=img_tensor)
                         if enable_heatmap and heatmap_ctx is not None:
                             local_idx = heatmap_ctx["index_map"].get(b_idx)
                             if local_idx is not None:
@@ -3360,6 +3385,7 @@ def main():
             coco_eval=args.coco_eval,
             coco_per_class=args.coco_per_class,
             use_anchor=use_anchor,
+            sample_from_inputs=bool(val_aug_cfg),
             anchors=anchors_tensor,
             iou_loss_type=iou_loss_type,
             anchor_assigner=anchor_assigner,
@@ -3509,6 +3535,7 @@ def main():
                 coco_eval=args.coco_eval,
                 coco_per_class=args.coco_per_class,
                 use_anchor=use_anchor,
+                sample_from_inputs=bool(val_aug_cfg),
                 anchors=anchors_tensor,
                 iou_loss_type=iou_loss_type,
                 anchor_assigner=anchor_assigner,
