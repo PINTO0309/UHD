@@ -1535,6 +1535,33 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --dataset-type image \
 --image-dir data/wholebody34/obj_train_data \
 --resize-mode opencv_inter_nearest \
+--onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.onnx \
+--espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.espdl \
+--target esp32s3 \
+--calib-algorithm kl \
+--use-layerwise-equalization \
+--int16-op-pattern /box_out/Conv \
+--int16-op-pattern /quality_out/Conv \
+--int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block1/dw/conv/Conv \
+--int16-op-pattern /backbone/block1/dw/act/Relu \
+--int16-op-pattern /backbone/stem/conv/Conv \
+--int16-op-pattern /backbone/stem/act/Relu \
+--int16-op-pattern /backbone/block1/pw/conv/Conv \
+--int16-op-pattern /backbone/block1/pw/act/Relu \
+--int16-op-pattern /backbone/block2/pw/conv/Conv \
+--int16-op-pattern /backbone/block2/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/backbone/block2/dw/conv/Conv \
+--int16-op-pattern /backbone/block2/dw/act/Relu \
+--int16-op-pattern /backbone/block3_skip/conv/Conv \
+--int16-op-pattern /backbone/sppf/scale_x/conv/Conv
+##################################################################
+
+uv run python uhd/quantize_onnx_model_for_esp32.py \
+--dataset-type image \
+--image-dir data/wholebody34/obj_train_data \
+--resize-mode opencv_inter_nearest \
 --onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.onnx \
 --espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.espdl \
 --target esp32s3 \
