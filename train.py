@@ -393,13 +393,14 @@ def parse_args():
     parser.add_argument(
         "--utod-quant-arch",
         type=int,
-        choices=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+        choices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         default=0,
         help=(
             "UltraTinyOD quantization-robust architecture mode: "
             "0=off, 1=box stage2 residual gain, 2=box stage2 low-rank pw, "
             "3=split box_out (xy/wh), 4=box activation clip (ReLU6), "
-            "5=gated large-object fusion, 6=(1+5), 7=(1+3), 8=(2+3)."
+            "5=gated large-object fusion, 6=(1+5), 7=(1+3), 8=(2+3), "
+            "9=box stage1+stage2 residual gain, 10=backbone stage1+stage2(+stage3/4) residualized."
         ),
     )
     parser.add_argument(
@@ -2458,7 +2459,7 @@ def main():
         # Allow stride-4 variant; default to 8 when not explicitly set.
         output_stride = int(args.output_stride) if args.output_stride and int(args.output_stride) in (4, 8, 16) else 8
         use_improved_head = bool(args.use_improved_head)
-        if utod_quant_arch in (1, 2, 6, 7, 8) and not use_iou_aware_head:
+        if utod_quant_arch in (1, 2, 6, 7, 8, 9) and not use_iou_aware_head:
             print(f"[WARN] --utod-quant-arch={utod_quant_arch} is designed for --use-iou-aware-head; current config may have limited effect.")
         if utod_quant_arch in (5, 6) and not utod_large_obj_branch:
             print(f"[WARN] --utod-quant-arch={utod_quant_arch} requires --utod-large-obj-branch; current config may have limited effect.")

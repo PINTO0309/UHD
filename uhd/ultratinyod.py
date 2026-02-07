@@ -486,6 +486,7 @@ class UltraTinyODBackbone(nn.Module):
         c_stem: int = 16,
         in_channels: int = 3,
         use_residual: bool = False,
+        residual_all_stages: bool = False,
         out_stride: int = 8,
         activation: str = "silu",
         w_bits: int = 0,
@@ -496,7 +497,8 @@ class UltraTinyODBackbone(nn.Module):
         super().__init__()
         if out_stride not in (4, 8, 16):
             raise ValueError(f"UltraTinyODBackbone only supports out_stride 4, 8, or 16; got {out_stride}")
-        self.use_residual = bool(use_residual)
+        self.residual_all_stages = bool(residual_all_stages)
+        self.use_residual = bool(use_residual or self.residual_all_stages)
         self.out_stride = int(out_stride)
         self.use_depthwise = bool(use_depthwise)
         act_name = activation
@@ -548,6 +550,32 @@ class UltraTinyODBackbone(nn.Module):
             a_bits=a_bits,
             use_depthwise=self.use_depthwise,
         )  # 128 -> 128
+        if self.residual_all_stages:
+            self.block1_skip = ConvBNAct(
+                c_stem,
+                c_stem * 2,
+                k=1,
+                s=2,
+                p=0,
+                act=False,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
+            self.block2_skip = ConvBNAct(
+                c_stem * 2,
+                c_stem * 4,
+                k=1,
+                s=stride_block2,
+                p=0,
+                act=False,
+                act_name=act_name,
+                w_bits=w_bits,
+                a_bits=a_bits,
+            )
+        else:
+            self.block1_skip = None
+            self.block2_skip = None
         if self.use_residual:
             # project block2 output (64ch) to match block3 output (128ch)
             self.block3_skip = ConvBNAct(
@@ -562,6 +590,9 @@ class UltraTinyODBackbone(nn.Module):
                 a_bits=a_bits,
             )
             self.block4_skip = nn.Identity()
+        else:
+            self.block3_skip = None
+            self.block4_skip = None
 
         # SPPF-min: 128 -> 64
         self.sppf = SPPFmin(
@@ -576,15 +607,19 @@ class UltraTinyODBackbone(nn.Module):
         self.out_channels = c_stem * 4  # 64
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.stem(x)
-        x = self.block1(x)
-        x2 = self.block2(x)
+        x0 = self.stem(x)
+        x1 = self.block1(x0)
+        if self.residual_all_stages and self.block1_skip is not None:
+            x1 = x1 + self.block1_skip(x0)
+        x2 = self.block2(x1)
+        if self.residual_all_stages and self.block2_skip is not None:
+            x2 = x2 + self.block2_skip(x1)
         x3 = self.block3(x2)
-        if self.use_residual:
+        if self.use_residual and self.block3_skip is not None:
             x3 = x3 + self.block3_skip(x2)
         x4_in = x3
         x4 = self.block4(x3)
-        if self.use_residual:
+        if self.use_residual and self.block4_skip is not None:
             x4 = x4 + self.block4_skip(x4_in)
         x = self.sppf(x4)
         return x
@@ -595,8 +630,13 @@ class UltraTinyODBackbone(nn.Module):
         for block in (self.block1, self.block2, self.block3, self.block4):
             if hasattr(block, "fuse_model"):
                 block.fuse_model(qat=qat)
+        if self.residual_all_stages:
+            if self.block1_skip is not None and hasattr(self.block1_skip, "fuse_model"):
+                self.block1_skip.fuse_model(qat=qat)
+            if self.block2_skip is not None and hasattr(self.block2_skip, "fuse_model"):
+                self.block2_skip.fuse_model(qat=qat)
         if self.use_residual:
-            if hasattr(self.block3_skip, "fuse_model"):
+            if self.block3_skip is not None and hasattr(self.block3_skip, "fuse_model"):
                 self.block3_skip.fuse_model(qat=qat)
         if hasattr(self.sppf, "fuse_model"):
             self.sppf.fuse_model(qat=qat)
@@ -737,7 +777,7 @@ class UltraTinyODConfig:
         self.highbit_w_bits = _normalize_bits(self.highbit_w_bits)
         self.highbit_a_bits = _normalize_bits(self.highbit_a_bits)
         self.quant_arch_mode = int(getattr(self, "quant_arch_mode", 0) or 0)
-        if self.quant_arch_mode < 0 or self.quant_arch_mode > 8:
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 10:
             self.quant_arch_mode = 0
 
 
@@ -802,22 +842,28 @@ class UltraTinyODHead(nn.Module):
         self.quality_power = float(max(0.0, self.quality_power))
         self.has_quality_head = self.has_quality
         self.quant_arch_mode = int(getattr(cfg, "quant_arch_mode", 0) or 0)
-        if self.quant_arch_mode < 0 or self.quant_arch_mode > 8:
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 10:
             self.quant_arch_mode = 0
         # Quantization-robust architecture variants:
         # 0: off, 1: residualized box tower stage2, 2: low-rank stage2 pw,
         # 3: split box_out (xy/wh), 4: bounded box activation (ReLU6), 5: gated large-object fusion,
-        # 6: (1+5), 7: (1+3), 8: (2+3).
+        # 6: (1+5), 7: (1+3), 8: (2+3), 9: residualize box tower stage1+stage2, 10: backbone residualize stage1+stage2(+stage3/4).
         self.box_tower_residual_mode = bool(self.quant_arch_mode in (1, 6, 7) and self.use_iou_aware_head)
+        self.box_tower_dual_residual_mode = bool(self.quant_arch_mode == 9 and self.use_iou_aware_head)
         self.box_tower_lowrank_mode = bool(self.quant_arch_mode in (2, 8) and self.use_iou_aware_head)
         self.split_box_out_mode = bool(self.quant_arch_mode in (3, 7, 8))
         self.box_clip_mode = bool(self.quant_arch_mode == 4)
         self.large_obj_gate_mode = bool(self.quant_arch_mode in (5, 6) and self.use_large_obj_branch)
         self.box_tower_res_alpha_raw: Optional[nn.Parameter] = None
+        self.box_tower_res1_alpha_raw: Optional[nn.Parameter] = None
+        self.box_tower_res2_alpha_raw: Optional[nn.Parameter] = None
         self.large_obj_gate_raw: Optional[nn.Parameter] = None
         if self.box_tower_residual_mode:
             # sigmoid(0)=0.5 initial residual gain
             self.box_tower_res_alpha_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+        if self.box_tower_dual_residual_mode:
+            self.box_tower_res1_alpha_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+            self.box_tower_res2_alpha_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
         if self.large_obj_gate_mode:
             # sigmoid(0)=0.5 initial fusion gain
             self.large_obj_gate_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
@@ -1431,7 +1477,10 @@ class UltraTinyODHead(nn.Module):
 
         # box ブランチ
         if self.use_iou_aware_head:
-            if self.box_tower_residual_mode and self.box_tower_res_alpha_raw is not None:
+            if self.box_tower_dual_residual_mode and self.box_tower_res1_alpha_raw is not None and self.box_tower_res2_alpha_raw is not None:
+                box0 = x + torch.sigmoid(self.box_tower_res1_alpha_raw) * self.box_tower[0](x)
+                box_feat = box0 + torch.sigmoid(self.box_tower_res2_alpha_raw) * self.box_tower[1](box0)
+            elif self.box_tower_residual_mode and self.box_tower_res_alpha_raw is not None:
                 box0 = self.box_tower[0](x)
                 box1 = self.box_tower[1](box0)
                 box_feat = box0 + torch.sigmoid(self.box_tower_res_alpha_raw) * box1
@@ -1573,6 +1622,8 @@ class UltraTinyOD(nn.Module):
                 config.sppf_scale_mode = "none"
             if not hasattr(config, "dw_mode"):
                 config.dw_mode = "dw"
+            if not hasattr(config, "quant_arch_mode"):
+                config.quant_arch_mode = 0
 
         act_name = "silu" if str(config.activation).lower() == "swish" else str(config.activation).lower()
 
@@ -1612,10 +1663,13 @@ class UltraTinyOD(nn.Module):
 
         dw_mode = str(getattr(config, "dw_mode", "dw") or "dw").lower()
         use_depthwise = dw_mode in ("dw", "depthwise", "separable")
+        quant_arch_mode = int(getattr(config, "quant_arch_mode", 0) or 0)
+        backbone_residual_all_stages = bool(quant_arch_mode == 10)
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
             in_channels=in_channels,
-            use_residual=use_residual,
+            use_residual=(bool(use_residual) or backbone_residual_all_stages),
+            residual_all_stages=backbone_residual_all_stages,
             out_stride=int(config.stride),
             activation=act_name,
             w_bits=backbone_w_bits,

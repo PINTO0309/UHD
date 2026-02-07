@@ -139,10 +139,16 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
     quant_arch_mode = int(meta.get("utod_quant_arch", 0) or 0) if isinstance(meta, dict) else 0
     if quant_arch_mode == 0:
         has_residual = "head.box_tower_res_alpha_raw" in state
+        has_dual_residual = ("head.box_tower_res1_alpha_raw" in state) and ("head.box_tower_res2_alpha_raw" in state)
         has_lowrank = "head.box_tower.1.pw_reduce.conv.weight" in state
         has_split = ("head.box_out_xy.weight" in state) and ("head.box_out_wh.weight" in state)
         has_gate = "head.large_obj_gate_raw" in state
-        if has_residual and has_gate:
+        has_backbone_all_residual = ("backbone.block1_skip.conv.weight" in state) and ("backbone.block2_skip.conv.weight" in state)
+        if has_backbone_all_residual:
+            quant_arch_mode = 10
+        elif has_dual_residual:
+            quant_arch_mode = 9
+        elif has_residual and has_gate:
             quant_arch_mode = 6
         elif has_residual and has_split:
             quant_arch_mode = 7
@@ -156,7 +162,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
             quant_arch_mode = 3
         elif has_gate:
             quant_arch_mode = 5
-    quant_arch_mode = int(max(0, min(8, quant_arch_mode)))
+    quant_arch_mode = int(max(0, min(10, quant_arch_mode)))
     sppf_scale_mode = str(meta.get("utod_sppf_scale", "none") or "none").lower()
     if sppf_scale_mode in ("conv1x1", "1x1", "conv"):
         sppf_scale_mode = "conv"
