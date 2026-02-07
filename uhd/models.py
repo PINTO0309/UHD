@@ -828,6 +828,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         highbit_w_bits = int(kwargs.get("highbit_w_bits", 8) or 8)
         highbit_a_bits = int(kwargs.get("highbit_a_bits", 8) or 8)
         utod_conv = str(kwargs.get("utod_conv", kwargs.get("dw_mode", "dw")) or "dw")
+        utod_quant_arch = int(kwargs.get("utod_quant_arch", kwargs.get("quant_arch_mode", 0)) or 0)
         cfg = UltraTinyODConfig(
             num_classes=kwargs.get("num_classes", 1),
             attr_num_classes=kwargs.get("attr_num_classes", 0) or 0,
@@ -856,6 +857,7 @@ def build_model(arch: str, **kwargs) -> nn.Module:
             highbit_quant_target=highbit_quant_target,
             highbit_w_bits=highbit_w_bits,
             highbit_a_bits=highbit_a_bits,
+            quant_arch_mode=utod_quant_arch,
         )
         stem_width = kwargs.get("c_stem", kwargs.get("width", 16))
         model = UltraTinyOD(

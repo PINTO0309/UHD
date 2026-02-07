@@ -136,6 +136,27 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
     use_large_obj_branch = bool(meta.get("utod_large_obj_branch") or any(k.startswith("head.large_obj_") for k in state.keys()))
     large_obj_depth = int(meta.get("utod_large_obj_depth", 1))
     large_obj_ch_scale = float(meta.get("utod_large_obj_ch_scale", 1.0))
+    quant_arch_mode = int(meta.get("utod_quant_arch", 0) or 0) if isinstance(meta, dict) else 0
+    if quant_arch_mode == 0:
+        has_residual = "head.box_tower_res_alpha_raw" in state
+        has_lowrank = "head.box_tower.1.pw_reduce.conv.weight" in state
+        has_split = ("head.box_out_xy.weight" in state) and ("head.box_out_wh.weight" in state)
+        has_gate = "head.large_obj_gate_raw" in state
+        if has_residual and has_gate:
+            quant_arch_mode = 6
+        elif has_residual and has_split:
+            quant_arch_mode = 7
+        elif has_lowrank and has_split:
+            quant_arch_mode = 8
+        elif has_residual:
+            quant_arch_mode = 1
+        elif has_lowrank:
+            quant_arch_mode = 2
+        elif has_split:
+            quant_arch_mode = 3
+        elif has_gate:
+            quant_arch_mode = 5
+    quant_arch_mode = int(max(0, min(8, quant_arch_mode)))
     sppf_scale_mode = str(meta.get("utod_sppf_scale", "none") or "none").lower()
     if sppf_scale_mode in ("conv1x1", "1x1", "conv"):
         sppf_scale_mode = "conv"
@@ -177,6 +198,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         large_obj_branch_expansion=large_obj_ch_scale,
         sppf_scale_mode=sppf_scale_mode,
         dw_mode=dw_mode,
+        quant_arch_mode=quant_arch_mode,
     )
     overrides = {
         "num_classes": num_classes,
@@ -201,6 +223,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         "use_large_obj_branch": use_large_obj_branch,
         "large_obj_branch_depth": large_obj_depth,
         "large_obj_branch_expansion": large_obj_ch_scale,
+        "quant_arch_mode": quant_arch_mode,
         "sppf_scale_mode": sppf_scale_mode,
         "dw_mode": dw_mode,
     }

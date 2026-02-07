@@ -391,6 +391,18 @@ def parse_args():
         help="Channel scale for the large-object branch (relative to head channels).",
     )
     parser.add_argument(
+        "--utod-quant-arch",
+        type=int,
+        choices=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+        default=0,
+        help=(
+            "UltraTinyOD quantization-robust architecture mode: "
+            "0=off, 1=box stage2 residual gain, 2=box stage2 low-rank pw, "
+            "3=split box_out (xy/wh), 4=box activation clip (ReLU6), "
+            "5=gated large-object fusion, 6=(1+5), 7=(1+3), 8=(2+3)."
+        ),
+    )
+    parser.add_argument(
         "--backbone",
         default=None,
         choices=["microcspnet", "ultratinyresnet", "enhanced-shufflenet", "none", None],
@@ -2439,12 +2451,17 @@ def main():
     utod_large_obj_branch = bool(args.utod_large_obj_branch)
     utod_large_obj_depth = int(args.utod_large_obj_depth)
     utod_large_obj_ch_scale = float(args.utod_large_obj_ch_scale)
+    utod_quant_arch = int(args.utod_quant_arch)
     utod_sppf_scale = str(args.utod_sppf_scale or "none").lower()
     if args.arch == "ultratinyod":
         use_anchor = True
         # Allow stride-4 variant; default to 8 when not explicitly set.
         output_stride = int(args.output_stride) if args.output_stride and int(args.output_stride) in (4, 8, 16) else 8
         use_improved_head = bool(args.use_improved_head)
+        if utod_quant_arch in (1, 2, 6, 7, 8) and not use_iou_aware_head:
+            print(f"[WARN] --utod-quant-arch={utod_quant_arch} is designed for --use-iou-aware-head; current config may have limited effect.")
+        if utod_quant_arch in (5, 6) and not utod_large_obj_branch:
+            print(f"[WARN] --utod-quant-arch={utod_quant_arch} requires --utod-large-obj-branch; current config may have limited effect.")
     if backbone is not None and backbone_out_stride is not None:
         output_stride = backbone_out_stride
     if args.arch != "cnn" and backbone not in (None, "none"):
@@ -2473,7 +2490,7 @@ def main():
     img_size_str = f"{img_h}x{img_w}"
 
     def apply_meta(meta: Dict, label: str, allow_distill: bool = False):
-        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, utod_conv, use_iou_aware_head, quality_power, score_mode, disable_cls, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
+        nonlocal class_ids, num_classes, aug_cfg, resize_mode, use_skip, utod_residual, grad_clip_norm, activation, use_ema, ema_decay, use_fpn, backbone, backbone_channels, backbone_blocks, backbone_se, backbone_skip, backbone_skip_cat, backbone_skip_shuffle_cat, backbone_skip_s2d_cat, backbone_fpn, backbone_out_stride, use_batchnorm, cnn_width, use_improved_head, utod_head_ese, utod_conv, use_iou_aware_head, quality_power, score_mode, disable_cls, utod_context_rfb, utod_context_dilation, utod_large_obj_branch, utod_large_obj_depth, utod_large_obj_ch_scale, utod_quant_arch, utod_sppf_scale, w_bits, a_bits, quant_target, lowbit_quant_target, lowbit_w_bits, lowbit_a_bits, highbit_quant_target, highbit_w_bits, highbit_a_bits
         nonlocal multi_label_mode, multi_label_attr_weight, det_class_ids_raw, attr_class_ids_raw
         nonlocal teacher_ckpt, teacher_arch, teacher_num_queries, teacher_d_model, teacher_heads, teacher_layers, teacher_dim_feedforward, teacher_use_skip, teacher_activation, teacher_use_fpn, teacher_backbone, teacher_backbone_arch, teacher_backbone_norm
         nonlocal distill_kl, distill_box_l1, distill_obj, distill_quality, distill_temperature, distill_cosine, distill_feat
@@ -2527,6 +2544,8 @@ def main():
             utod_large_obj_depth = int(meta["utod_large_obj_depth"])
         if "utod_large_obj_ch_scale" in meta and meta["utod_large_obj_ch_scale"]:
             utod_large_obj_ch_scale = float(meta["utod_large_obj_ch_scale"])
+        if "utod_quant_arch" in meta and meta["utod_quant_arch"] is not None:
+            utod_quant_arch = int(meta["utod_quant_arch"])
         if "utod_sppf_scale" in meta and meta["utod_sppf_scale"]:
             utod_sppf_scale = str(meta["utod_sppf_scale"]).lower()
         if "w_bits" in meta:
@@ -2918,6 +2937,7 @@ def main():
         utod_large_obj_branch=utod_large_obj_branch,
         utod_large_obj_depth=utod_large_obj_depth,
         utod_large_obj_ch_scale=utod_large_obj_ch_scale,
+        utod_quant_arch=utod_quant_arch,
         utod_sppf_scale=utod_sppf_scale,
         backbone=backbone,
         backbone_channels=backbone_channels,
@@ -3193,6 +3213,7 @@ def main():
             t_utod_large_obj_branch = bool(t_meta.get("utod_large_obj_branch", utod_large_obj_branch))
             t_utod_large_obj_depth = int(t_meta.get("utod_large_obj_depth", utod_large_obj_depth))
             t_utod_large_obj_ch_scale = float(t_meta.get("utod_large_obj_ch_scale", utod_large_obj_ch_scale))
+            t_utod_quant_arch = int(t_meta.get("utod_quant_arch", utod_quant_arch) or 0)
             t_utod_sppf_scale = str(t_meta.get("utod_sppf_scale", utod_sppf_scale))
             t_backbone = t_meta.get("backbone", backbone)
             t_backbone_channels = t_meta.get("backbone_channels", backbone_channels)
@@ -3264,6 +3285,7 @@ def main():
                 utod_large_obj_branch=t_utod_large_obj_branch,
                 utod_large_obj_depth=t_utod_large_obj_depth,
                 utod_large_obj_ch_scale=t_utod_large_obj_ch_scale,
+                utod_quant_arch=t_utod_quant_arch,
                 utod_sppf_scale=t_utod_sppf_scale,
                 backbone=t_backbone,
                 backbone_channels=t_backbone_channels,
@@ -3628,6 +3650,7 @@ def main():
                     "utod_large_obj_branch": utod_large_obj_branch,
                     "utod_large_obj_depth": utod_large_obj_depth,
                     "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
+                    "utod_quant_arch": utod_quant_arch,
                     "utod_sppf_scale": utod_sppf_scale,
                     "activation": activation,
                     "use_batchnorm": use_batchnorm,
@@ -3739,6 +3762,7 @@ def main():
             "utod_large_obj_branch": utod_large_obj_branch,
             "utod_large_obj_depth": utod_large_obj_depth,
             "utod_large_obj_ch_scale": utod_large_obj_ch_scale,
+            "utod_quant_arch": utod_quant_arch,
             "utod_sppf_scale": utod_sppf_scale,
             "activation": activation,
             "use_batchnorm": use_batchnorm,

@@ -255,6 +255,79 @@ class DWConv(nn.Module):
                 self.conv.fuse_model(qat=qat)
 
 
+class DWConvLowRankPW(nn.Module):
+    """DWConv variant with factorized pointwise projection (c -> r -> c_out)."""
+
+    def __init__(
+        self,
+        c_in: int,
+        c_out: int,
+        k: int = 3,
+        s: int = 1,
+        rank_ratio: float = 0.5,
+        act_name: str = "silu",
+        w_bits: int = 0,
+        a_bits: int = 0,
+        use_depthwise: bool = True,
+    ) -> None:
+        super().__init__()
+        groups = c_in if use_depthwise else 1
+        rank_ch = max(8, int(round(float(c_in) * float(rank_ratio))))
+        self.dw = ConvBNAct(
+            c_in,
+            c_in,
+            k=k,
+            s=s,
+            p=k // 2,
+            g=groups,
+            bias=False,
+            act=True,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+        )
+        self.pw_reduce = ConvBNAct(
+            c_in,
+            rank_ch,
+            k=1,
+            s=1,
+            p=0,
+            g=1,
+            bias=False,
+            act=True,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+        )
+        self.pw_expand = ConvBNAct(
+            rank_ch,
+            c_out,
+            k=1,
+            s=1,
+            p=0,
+            g=1,
+            bias=False,
+            act=True,
+            act_name=act_name,
+            w_bits=w_bits,
+            a_bits=a_bits,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.dw(x)
+        x = self.pw_reduce(x)
+        x = self.pw_expand(x)
+        return x
+
+    def fuse_model(self, qat: bool = False) -> None:
+        if hasattr(self.dw, "fuse_model"):
+            self.dw.fuse_model(qat=qat)
+        if hasattr(self.pw_reduce, "fuse_model"):
+            self.pw_reduce.fuse_model(qat=qat)
+        if hasattr(self.pw_expand, "fuse_model"):
+            self.pw_expand.fuse_model(qat=qat)
+
+
 class EfficientSE(nn.Module):
     """軽量eSE (squeeze + 1x1 conv)。"""
 
@@ -580,6 +653,7 @@ class UltraTinyODConfig:
     highbit_quant_target: str = "none"
     highbit_w_bits: int = 8
     highbit_a_bits: int = 8
+    quant_arch_mode: int = 0
 
     def __post_init__(self):
         if self.anchors is None:
@@ -662,6 +736,9 @@ class UltraTinyODConfig:
         self.lowbit_a_bits = _normalize_bits(self.lowbit_a_bits or self.a_bits)
         self.highbit_w_bits = _normalize_bits(self.highbit_w_bits)
         self.highbit_a_bits = _normalize_bits(self.highbit_a_bits)
+        self.quant_arch_mode = int(getattr(self, "quant_arch_mode", 0) or 0)
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 8:
+            self.quant_arch_mode = 0
 
 
 class UltraTinyODHead(nn.Module):
@@ -724,6 +801,27 @@ class UltraTinyODHead(nn.Module):
         self.score_mode = mode
         self.quality_power = float(max(0.0, self.quality_power))
         self.has_quality_head = self.has_quality
+        self.quant_arch_mode = int(getattr(cfg, "quant_arch_mode", 0) or 0)
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 8:
+            self.quant_arch_mode = 0
+        # Quantization-robust architecture variants:
+        # 0: off, 1: residualized box tower stage2, 2: low-rank stage2 pw,
+        # 3: split box_out (xy/wh), 4: bounded box activation (ReLU6), 5: gated large-object fusion,
+        # 6: (1+5), 7: (1+3), 8: (2+3).
+        self.box_tower_residual_mode = bool(self.quant_arch_mode in (1, 6, 7) and self.use_iou_aware_head)
+        self.box_tower_lowrank_mode = bool(self.quant_arch_mode in (2, 8) and self.use_iou_aware_head)
+        self.split_box_out_mode = bool(self.quant_arch_mode in (3, 7, 8))
+        self.box_clip_mode = bool(self.quant_arch_mode == 4)
+        self.large_obj_gate_mode = bool(self.quant_arch_mode in (5, 6) and self.use_large_obj_branch)
+        self.box_tower_res_alpha_raw: Optional[nn.Parameter] = None
+        self.large_obj_gate_raw: Optional[nn.Parameter] = None
+        if self.box_tower_residual_mode:
+            # sigmoid(0)=0.5 initial residual gain
+            self.box_tower_res_alpha_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+        if self.large_obj_gate_mode:
+            # sigmoid(0)=0.5 initial fusion gain
+            self.large_obj_gate_raw = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+        self.box_clip = nn.Hardtanh(min_val=0.0, max_val=6.0, inplace=True) if self.box_clip_mode else None
 
         # 軽い文脈強調
         self.context = DWConv(
@@ -805,9 +903,36 @@ class UltraTinyODHead(nn.Module):
             self.large_obj_fuse = ConvBNAct(lob_ch, in_channels, k=1, s=1, p=0, act_name=act_name, w_bits=self.w_bits, a_bits=self.a_bits)
         else:
             self.large_obj_down = None
+            self.large_obj_blocks = None
+            self.large_obj_fuse = None
 
         # box ブランチ
         if self.use_iou_aware_head:
+            box_stage2: nn.Module
+            if self.box_tower_lowrank_mode:
+                box_stage2 = DWConvLowRankPW(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    rank_ratio=0.5,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                )
+            else:
+                box_stage2 = DWConv(
+                    in_channels,
+                    in_channels,
+                    k=3,
+                    s=1,
+                    act=True,
+                    act_name=act_name,
+                    w_bits=self.w_bits,
+                    a_bits=self.a_bits,
+                    use_depthwise=self.use_depthwise,
+                )
             self.box_tower = nn.Sequential(
                 DWConv(
                     in_channels,
@@ -820,17 +945,7 @@ class UltraTinyODHead(nn.Module):
                     a_bits=self.a_bits,
                     use_depthwise=self.use_depthwise,
                 ),
-                DWConv(
-                    in_channels,
-                    in_channels,
-                    k=3,
-                    s=1,
-                    act=True,
-                    act_name=act_name,
-                    w_bits=self.w_bits,
-                    a_bits=self.a_bits,
-                    use_depthwise=self.use_depthwise,
-                ),
+                box_stage2,
             )
         else:
             self.box_conv = DWConv(
@@ -844,14 +959,35 @@ class UltraTinyODHead(nn.Module):
                 a_bits=self.a_bits,
                 use_depthwise=self.use_depthwise,
             )
-        self.box_out = nn.Conv2d(
-            in_channels,
-            self.num_anchors * 4,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=True,
-        )
+        if self.split_box_out_mode:
+            self.box_out_xy = nn.Conv2d(
+                in_channels,
+                self.num_anchors * 2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+            self.box_out_wh = nn.Conv2d(
+                in_channels,
+                self.num_anchors * 2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+            self.box_out = None
+        else:
+            self.box_out = nn.Conv2d(
+                in_channels,
+                self.num_anchors * 4,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+            self.box_out_xy = None
+            self.box_out_wh = None
         if self.has_quality:
             if self.use_iou_aware_head:
                 self.quality_tower = nn.Sequential(
@@ -1029,7 +1165,10 @@ class UltraTinyODHead(nn.Module):
         if anchors is None:
             return
         # Clone to avoid in-place mutations on shared tensors during training.
-        anchor_tensor = anchors.detach().to(self.box_out.weight.device).clone()
+        out_ref = self.box_out if self.box_out is not None else self.box_out_xy
+        if out_ref is None:
+            raise RuntimeError("box output conv is not initialized.")
+        anchor_tensor = anchors.detach().to(out_ref.weight.device).clone()
         if anchor_tensor.ndim == 1:
             anchor_tensor = anchor_tensor.view(-1, 2)
         if anchor_tensor.ndim != 2 or anchor_tensor.shape[1] != 2:
@@ -1038,14 +1177,33 @@ class UltraTinyODHead(nn.Module):
         if anchor_tensor.shape[0] != self.num_anchors:
             self.num_anchors = int(anchor_tensor.shape[0])
             # 再初期化（Anchor 数依存の出力 Conv）
-            self.box_out = nn.Conv2d(
-                self.in_channels,
-                self.num_anchors * 4,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            ).to(anchor_tensor.device)
+            if self.split_box_out_mode:
+                self.box_out_xy = nn.Conv2d(
+                    self.in_channels,
+                    self.num_anchors * 2,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                ).to(anchor_tensor.device)
+                self.box_out_wh = nn.Conv2d(
+                    self.in_channels,
+                    self.num_anchors * 2,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                ).to(anchor_tensor.device)
+                self.box_out = None
+            else:
+                self.box_out = nn.Conv2d(
+                    self.in_channels,
+                    self.num_anchors * 4,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    bias=True,
+                ).to(anchor_tensor.device)
             self.obj_out = nn.Conv2d(
                 self.in_channels,
                 self.num_anchors * 1,
@@ -1081,7 +1239,13 @@ class UltraTinyODHead(nn.Module):
                         padding=0,
                         bias=True,
                     ).to(anchor_tensor.device)
-            nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
+            if self.split_box_out_mode:
+                if self.box_out_xy is not None:
+                    nn.init.kaiming_normal_(self.box_out_xy.weight, mode="fan_out", nonlinearity="relu")
+                if self.box_out_wh is not None:
+                    nn.init.kaiming_normal_(self.box_out_wh.weight, mode="fan_out", nonlinearity="relu")
+            elif self.box_out is not None:
+                nn.init.kaiming_normal_(self.box_out.weight, mode="fan_out", nonlinearity="relu")
             nn.init.kaiming_normal_(self.obj_out.weight, mode="fan_out", nonlinearity="relu")
             if self.has_quality:
                 nn.init.kaiming_normal_(self.quality_out.weight, mode="fan_out", nonlinearity="relu")
@@ -1124,7 +1288,7 @@ class UltraTinyODHead(nn.Module):
             for layer in self.large_obj_blocks:
                 if hasattr(layer, "fuse_model"):
                     layer.fuse_model(qat=qat)
-        if hasattr(self.large_obj_fuse, "fuse_model"):
+        if self.large_obj_fuse is not None and hasattr(self.large_obj_fuse, "fuse_model"):
             self.large_obj_fuse.fuse_model(qat=qat)
         if self.use_iou_aware_head:
             for layer in self.box_tower:
@@ -1254,18 +1418,37 @@ class UltraTinyODHead(nn.Module):
             x = self.head_rfb(x)
         if self.large_obj_down is not None:
             lob = self.large_obj_down(x)
-            lob = self.large_obj_blocks(lob)
+            if self.large_obj_blocks is not None:
+                lob = self.large_obj_blocks(lob)
             lob = F.interpolate(lob, size=(h, w), mode="nearest")
-            x = x + self.large_obj_fuse(lob)
+            fused_lob = self.large_obj_fuse(lob) if self.large_obj_fuse is not None else lob
+            if self.large_obj_gate_mode and self.large_obj_gate_raw is not None:
+                x = x + torch.sigmoid(self.large_obj_gate_raw) * fused_lob
+            else:
+                x = x + fused_lob
         if self.use_head_ese:
             x = self.head_se(x)
 
         # box ブランチ
         if self.use_iou_aware_head:
-            box_feat = self.box_tower(x)
+            if self.box_tower_residual_mode and self.box_tower_res_alpha_raw is not None:
+                box0 = self.box_tower[0](x)
+                box1 = self.box_tower[1](box0)
+                box_feat = box0 + torch.sigmoid(self.box_tower_res_alpha_raw) * box1
+            else:
+                box_feat = self.box_tower(x)
         else:
             box_feat = self.box_conv(x)
-        box = self._conv2d_out(self.box_out, box_feat)
+        if self.box_clip is not None:
+            box_feat = self.box_clip(box_feat)
+        if self.split_box_out_mode and self.box_out_xy is not None and self.box_out_wh is not None:
+            box_xy = self._conv2d_out(self.box_out_xy, box_feat).view(b, self.num_anchors, 2, h, w)
+            box_wh = self._conv2d_out(self.box_out_wh, box_feat).view(b, self.num_anchors, 2, h, w)
+            box = torch.cat([box_xy, box_wh], dim=2).reshape(b, self.num_anchors * 4, h, w)
+        else:
+            if self.box_out is None:
+                raise RuntimeError("box_out is not initialized.")
+            box = self._conv2d_out(self.box_out, box_feat)
         # obj ブランチ
         obj = None
         if need_obj:
