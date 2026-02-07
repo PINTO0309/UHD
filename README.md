@@ -922,7 +922,7 @@ overlayed on the detection image.
 | `--utod-large-obj-branch` | UltraTinyOD head: add a downsampled large-object refinement branch (no FPN). | `False` |
 | `--utod-large-obj-depth` | Number of depthwise blocks in the large-object branch (only when `--utod-large-obj-branch`). | `2` |
 | `--utod-large-obj-ch-scale` | Channel scale for the large-object branch (relative to head channels). | `1.0` |
-| `--utod-quant-arch` | UltraTinyOD quantization-robust architecture mode: `0` off, `1` box stage2 residual gain, `2` box stage2 low-rank pw, `3` split `box_out` (`xy/wh`), `4` box activation clip (ReLU6), `5` gated large-object fusion, `6` (`1+5`), `7` (`1+3`), `8` (`2+3`), `9` box stage1+stage2 residual gain, `10` backbone stage1+stage2(+stage3/4) residualized. (`1`/`2`/`6`/`7`/`8`/`9` are designed for `--use-iou-aware-head`, `5`/`6` for `--utod-large-obj-branch`) | `0` |
+| `--utod-quant-arch` | UltraTinyOD quantization-robust architecture mode: `0` off, `1` box stage2 residual gain, `2` box stage2 low-rank pw, `3` split `box_out` (`xy/wh`), `4` box activation clip (ReLU6), `5` gated large-object fusion, `6` (`1+5`), `7` (`1+3`), `8` (`2+3`), `9` box stage1+stage2 residual gain, `10` backbone stage1+stage2(+stage3/4) residualized, `11` (`1+10`). (`1`/`2`/`6`/`7`/`8`/`9`/`11` are designed for `--use-iou-aware-head`, `5`/`6` for `--utod-large-obj-branch`) | `0` |
 | `--use-anchor` | Use anchor-based head for CNN (YOLO-style). | `False` |
 | `--output-stride` | Final CNN feature stride (downsample factor). Supported: `4`, `8`, `16`. | `16` |
 | `--anchors` | Anchor sizes as normalized `w,h` pairs (space separated). | `""` |

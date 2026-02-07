@@ -777,7 +777,7 @@ class UltraTinyODConfig:
         self.highbit_w_bits = _normalize_bits(self.highbit_w_bits)
         self.highbit_a_bits = _normalize_bits(self.highbit_a_bits)
         self.quant_arch_mode = int(getattr(self, "quant_arch_mode", 0) or 0)
-        if self.quant_arch_mode < 0 or self.quant_arch_mode > 10:
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 11:
             self.quant_arch_mode = 0
 
 
@@ -842,13 +842,14 @@ class UltraTinyODHead(nn.Module):
         self.quality_power = float(max(0.0, self.quality_power))
         self.has_quality_head = self.has_quality
         self.quant_arch_mode = int(getattr(cfg, "quant_arch_mode", 0) or 0)
-        if self.quant_arch_mode < 0 or self.quant_arch_mode > 10:
+        if self.quant_arch_mode < 0 or self.quant_arch_mode > 11:
             self.quant_arch_mode = 0
         # Quantization-robust architecture variants:
         # 0: off, 1: residualized box tower stage2, 2: low-rank stage2 pw,
         # 3: split box_out (xy/wh), 4: bounded box activation (ReLU6), 5: gated large-object fusion,
-        # 6: (1+5), 7: (1+3), 8: (2+3), 9: residualize box tower stage1+stage2, 10: backbone residualize stage1+stage2(+stage3/4).
-        self.box_tower_residual_mode = bool(self.quant_arch_mode in (1, 6, 7) and self.use_iou_aware_head)
+        # 6: (1+5), 7: (1+3), 8: (2+3), 9: residualize box tower stage1+stage2,
+        # 10: backbone residualize stage1+stage2(+stage3/4), 11: (1+10).
+        self.box_tower_residual_mode = bool(self.quant_arch_mode in (1, 6, 7, 11) and self.use_iou_aware_head)
         self.box_tower_dual_residual_mode = bool(self.quant_arch_mode == 9 and self.use_iou_aware_head)
         self.box_tower_lowrank_mode = bool(self.quant_arch_mode in (2, 8) and self.use_iou_aware_head)
         self.split_box_out_mode = bool(self.quant_arch_mode in (3, 7, 8))
@@ -1664,7 +1665,7 @@ class UltraTinyOD(nn.Module):
         dw_mode = str(getattr(config, "dw_mode", "dw") or "dw").lower()
         use_depthwise = dw_mode in ("dw", "depthwise", "separable")
         quant_arch_mode = int(getattr(config, "quant_arch_mode", 0) or 0)
-        backbone_residual_all_stages = bool(quant_arch_mode == 10)
+        backbone_residual_all_stages = bool(quant_arch_mode in (10, 11))
         self.backbone = UltraTinyODBackbone(
             c_stem=c_stem,
             in_channels=in_channels,

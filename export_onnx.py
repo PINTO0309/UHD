@@ -144,7 +144,9 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
         has_split = ("head.box_out_xy.weight" in state) and ("head.box_out_wh.weight" in state)
         has_gate = "head.large_obj_gate_raw" in state
         has_backbone_all_residual = ("backbone.block1_skip.conv.weight" in state) and ("backbone.block2_skip.conv.weight" in state)
-        if has_backbone_all_residual:
+        if has_backbone_all_residual and has_residual:
+            quant_arch_mode = 11
+        elif has_backbone_all_residual:
             quant_arch_mode = 10
         elif has_dual_residual:
             quant_arch_mode = 9
@@ -162,7 +164,7 @@ def infer_utod_config(state: Dict[str, torch.Tensor], meta: Dict, args) -> Tuple
             quant_arch_mode = 3
         elif has_gate:
             quant_arch_mode = 5
-    quant_arch_mode = int(max(0, min(10, quant_arch_mode)))
+    quant_arch_mode = int(max(0, min(11, quant_arch_mode)))
     sppf_scale_mode = str(meta.get("utod_sppf_scale", "none") or "none").lower()
     if sppf_scale_mode in ("conv1x1", "1x1", "conv"):
         sppf_scale_mode = "conv"
