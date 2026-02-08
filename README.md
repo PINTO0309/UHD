@@ -15,6 +15,8 @@ This model is an experimental implementation and is not suitable for real-time i
 
   model:https://github.com/PINTO0309/UHD/releases/download/onnx/ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost.tar.gz
 
+  demo app:https://github.com/PINTO0309/esp-who/tree/custom/examples/ultra_lightweight_human_detection
+
   https://github.com/user-attachments/assets/cbefde30-6d73-4a9a-8b45-1a92826e76c8
 
 - UltraTinyOD-Anc8-W32-64x64
