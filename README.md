@@ -1592,9 +1592,16 @@ Notes:
 
 <details><summary>Click to expand</summary>
 
-|ONNX|LiteRT(TFLite)|
-|:-:|:-:|
-|<img width="350" alt="ultratinyod_res_anc8_w64_64x64_loese_distill" src="https://github.com/user-attachments/assets/ae5d3c70-8c5e-41f0-ad79-98f4024519a0" />|<img width="350" alt="ultratinyod_res_anc8_w64_64x64_loese_distill_float32" src="https://github.com/user-attachments/assets/c1e909b8-b029-4f0a-acf9-0f8259763ec3" />|
+<table>
+  <tr>
+    <th>ONNX</th>
+    <th>LiteRT</th>
+  </tr>
+  <tr>
+    <td valign="top"><img width="150" alt="ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost" src="https://github.com/user-attachments/assets/0f81e550-8e27-4f5a-b6a3-6ac79638dfa6" /></td>
+    <td valign="top"><img width="150" height="8134" alt="ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_litert" src="https://github.com/user-attachments/assets/dadef132-721e-4074-9efd-c5a546bb7a79" /></td>
+  </tr>
+</table>
 
 ## Ultra-lightweight classification model series
 1. [VSDLM: Visual-only speech detection driven by lip movements](https://github.com/PINTO0309/VSDLM) - MIT License
