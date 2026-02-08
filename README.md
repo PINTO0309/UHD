@@ -1074,7 +1074,7 @@ SIZE=64x64
 ANCHOR=8
 CNNWIDTH=32
 RESIZEMODE=opencv_inter_nearest
-CKPT=runs/ultratinyod_anc8_w32_dw_64x64_lr0.00001_opencv_inter_nearest_cg17_distill/best_utod_0100_map_0.33227.pt
+CKPT=runs/ultratinyod_anc8_w32_dw_64x64_lr0.00001_opencv_inter_nearest_cg17_distill/best_utod_0100_map_0.31240.pt
 uv run python export_onnx.py \
 --checkpoint ${CKPT} \
 --output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost.onnx \
@@ -1091,37 +1091,16 @@ uv run python uhd/quantize_onnx_model_for_esp32.py \
 --target esp32s3 \
 --calib-algorithm kl \
 --use-layerwise-equalization \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.0/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.0/pw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.0/pw/act/Relu \
+--int16-op-pattern /depthwiseconv/box_tower/box_tower.1/dw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/dw/act/Relu \
+--int16-op-pattern /box_tower/box_tower.1/pw/conv/Conv \
+--int16-op-pattern /box_tower/box_tower.1/pw/act/Relu \
 --int16-op-pattern /box_out/Conv \
---int16-op-pattern /quality_out/Conv \
---int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu
-
-SIZE=64x64
-ANCHOR=8
-CNNWIDTH=32
-RESIZEMODE=opencv_inter_nearest
-CKPT=runs/ultratinyod_anc8_w32_dw_64x64_lr0.00001_opencv_inter_nearest_cg18_nolo_distill/best_utod_0100_map_0.32802.pt
-uv run python export_onnx.py \
---checkpoint ${CKPT} \
---output ultratinyod_anc${ANCHOR}_w${CNNWIDTH}_${SIZE}_${RESIZEMODE}_static_nopost_nolo.onnx \
---opset 17 \
---no-merge-postprocess \
---noconcat_box_obj_quality_cls
-
-uv run python uhd/quantize_onnx_model_for_esp32.py \
---dataset-type image \
---image-dir data/wholebody34/obj_train_data \
---resize-mode opencv_inter_nearest \
---onnx-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.onnx \
---espdl-model ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_nolo.espdl \
---target esp32s3 \
---calib-algorithm kl \
---use-layerwise-equalization \
---int16-op-pattern /box_out/Conv \
---int16-op-pattern /quality_out/Conv \
---int16-op-pattern /quality_out/Conv \
---int16-op-pattern /backbone/block1/pw/conv/Conv \
---int16-op-pattern /backbone/block1/pw/act/Relu
+--int16-op-pattern /quality_out/Conv
 ```
 <img width="640" alt="image" src="https://github.com/user-attachments/assets/c6d5475a-c56a-4019-a24d-45543fafa4ff" />
 
