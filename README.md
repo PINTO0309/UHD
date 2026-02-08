@@ -1599,7 +1599,7 @@ Notes:
   </tr>
   <tr>
     <td valign="top"><img width="150" alt="ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost" src="https://github.com/user-attachments/assets/0f81e550-8e27-4f5a-b6a3-6ac79638dfa6" /></td>
-    <td valign="top"><img width="150" height="8134" alt="ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_litert" src="https://github.com/user-attachments/assets/dadef132-721e-4074-9efd-c5a546bb7a79" /></td>
+    <td valign="top"><img width="150" alt="ultratinyod_anc8_w32_64x64_opencv_inter_nearest_static_nopost_litert" src="https://github.com/user-attachments/assets/76809ab1-0ca9-4a2c-a796-db87c59ff076" /></td>
   </tr>
 </table>
 
