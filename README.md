@@ -54,6 +54,8 @@ This model is an experimental implementation and is not suitable for real-time i
   </tr>
 </table>
 
+</details>
+
 ## Download all ONNX files at once
 **I don't recommend it as it downloads a crazy amount of files.**
 
@@ -1594,8 +1596,6 @@ Notes:
 - The YUV422 models expect input shape `[1, 2, 64, 64]` with `opencv_inter_nearest_yuv422` preprocessing.
 - `--dataset-type image` is the default and ignores labels.
 - Adjust `--calib-steps`, `--batch-size`, `--target`, `--num-of-bits`, and `--device` as needed.
-
-</details>
 
 #### 2-2. CLI options
 
